@@ -92,7 +92,6 @@ ERROR_TYPE_PLAN_MISSING = "plan_missing"
 AUTO_RESUME_ERROR_TYPES = {
     ERROR_TYPE_HEARTBEAT_TIMEOUT,
     ERROR_TYPE_SHIFT_TIMEOUT,
-    ERROR_TYPE_PLAN_MISSING,
 }
 
 REVIEW_MIN_EVIDENCE_ITEMS = 2
@@ -531,8 +530,6 @@ def _blocked_dependency_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any
     tasks_by_id = {task.get("id"): task for task in tasks if task.get("id")}
     blocked: dict[str, dict[str, Any]] = {}
     for task in tasks:
-        if task.get("status") != TASK_STATUS_TODO:
-            continue
         for dep_id in task.get("deps", []) or []:
             dep = tasks_by_id.get(dep_id)
             if dep and dep.get("status") == TASK_STATUS_BLOCKED:
@@ -552,9 +549,7 @@ def _auto_resume_blocked_dependencies(
     for task in blocked_deps:
         last_error = task.get("last_error")
         last_error_type = task.get("last_error_type")
-        if task.get("type") != "plan" and not _is_auto_resumable_error(
-            last_error, last_error_type
-        ):
+        if not _is_auto_resumable_error(last_error, last_error_type):
             continue
         attempts = int(task.get("auto_resume_attempts", 0))
         if attempts >= max_auto_resumes:
@@ -939,8 +934,8 @@ def _validate_review_data(
         }
         if review_changed_set != expected_set:
             return False, "changed_files must match coordinator list"
-        if not files_reviewed_set.issubset(expected_set):
-            return False, "files_reviewed must be a subset of changed_files"
+        if not expected_set.issubset(files_reviewed_set):
+            return False, "not all changed_files were reviewed"
 
     spec_summary = review_data.get("spec_summary")
     valid, error = _validate_string_list(spec_summary, "spec_summary")
@@ -1809,9 +1804,8 @@ def _path_is_ignored(path: str, ignore_patterns: Optional[list[str]] = None) -> 
             continue
         normalized = pattern.rstrip("/")
         if pattern.endswith("/"):
-            if path == normalized:
-                return True
-            if path.startswith(pattern):
+            prefix = f"{normalized}/"
+            if path == normalized or path.startswith(prefix):
                 return True
         else:
             if path == normalized:
@@ -2329,6 +2323,9 @@ def run_feature_prd(
         plan_steps_total = 0
         plan_step_index = 0
         advance_to_tests = True
+        allowed_files: list[str] = []
+        allowed_files_set: Optional[set[str]] = None
+        updated_status: Optional[str] = None
 
         if run_codex:
             try:
@@ -2375,17 +2372,19 @@ def run_feature_prd(
                         steps_all = []
                     plan_steps_total = len(steps_all)
                     plan_step_index = max(0, int(next_task.get("next_plan_step_index", 0)))
-                    if plan_steps_total:
-                        plan_step_index = min(plan_step_index, plan_steps_total - 1)
-                    selected_steps = steps_all[
-                        plan_step_index : plan_step_index + MAX_PLAN_STEPS_PER_RUN
-                    ]
+                    if plan_steps_total and plan_step_index < plan_steps_total:
+                        selected_steps = steps_all[
+                            plan_step_index : plan_step_index + MAX_PLAN_STEPS_PER_RUN
+                        ]
                     plan_steps_text = _format_plan_steps_for_prompt(
                         selected_steps,
                         plan_step_index,
                         plan_steps_total,
                     )
                     allowed_files = _allowed_files_for_steps(selected_steps, plan_data, plan_path)
+                    allowed_files_set = {path for path in allowed_files if path}
+                    if not allowed_files_set:
+                        allowed_files_set = None
                     prompt = _build_phase_prompt(
                         prd_path=prd_path,
                         phase=phase,
@@ -2463,12 +2462,18 @@ def run_feature_prd(
                 next_status = TASK_STATUS_TESTING if phase_test_command else TASK_STATUS_REVIEW
 
             changed_files_after_run = None
+            progress_files = None
             if task_type != "plan" and not planning_impl and not failure:
                 changed_files_after_run = _git_changed_files(
                     project_dir,
                     include_untracked=False,
                     ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
                 )
+                progress_files = changed_files_after_run
+                if allowed_files_set and changed_files_after_run:
+                    progress_files = sorted(
+                        set(changed_files_after_run).intersection(allowed_files_set)
+                    )
 
             manifest = {
                 "run_id": run_id,
@@ -2561,15 +2566,17 @@ def run_feature_prd(
                         else:
                             if changed_files_after_run is None:
                                 target["status"] = next_status or TASK_STATUS_REVIEW
-                            elif not changed_files_after_run:
+                            elif not progress_files:
                                 attempts = _increment_task_counter(target, "no_progress_attempts")
                                 target["status"] = TASK_STATUS_IMPLEMENTING
-                                target["last_error"] = "No changes detected for plan step"
+                                target["last_error"] = "No changes detected in allowed files"
                                 target["last_error_type"] = "no_progress"
-                                target["context"] = target.get("context", []) + [
-                                    "No code edits detected; complete the assigned plan step."
-                                ]
-                                advance_to_tests = False
+                                context_note = "No code edits detected in allowed files; complete the assigned plan step."
+                                if changed_files_after_run:
+                                    context_note = (
+                                        "Changes were outside allowed files; edit only the files for this step."
+                                    )
+                                target["context"] = target.get("context", []) + [context_note]
                                 if attempts >= MAX_NO_PROGRESS_ATTEMPTS:
                                     target["status"] = TASK_STATUS_BLOCKED
                                     target["last_error"] = (
@@ -2577,7 +2584,7 @@ def run_feature_prd(
                                     )
                                     target["last_error_type"] = "no_progress_exhausted"
                             else:
-                                target["last_changed_files"] = changed_files_after_run
+                                target["last_changed_files"] = progress_files
                                 target["last_error"] = None
                                 target["last_error_type"] = None
                                 target["no_progress_attempts"] = 0
@@ -2587,10 +2594,8 @@ def run_feature_prd(
                                     target["next_plan_step_index"] = next_index
                                     if next_index >= plan_steps_total:
                                         target["status"] = next_status or TASK_STATUS_REVIEW
-                                        advance_to_tests = True
                                     else:
                                         target["status"] = TASK_STATUS_IMPLEMENTING
-                                        advance_to_tests = False
                                 else:
                                     target["next_plan_step_index"] = next_index
                                     target["status"] = next_status or TASK_STATUS_REVIEW
@@ -2600,6 +2605,7 @@ def run_feature_prd(
                         )
                         if phase_entry:
                             _sync_phase_status(phase_entry, target["status"])
+                    updated_status = target.get("status") if target else None
                 elif task_type != "plan":
                     raise ValueError(f"Task {task_id} not found in queue")
 
@@ -2665,6 +2671,12 @@ def run_feature_prd(
                     _save_plan(paths["phase_plan"], plan, phases)
                     print(f"\nRun {run_id} complete. Phase plan created.")
                 continue
+            if updated_status:
+                advance_to_tests = updated_status in {
+                    TASK_STATUS_TESTING,
+                    TASK_STATUS_REVIEW,
+                    TASK_STATUS_DONE,
+                }
             if task_type != "plan" and not planning_impl and not advance_to_tests:
                 if plan_steps_total:
                     print(
@@ -2828,7 +2840,7 @@ def run_feature_prd(
         ]
         changed_files = _git_changed_files(
             project_dir,
-            include_untracked=False,
+            include_untracked=True,
             ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
         )
         if not changed_files:
