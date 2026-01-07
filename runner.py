@@ -118,7 +118,8 @@ IGNORED_REVIEW_PATH_PREFIXES = [
     "build/",
     ".eggs/",
     "htmlcov/",
-    "*.egg-info/",
+    "*.egg-info",
+    "*.egg-info/*",
     ".coverage",
     "*.pyc",
     "*.pyo",
@@ -1661,10 +1662,14 @@ def _path_is_ignored(path: str, ignore_patterns: Optional[list[str]] = None) -> 
                 return True
             continue
         normalized = pattern.rstrip("/")
-        if path == normalized:
-            return True
-        if path.startswith(pattern):
-            return True
+        if pattern.endswith("/"):
+            if path == normalized:
+                return True
+            if path.startswith(pattern):
+                return True
+        else:
+            if path == normalized:
+                return True
     return False
 
 
@@ -2250,25 +2255,6 @@ def run_feature_prd(
             stdout_tail = _read_log_tail(Path(run_result["stdout_path"]))
             stderr_tail = _read_log_tail(Path(run_result["stderr_path"]))
 
-            manifest = {
-                "run_id": run_id,
-                "task_id": task_id,
-                "start_time": run_result["start_time"],
-                "end_time": run_result["end_time"],
-                "exit_code": run_result["exit_code"],
-                "timed_out": run_result["timed_out"],
-                "no_heartbeat": run_result["no_heartbeat"],
-                "runtime_seconds": run_result["runtime_seconds"],
-                "command": run_result["command"],
-                "prompt_hash": prompt_hash,
-                "prompt_path": run_result["prompt_path"],
-                "stdout_path": run_result["stdout_path"],
-                "stderr_path": run_result["stderr_path"],
-                "stdout_tail": stdout_tail,
-                "stderr_tail": stderr_tail,
-            }
-            _save_data(run_dir / "manifest.json", manifest)
-
             failure = run_result["exit_code"] != 0 or run_result["no_heartbeat"]
             error_detail = None
             error_type = None
@@ -2302,6 +2288,27 @@ def run_feature_prd(
                     include_untracked=False,
                     ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
                 )
+
+            manifest = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "start_time": run_result["start_time"],
+                "end_time": run_result["end_time"],
+                "exit_code": run_result["exit_code"],
+                "timed_out": run_result["timed_out"],
+                "no_heartbeat": run_result["no_heartbeat"],
+                "runtime_seconds": run_result["runtime_seconds"],
+                "command": run_result["command"],
+                "prompt_hash": prompt_hash,
+                "prompt_path": run_result["prompt_path"],
+                "stdout_path": run_result["stdout_path"],
+                "stderr_path": run_result["stderr_path"],
+                "stdout_tail": stdout_tail,
+                "stderr_tail": stderr_tail,
+            }
+            if changed_files_after_run is not None:
+                manifest["changed_files"] = changed_files_after_run
+            _save_data(run_dir / "manifest.json", manifest)
 
             plan_valid = None
             plan_issue = None
