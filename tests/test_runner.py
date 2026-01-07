@@ -5,131 +5,64 @@ Feature PRD Runner Tests
 """
 
 import sys
-import tempfile
-import shutil
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from feature_prd_runner import runner
+import runner
 
 
-class TestFeaturePrdRunner:
-    """Basic tests for prompt composition and helpers."""
+def test_phase_prompt_includes_readme_and_resume() -> None:
+    prompt = runner._build_phase_prompt(
+        prd_path=Path("/tmp/prd.md"),
+        phase={"id": "phase-1", "description": "Do things"},
+        task={"id": "phase-1", "context": []},
+        events_path=Path("/tmp/events.ndjson"),
+        progress_path=Path("/tmp/progress.json"),
+        run_id="run-1",
+        user_prompt="Prioritize error handling",
+    )
 
-    def __init__(self) -> None:
-        self.test_dir: Path | None = None
-        self.passed = 0
-        self.failed = 0
-
-    def setup(self) -> None:
-        self.test_dir = Path(tempfile.mkdtemp(prefix="feature_prd_runner_test_"))
-
-    def teardown(self) -> None:
-        if self.test_dir and self.test_dir.exists():
-            shutil.rmtree(self.test_dir)
-
-    def assert_true(self, condition: bool, message: str) -> None:
-        if condition:
-            self.passed += 1
-            print(f"  ✓ {message}")
-        else:
-            self.failed += 1
-            print(f"  ✗ {message}")
-
-    def test_phase_prompt_includes_readme_and_resume(self) -> None:
-        print("\n[Test] Phase prompt includes README and resume prompt")
-
-        prompt = runner._build_phase_prompt(
-            prd_path=Path("/tmp/prd.md"),
-            phase={"id": "phase-1", "description": "Do things"},
-            task={"id": "phase-1", "context": []},
-            events_path=Path("/tmp/events.ndjson"),
-            progress_path=Path("/tmp/progress.json"),
-            run_id="run-1",
-            user_prompt="Prioritize error handling",
-        )
-
-        self.assert_true("README.md" in prompt, "README update requirement present")
-        self.assert_true("Special instructions" in prompt, "Resume prompt included")
-
-    def test_review_prompt_mentions_requirements(self) -> None:
-        print("\n[Test] Review prompt mentions requirements")
-
-        prompt = runner._build_review_prompt(
-            phase={"id": "phase-1", "acceptance_criteria": ["AC1"]},
-            review_path=Path("/tmp/review.json"),
-            prd_path=Path("/tmp/prd.md"),
-            prd_text="## Requirements\nREQ-1: Do thing\n",
-            prd_truncated=False,
-            prd_markers=["Requirements", "REQ-1"],
-            user_prompt=None,
-        )
-
-        self.assert_true("PRD:" in prompt, "PRD path included")
-        self.assert_true("acceptance criteria" in prompt.lower(), "Acceptance criteria included")
-        self.assert_true("acceptance_criteria_checklist" in prompt, "Checklist schema included")
-        self.assert_true("spec_summary" in prompt, "Spec summary required")
-        self.assert_true("changed_files" in prompt, "Changed files schema included")
-        self.assert_true("Diff (from coordinator)" in prompt, "Diff block included")
-        self.assert_true("Diffstat (from coordinator)" in prompt, "Diffstat block included")
-        self.assert_true("Git status (from coordinator)" in prompt, "Status block included")
-        self.assert_true("design_assessment" in prompt, "Design assessment required")
-        self.assert_true("architecture_checklist" in prompt, "Architecture checklist required")
-        self.assert_true("spec_traceability" in prompt, "Spec traceability required")
-        self.assert_true("logic_risks" in prompt, "Logic risks required")
-        self.assert_true("Review instructions" in prompt, "Review instructions included")
-
-    def test_plan_prompt_includes_resume_prompt(self) -> None:
-        print("\n[Test] Plan prompt includes resume prompt")
-
-        prompt = runner._build_plan_prompt(
-            prd_path=Path("/tmp/prd.md"),
-            phase_plan_path=Path("/tmp/phase_plan.yaml"),
-            task_queue_path=Path("/tmp/task_queue.yaml"),
-            events_path=Path("/tmp/events.ndjson"),
-            progress_path=Path("/tmp/progress.json"),
-            run_id="run-1",
-            user_prompt="Focus on migrations",
-        )
-
-        self.assert_true("Special instructions" in prompt, "Resume prompt included")
-
-    def run_all(self) -> int:
-        print("\n" + "=" * 70)
-        print("FEATURE PRD RUNNER TESTS")
-        print("=" * 70)
-
-        try:
-            self.setup()
-
-            self.test_phase_prompt_includes_readme_and_resume()
-            self.test_review_prompt_mentions_requirements()
-            self.test_plan_prompt_includes_resume_prompt()
-
-        finally:
-            self.teardown()
-
-        print("\n" + "=" * 70)
-        print("TEST SUMMARY")
-        print("=" * 70)
-        print(f"Passed: {self.passed}")
-        print(f"Failed: {self.failed}")
-        print(f"Total:  {self.passed + self.failed}")
-
-        if self.failed == 0:
-            print("\n✅ All tests passed!")
-            return 0
-
-        print(f"\n❌ {self.failed} test(s) failed")
-        return 1
+    assert "README.md" in prompt
+    assert "Special instructions" in prompt
 
 
-def main() -> int:
-    suite = TestFeaturePrdRunner()
-    return suite.run_all()
+def test_review_prompt_mentions_requirements() -> None:
+    prompt = runner._build_review_prompt(
+        phase={"id": "phase-1", "acceptance_criteria": ["AC1"]},
+        review_path=Path("/tmp/review.json"),
+        prd_path=Path("/tmp/prd.md"),
+        prd_text="## Requirements\nREQ-1: Do thing\n",
+        prd_truncated=False,
+        prd_markers=["Requirements", "REQ-1"],
+        user_prompt=None,
+    )
+
+    assert "PRD:" in prompt
+    assert "acceptance criteria" in prompt.lower()
+    assert "acceptance_criteria_checklist" in prompt
+    assert "spec_summary" in prompt
+    assert "changed_files" in prompt
+    assert "Diff (from coordinator)" in prompt
+    assert "Diffstat (from coordinator)" in prompt
+    assert "Git status (from coordinator)" in prompt
+    assert "design_assessment" in prompt
+    assert "architecture_checklist" in prompt
+    assert "spec_traceability" in prompt
+    assert "logic_risks" in prompt
+    assert "Review instructions" in prompt
 
 
-if __name__ == "__main__":
-    exit(main())
+def test_plan_prompt_includes_resume_prompt() -> None:
+    prompt = runner._build_plan_prompt(
+        prd_path=Path("/tmp/prd.md"),
+        phase_plan_path=Path("/tmp/phase_plan.yaml"),
+        task_queue_path=Path("/tmp/task_queue.yaml"),
+        events_path=Path("/tmp/events.ndjson"),
+        progress_path=Path("/tmp/progress.json"),
+        run_id="run-1",
+        user_prompt="Focus on migrations",
+    )
+
+    assert "Special instructions" in prompt

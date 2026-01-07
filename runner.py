@@ -61,6 +61,7 @@ TRANSIENT_ERROR_MARKERS = (
 
 TASK_STATUS_TODO = "todo"
 TASK_STATUS_DOING = "doing"
+TASK_STATUS_PLAN_IMPL = "plan_impl"
 TASK_STATUS_IMPLEMENTING = "implementing"
 TASK_STATUS_TESTING = "testing"
 TASK_STATUS_REVIEW = "review"
@@ -70,6 +71,7 @@ TASK_STATUS_BLOCKED = "blocked"
 TASK_IN_PROGRESS_STATUSES = {
     TASK_STATUS_DOING,
     "in_progress",
+    TASK_STATUS_PLAN_IMPL,
     TASK_STATUS_IMPLEMENTING,
     TASK_STATUS_TESTING,
     TASK_STATUS_REVIEW,
@@ -78,6 +80,7 @@ TASK_IN_PROGRESS_STATUSES = {
 TASK_RUN_CODEX_STATUSES = {
     TASK_STATUS_DOING,
     "in_progress",
+    TASK_STATUS_PLAN_IMPL,
     TASK_STATUS_IMPLEMENTING,
 }
 
@@ -97,6 +100,11 @@ REVIEW_ARCHITECTURE_CHECKS = [
     "state consistent or idempotent",
     "matches project conventions",
 ]
+MAX_REVIEW_ATTEMPTS = 3
+MAX_NO_CHANGE_ATTEMPTS = 3
+MAX_IMPL_PLAN_ATTEMPTS = 3
+MIN_IMPL_PLAN_STEPS = 5
+IGNORED_REVIEW_PATH_PREFIXES = [".prd_runner/"]
 
 
 def _now_iso() -> str:
@@ -377,6 +385,12 @@ def _normalize_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
         task.setdefault("auto_resume_attempts", 0)
         task.setdefault("last_error", None)
         task.setdefault("last_error_type", None)
+        task.setdefault("review_attempts", 0)
+        task.setdefault("no_change_attempts", 0)
+        task.setdefault("plan_attempts", 0)
+        task.setdefault("impl_plan_path", None)
+        task.setdefault("impl_plan_hash", None)
+        task.setdefault("impl_plan_run_id", None)
         task.setdefault("context", [])
         acceptance = task.get("acceptance_criteria", [])
         if isinstance(acceptance, list):
@@ -499,6 +513,220 @@ def _normalize_text(value: str) -> str:
     return " ".join(value.split()).strip().lower()
 
 
+def _increment_task_counter(task: dict[str, Any], field: str) -> int:
+    attempts = int(task.get(field, 0)) + 1
+    task[field] = attempts
+    return attempts
+
+
+def _sanitize_phase_id(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "phase"
+
+
+def _impl_plan_path(artifacts_dir: Path, phase_id: str) -> Path:
+    safe_id = _sanitize_phase_id(phase_id)
+    return artifacts_dir / f"impl_plan_{safe_id}.json"
+
+
+def _hash_json_data(data: dict[str, Any]) -> str:
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _render_json_for_prompt(data: dict[str, Any], max_chars: int = 20000) -> tuple[str, bool]:
+    text = json.dumps(data, indent=2, sort_keys=True)
+    if len(text) <= max_chars:
+        return text, False
+    return text[:max_chars], True
+
+
+def _is_docs_only_phase(phase: dict[str, Any]) -> bool:
+    keywords = ["doc", "docs", "readme", "documentation"]
+    haystack = " ".join(
+        str(value or "")
+        for value in [
+            phase.get("name"),
+            phase.get("description"),
+            " ".join(phase.get("acceptance_criteria") or []),
+        ]
+    ).lower()
+    return any(keyword in haystack for keyword in keywords)
+
+
+def _plan_deviations_present(plan_data: dict[str, Any]) -> bool:
+    deviations = plan_data.get("plan_deviations")
+    if not isinstance(deviations, list):
+        return False
+    return any(isinstance(item, str) and item.strip() for item in deviations)
+
+
+def _validate_impl_plan_data(
+    plan_data: dict[str, Any],
+    phase: dict[str, Any],
+    prd_markers: Optional[list[str]] = None,
+    prd_truncated: bool = False,
+    prd_has_content: bool = True,
+    expected_test_command: Optional[str] = None,
+) -> tuple[bool, str]:
+    if not isinstance(plan_data, dict):
+        return False, "Implementation plan is not a JSON object"
+
+    phase_id = phase.get("id")
+    if not plan_data.get("phase_id"):
+        return False, "phase_id missing"
+    if phase_id and str(plan_data.get("phase_id")) != str(phase_id):
+        return False, "phase_id does not match current phase"
+
+    if not prd_has_content:
+        return False, "PRD content missing for plan"
+
+    spec_summary = plan_data.get("spec_summary")
+    valid, error = _validate_string_list(spec_summary, "spec_summary")
+    if not valid:
+        return False, error
+
+    prd_markers = prd_markers or []
+    markers_normalized = [_normalize_text(marker) for marker in prd_markers if marker]
+    if markers_normalized:
+        summary_text = " ".join(_normalize_text(item) for item in spec_summary)
+        marker_hits = sum(1 for marker in markers_normalized if marker in summary_text)
+        if marker_hits == 0:
+            return False, "spec_summary must reference PRD section headers or IDs"
+        if prd_truncated:
+            required_hits = min(2, len(markers_normalized))
+            if marker_hits < required_hits:
+                return False, "spec_summary must cite multiple PRD sections when truncated"
+
+    steps = plan_data.get("steps")
+    if not isinstance(steps, list) or len(steps) < MIN_IMPL_PLAN_STEPS:
+        return False, f"steps must include at least {MIN_IMPL_PLAN_STEPS} items"
+    step_ids: set[str] = set()
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            return False, f"steps[{index}] must be an object"
+        missing_fields = []
+        step_id = str(step.get("id", "")).strip()
+        title = str(step.get("title", "")).strip()
+        details = str(step.get("details", "")).strip()
+        files = step.get("files")
+        done_when = step.get("done_when")
+        if not step_id:
+            missing_fields.append("id")
+        if not title:
+            missing_fields.append("title")
+        if not details:
+            missing_fields.append("details")
+        if not isinstance(files, list) or not files or any(
+            not isinstance(path, str) or not path.strip() for path in files
+        ):
+            missing_fields.append("files")
+        if not isinstance(done_when, list) or not done_when or any(
+            not isinstance(item, str) or not item.strip() for item in done_when
+        ):
+            missing_fields.append("done_when")
+        if missing_fields:
+            return False, f"steps[{index}] missing or invalid: {', '.join(missing_fields)}"
+        if step_id in step_ids:
+            return False, f"steps[{index}] has duplicate id"
+        step_ids.add(step_id)
+
+    files_to_change = plan_data.get("files_to_change")
+    if not isinstance(files_to_change, list):
+        return False, "files_to_change must be a list"
+    if not files_to_change and not _is_docs_only_phase(phase):
+        return False, "files_to_change must be non-empty for non-docs phases"
+    if any(not isinstance(path, str) or not path.strip() for path in files_to_change):
+        return False, "files_to_change must contain non-empty strings"
+
+    new_files = plan_data.get("new_files")
+    if not isinstance(new_files, list):
+        return False, "new_files must be a list"
+    if any(not isinstance(path, str) or not path.strip() for path in new_files):
+        return False, "new_files must contain non-empty strings"
+
+    design_notes = plan_data.get("design_notes")
+    if not isinstance(design_notes, dict):
+        return False, "design_notes must be an object"
+    valid, error = _validate_string_list(
+        design_notes.get("architecture"),
+        "design_notes.architecture",
+        min_items=REVIEW_MIN_ARCH_SUMMARY_ITEMS,
+        max_items=REVIEW_MAX_ARCH_SUMMARY_ITEMS,
+    )
+    if not valid:
+        return False, error
+    for field in ["data_flow", "invariants", "edge_cases"]:
+        valid, error = _validate_string_list(
+            design_notes.get(field),
+            f"design_notes.{field}",
+        )
+        if not valid:
+            return False, error
+
+    test_plan = plan_data.get("test_plan")
+    if not isinstance(test_plan, dict):
+        return False, "test_plan must be an object"
+    commands = test_plan.get("commands")
+    if expected_test_command and (
+        not isinstance(commands, list) or not commands or any(
+            not isinstance(cmd, str) or not cmd.strip() for cmd in commands
+        )
+    ):
+        return False, "test_plan.commands must include at least one command"
+    for field in ["new_tests", "manual_checks"]:
+        value = test_plan.get(field)
+        if not isinstance(value, list):
+            return False, f"test_plan.{field} must be a list"
+
+    migration = plan_data.get("migration_or_rollout")
+    if not isinstance(migration, list):
+        return False, "migration_or_rollout must be a list"
+    open_questions = plan_data.get("open_questions")
+    if not isinstance(open_questions, list):
+        return False, "open_questions must be a list"
+    assumptions = plan_data.get("assumptions")
+    if not isinstance(assumptions, list):
+        return False, "assumptions must be a list"
+
+    acceptance = phase.get("acceptance_criteria") or []
+    acceptance_mapping = plan_data.get("acceptance_mapping")
+    if not isinstance(acceptance_mapping, list) or not acceptance_mapping:
+        return False, "acceptance_mapping must be a non-empty list"
+    mapping_criteria: set[str] = set()
+    for index, item in enumerate(acceptance_mapping):
+        if not isinstance(item, dict):
+            return False, f"acceptance_mapping[{index}] must be an object"
+        missing_fields = []
+        criterion_raw = str(item.get("criterion", "")).strip()
+        criterion = _normalize_text(criterion_raw)
+        plan_steps = item.get("plan_steps")
+        evidence_strategy = str(item.get("evidence_strategy", "")).strip()
+        if not criterion:
+            missing_fields.append("criterion")
+        if not isinstance(plan_steps, list) or not plan_steps:
+            missing_fields.append("plan_steps")
+        if not evidence_strategy:
+            missing_fields.append("evidence_strategy")
+        if missing_fields:
+            return False, f"acceptance_mapping[{index}] missing or invalid: {', '.join(missing_fields)}"
+        if any(step_id not in step_ids for step_id in plan_steps):
+            return False, f"acceptance_mapping[{index}] references unknown step ids"
+        mapping_criteria.add(criterion)
+
+    if isinstance(acceptance, list) and acceptance:
+        normalized_acceptance = {
+            _normalize_text(str(criterion))
+            for criterion in acceptance
+            if str(criterion).strip()
+        }
+        missing = [criterion for criterion in normalized_acceptance if criterion not in mapping_criteria]
+        if missing:
+            return False, "acceptance_mapping missing criteria entries"
+    else:
+        if "(none provided)" not in mapping_criteria:
+            return False, 'acceptance_mapping must include "(none provided)"'
+
+    return True, ""
 def _validate_string_list(
     value: Any,
     field_name: str,
@@ -521,6 +749,7 @@ def _validate_review_data(
     prd_markers: Optional[list[str]] = None,
     prd_truncated: bool = False,
     prd_has_content: bool = True,
+    plan_step_ids: Optional[list[str]] = None,
 ) -> tuple[bool, str]:
     if not isinstance(review_data, dict):
         return False, "Review output is not a JSON object"
@@ -653,6 +882,8 @@ def _validate_review_data(
     if len(spec_traceability) < spec_trace_min:
         return False, f"spec_traceability must include at least {spec_trace_min} items"
     trace_has_marker = False
+    trace_has_step = False
+    normalized_steps = {_normalize_text(step_id) for step_id in (plan_step_ids or []) if step_id}
     for index, item in enumerate(spec_traceability):
         if not isinstance(item, dict):
             return False, f"spec_traceability[{index}] must be an object"
@@ -673,8 +904,12 @@ def _validate_review_data(
             return False, f"spec_traceability[{index}] missing or invalid: {', '.join(missing_fields)}"
         if markers_normalized and any(marker in requirement_norm for marker in markers_normalized):
             trace_has_marker = True
+        if normalized_steps and any(step_id in requirement_norm for step_id in normalized_steps):
+            trace_has_step = True
     if markers_normalized and not trace_has_marker:
         return False, "spec_traceability must reference PRD sections or IDs"
+    if normalized_steps and not trace_has_step:
+        return False, "spec_traceability must reference plan step IDs"
 
     logic_risks = review_data.get("logic_risks")
     if not isinstance(logic_risks, list) or not logic_risks:
@@ -821,6 +1056,9 @@ def _build_phase_prompt(
     progress_path: Path,
     run_id: str,
     user_prompt: Optional[str],
+    impl_plan_text: str = "",
+    impl_plan_truncated: bool = False,
+    impl_plan_path: Optional[Path] = None,
 ) -> str:
     phase_name = phase.get("name") or phase.get("id")
     acceptance = phase.get("acceptance_criteria") or []
@@ -831,6 +1069,10 @@ def _build_phase_prompt(
     context_block = "\n".join(f"- {item}" for item in context_items) if context_items else "- (none)"
 
     user_block = f"\nSpecial instructions:\n{user_prompt}\n" if user_prompt else ""
+    plan_notice = ""
+    if impl_plan_truncated:
+        plan_notice = "\nNOTE: Plan truncated. Open the plan file for full details.\n"
+    plan_path_display = impl_plan_path or "(missing)"
     return f"""You are a Codex CLI worker. Implement the phase described below.
 
 PRD: {prd_path}
@@ -848,6 +1090,12 @@ Rules:
 - Do not commit or push; the coordinator will handle git.
 - If tests fail, fix them (the coordinator will also run tests).
 - Keep the project's README.md updated with changes in this phase (features, setup, usage).
+- Follow the implementation plan below. If you must deviate, update the plan file
+  with a non-empty "plan_deviations" list explaining why.
+
+Implementation plan ({plan_path_display}):
+{impl_plan_text or "(missing)"}
+{plan_notice}
 
 Progress contract (REQUIRED):
 - Append events to: {events_path}
@@ -900,6 +1148,108 @@ def _extract_prd_markers(prd_text: str, max_items: int = 20) -> list[str]:
     return markers
 
 
+def _build_impl_plan_prompt(
+    phase: dict[str, Any],
+    prd_path: Path,
+    prd_text: str,
+    prd_truncated: bool,
+    prd_markers: Optional[list[str]],
+    impl_plan_path: Path,
+    user_prompt: Optional[str],
+    progress_path: Optional[Path] = None,
+    run_id: Optional[str] = None,
+    test_command: Optional[str] = None,
+) -> str:
+    acceptance = phase.get("acceptance_criteria") or []
+    acceptance_block = "\n".join(f"- {item}" for item in acceptance) if acceptance else "- (none)"
+    user_block = f"\nSpecial instructions:\n{user_prompt}\n" if user_prompt else ""
+    prd_notice = ""
+    if prd_truncated:
+        prd_notice = (
+            "\nNOTE: PRD content truncated. Open the PRD file to read the full spec.\n"
+        )
+    prd_markers = prd_markers or []
+    markers_block = "\n".join(f"- {item}" for item in prd_markers) if prd_markers else "- (none found)"
+    progress_block = ""
+    if progress_path and run_id:
+        progress_block = (
+            "\nProgress contract (REQUIRED):\n"
+            f"- Write snapshot to: {progress_path}\n"
+            f"  Required fields: run_id={run_id}, task_id, phase, actions, claims, "
+            "next_steps, blocking_issues, heartbeat.\n"
+        )
+    test_block = test_command or "(none specified)"
+    return f"""You are a Codex CLI worker. Produce an implementation plan for the phase below.
+
+PRD: {prd_path}
+PRD content (read first):
+{prd_text}
+{prd_notice}
+PRD sections/IDs (cite in spec_summary):
+{markers_block}
+
+Phase: {phase.get("name") or phase.get("id")}
+Description: {phase.get("description", "")}
+Acceptance criteria:
+{acceptance_block}
+Global/phase test command: {test_block}
+{user_block}
+{progress_block}
+
+Output file (write JSON): {impl_plan_path}
+
+Plan schema (strict):
+{{
+  "phase_id": "{phase.get('id')}",
+  "spec_summary": ["PRD requirements relevant to this phase (with section/IDs)"],
+  "acceptance_mapping": [
+    {{
+      "criterion": "exact acceptance criterion",
+      "plan_steps": ["S1", "S3"],
+      "evidence_strategy": "how we'll prove it works"
+    }}
+  ],
+  "files_to_change": ["path/a.py", "path/b.ts"],
+  "new_files": ["path/new_file.py"],
+  "steps": [
+    {{
+      "id": "S1",
+      "title": "Short action",
+      "details": "precise instructions",
+      "files": ["path/a.py"],
+      "risks": ["..."],
+      "done_when": ["observable checks"]
+    }}
+  ],
+  "design_notes": {{
+    "architecture": ["3-8 bullets"],
+    "data_flow": ["..."],
+    "invariants": ["..."],
+    "edge_cases": ["..."]
+  }},
+  "test_plan": {{
+    "commands": ["npm test", "pytest -q"],
+    "new_tests": ["tests/test_x.py::test_y"],
+    "manual_checks": ["..."]
+  }},
+  "migration_or_rollout": ["if applicable, otherwise '(none)'"],
+  "open_questions": ["if any"],
+  "assumptions": ["..."],
+  "plan_deviations": []
+}}
+
+Rules:
+- Cite PRD section headers/IDs in spec_summary where available.
+- Include at least {MIN_IMPL_PLAN_STEPS} steps with unique IDs.
+- Steps must be concrete, reference real files, and include done_when checks.
+- If you cannot infer exact files, include open_questions and propose a safe default plan.
+- Ensure acceptance_mapping covers every acceptance criterion with step IDs.
+- If acceptance criteria are empty, include one mapping with criterion "(none provided)".
+- files_to_change must be non-empty unless the phase is docs-only.
+- Set plan_deviations to an empty list in the initial plan.
+"""
+
+
 def _build_review_prompt(
     phase: dict[str, Any],
     review_path: Path,
@@ -917,6 +1267,9 @@ def _build_review_prompt(
     diff_stat_truncated: bool = False,
     status_text: str = "",
     status_truncated: bool = False,
+    impl_plan_text: str = "",
+    impl_plan_truncated: bool = False,
+    plan_step_ids: Optional[list[str]] = None,
 ) -> str:
     acceptance = phase.get("acceptance_criteria") or []
     acceptance_block = "\n".join(f"- {item}" for item in acceptance) if acceptance else "- (none)"
@@ -950,6 +1303,11 @@ def _build_review_prompt(
     if status_truncated:
         status_notice = "\nNOTE: Status truncated.\n"
     status_block = status_text if status_text else "(clean)"
+    plan_notice = ""
+    if impl_plan_truncated:
+        plan_notice = "\nNOTE: Implementation plan truncated. Open the plan file for full details.\n"
+    plan_step_ids = plan_step_ids or []
+    plan_steps_block = ", ".join(plan_step_ids) if plan_step_ids else "(none)"
     return f"""Perform a code review for the phase below and write JSON to {review_path}.
 
 Phase: {phase.get("name") or phase.get("id")}
@@ -978,6 +1336,11 @@ Diffstat (from coordinator):
 Diff (from coordinator):
 {diff_block}
 {diff_notice}
+
+Implementation plan (from coordinator):
+{impl_plan_text or "(missing)"}
+{plan_notice}
+Plan step IDs: {plan_steps_block}
 
 Review output schema:
 {{
@@ -1040,6 +1403,7 @@ Review instructions:
 - Populate spec_traceability for PRD requirements, not just acceptance criteria.
 - Complete design_assessment and architecture_checklist from the code and diff.
 - If you cannot describe architecture/data flow/invariants from code, add a blocking_issue.
+- Verify implementation aligns with the plan; cite plan step IDs in spec_traceability where relevant.
 - For each acceptance criterion, fill acceptance_criteria_checklist with met + evidence.
 - If acceptance criteria are empty, include one checklist item with criterion "(none provided)".
 - Provide at least {REVIEW_MIN_EVIDENCE_ITEMS} concrete evidence items tied to files/diff.
@@ -1260,13 +1624,19 @@ def _git_has_changes(project_dir: Path) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def _git_changed_files(project_dir: Path) -> list[str]:
+def _git_changed_files(
+    project_dir: Path,
+    include_untracked: bool = True,
+    ignore_prefixes: Optional[list[str]] = None,
+) -> list[str]:
     changed: set[str] = set()
     commands = [
         ["git", "diff", "--name-only"],
         ["git", "diff", "--name-only", "--staged"],
-        ["git", "ls-files", "--others", "--exclude-standard"],
     ]
+    if include_untracked:
+        commands.append(["git", "ls-files", "--others", "--exclude-standard"])
+    ignore_prefixes = ignore_prefixes or []
     for command in commands:
         result = subprocess.run(
             command,
@@ -1280,6 +1650,8 @@ def _git_changed_files(project_dir: Path) -> list[str]:
         for line in result.stdout.splitlines():
             line = line.strip()
             if line:
+                if any(line == prefix.rstrip("/") or line.startswith(prefix) for prefix in ignore_prefixes):
+                    continue
                 changed.add(line)
     return sorted(changed)
 
@@ -1356,8 +1728,40 @@ def _git_status_porcelain(project_dir: Path, max_chars: int = 2000) -> tuple[str
     return content[:max_chars], True
 
 
+def _git_is_ignored(project_dir: Path, path: str) -> bool:
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", path],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _git_tracked_paths(project_dir: Path, path: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "ls-files", path],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 def _git_commit_and_push(project_dir: Path, branch: str, message: str) -> None:
-    subprocess.run(["git", "add", "-A"], cwd=project_dir, check=True)
+    if _git_tracked_paths(project_dir, ".prd_runner"):
+        raise RuntimeError(".prd_runner is tracked; remove it from git history before committing")
+    if not _git_is_ignored(project_dir, ".prd_runner"):
+        raise RuntimeError(".prd_runner is not ignored; add it to .gitignore before committing")
+    subprocess.run(
+        ["git", "add", "-A", "--", ".", ":(exclude).prd_runner", ":(exclude).prd_runner/**"],
+        cwd=project_dir,
+        check=True,
+    )
     subprocess.run(["git", "commit", "-m", message], cwd=project_dir, check=True)
     subprocess.run(["git", "push", "-u", "origin", branch], cwd=project_dir, check=True)
 
@@ -1545,14 +1949,45 @@ def run_feature_prd(
                 if task_type == "plan":
                     next_task["status"] = TASK_STATUS_DOING
                 else:
-                    next_task["status"] = TASK_STATUS_IMPLEMENTING
+                    next_task["status"] = TASK_STATUS_PLAN_IMPL
                 task_status = next_task["status"]
-            if task_type != "plan" and task_status in {TASK_STATUS_TESTING, TASK_STATUS_REVIEW}:
-                if not _has_implementation_evidence(next_task, paths["runs"], project_dir):
+            if task_type != "plan":
+                phase_entry = _phase_for_task(phases, next_task)
+                plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
+                prd_text, prd_truncated = _read_text_for_prompt(prd_path)
+                prd_markers = _extract_prd_markers(prd_text)
+                phase_test_command = None
+                if phase_entry:
+                    phase_test_command = (
+                        phase_entry.get("test_command")
+                        or next_task.get("test_command")
+                        or test_command
+                    )
+                plan_data = _load_data(plan_path, {})
+                plan_valid, plan_issue = _validate_impl_plan_data(
+                    plan_data,
+                    phase_entry or {"id": phase_id or task_id, "acceptance_criteria": []},
+                    prd_markers=prd_markers,
+                    prd_truncated=prd_truncated,
+                    prd_has_content=bool(prd_text.strip()),
+                    expected_test_command=phase_test_command,
+                )
+                if task_status == TASK_STATUS_PLAN_IMPL and plan_valid:
                     next_task["status"] = TASK_STATUS_IMPLEMENTING
-                    next_task["last_error"] = "No implementation evidence; rerunning implementation"
-                    next_task["last_error_type"] = "missing_implementation"
+                    next_task["impl_plan_path"] = str(plan_path)
+                    next_task["impl_plan_hash"] = _hash_json_data(plan_data)
                     task_status = next_task["status"]
+                if task_status in {TASK_STATUS_IMPLEMENTING, TASK_STATUS_TESTING, TASK_STATUS_REVIEW}:
+                    if not plan_valid:
+                        next_task["status"] = TASK_STATUS_PLAN_IMPL
+                        next_task["last_error"] = f"Implementation plan invalid: {plan_issue}"
+                        next_task["last_error_type"] = "impl_plan_invalid"
+                        task_status = next_task["status"]
+                    elif not _has_implementation_evidence(next_task, paths["runs"], project_dir):
+                        next_task["status"] = TASK_STATUS_IMPLEMENTING
+                        next_task["last_error"] = "No implementation evidence; rerunning implementation"
+                        next_task["last_error_type"] = "missing_implementation"
+                        task_status = next_task["status"]
             if task_type != "plan" and _git_has_changes(project_dir):
                 dirty_note = "Workspace has uncommitted changes; continue from them and do not reset."
                 context = next_task.get("context", []) or []
@@ -1669,6 +2104,7 @@ def run_feature_prd(
                         _save_queue(paths["task_queue"], queue, tasks)
                 continue
 
+        planning_impl = task_type != "plan" and task_status == TASK_STATUS_PLAN_IMPL
         run_codex = task_type == "plan" or task_status in TASK_RUN_CODEX_STATUSES
 
         if run_codex:
@@ -1683,9 +2119,35 @@ def run_feature_prd(
                         run_id=run_id,
                         user_prompt=user_prompt,
                     )
+                elif planning_impl:
+                    plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
+                    prd_text, prd_truncated = _read_text_for_prompt(prd_path)
+                    prd_markers = _extract_prd_markers(prd_text)
+                    phase_test_command = None
+                    if phase:
+                        phase_test_command = (
+                            phase.get("test_command")
+                            or next_task.get("test_command")
+                            or test_command
+                        )
+                    prompt = _build_impl_plan_prompt(
+                        phase=phase or {"id": phase_id or task_id, "acceptance_criteria": []},
+                        prd_path=prd_path,
+                        prd_text=prd_text,
+                        prd_truncated=prd_truncated,
+                        prd_markers=prd_markers,
+                        impl_plan_path=plan_path,
+                        user_prompt=user_prompt,
+                        progress_path=progress_path,
+                        run_id=run_id,
+                        test_command=phase_test_command,
+                    )
                 else:
                     if not phase:
                         raise ValueError("Phase not found for task")
+                    plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
+                    plan_data = _load_data(plan_path, {})
+                    plan_text, plan_truncated = _render_json_for_prompt(plan_data)
                     prompt = _build_phase_prompt(
                         prd_path=prd_path,
                         phase=phase,
@@ -1694,6 +2156,9 @@ def run_feature_prd(
                         progress_path=progress_path,
                         run_id=run_id,
                         user_prompt=user_prompt,
+                        impl_plan_text=plan_text,
+                        impl_plan_truncated=plan_truncated,
+                        impl_plan_path=plan_path,
                     )
 
                 prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -1777,6 +2242,26 @@ def run_feature_prd(
                 )
                 next_status = TASK_STATUS_TESTING if phase_test_command else TASK_STATUS_REVIEW
 
+            plan_valid = None
+            plan_issue = None
+            plan_hash = None
+            plan_path = None
+            if planning_impl and not failure:
+                plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
+                plan_data = _load_data(plan_path, {})
+                prd_text, prd_truncated = _read_text_for_prompt(prd_path)
+                prd_markers = _extract_prd_markers(prd_text)
+                plan_valid, plan_issue = _validate_impl_plan_data(
+                    plan_data,
+                    phase or {"id": phase_id or task_id, "acceptance_criteria": []},
+                    prd_markers=prd_markers,
+                    prd_truncated=prd_truncated,
+                    prd_has_content=bool(prd_text.strip()),
+                    expected_test_command=phase_test_command,
+                )
+                if plan_valid:
+                    plan_hash = _hash_json_data(plan_data)
+
             with FileLock(lock_path):
                 run_state = _load_data(paths["run_state"], {})
                 queue = _load_data(paths["task_queue"], {})
@@ -1794,12 +2279,34 @@ def run_feature_prd(
                         if target["attempts"] >= max_attempts:
                             target["status"] = TASK_STATUS_BLOCKED
                         else:
-                            target["status"] = TASK_STATUS_TODO
+                            target["status"] = (
+                                TASK_STATUS_PLAN_IMPL if planning_impl else TASK_STATUS_TODO
+                            )
                     else:
                         target["last_error"] = None
                         target["last_error_type"] = None
                         if task_type == "plan":
                             target["status"] = TASK_STATUS_DONE
+                        elif planning_impl:
+                            if plan_valid:
+                                target["status"] = TASK_STATUS_IMPLEMENTING
+                                target["impl_plan_path"] = str(plan_path)
+                                target["impl_plan_hash"] = plan_hash
+                                target["impl_plan_run_id"] = run_id
+                                target["plan_attempts"] = 0
+                            else:
+                                target["status"] = TASK_STATUS_PLAN_IMPL
+                                target["last_error"] = (
+                                    f"Implementation plan invalid: {plan_issue}"
+                                )
+                                target["last_error_type"] = "impl_plan_invalid"
+                                attempts = _increment_task_counter(target, "plan_attempts")
+                                if attempts >= MAX_IMPL_PLAN_ATTEMPTS:
+                                    target["status"] = TASK_STATUS_BLOCKED
+                                    target["last_error"] = (
+                                        f"Plan invalid after {attempts} attempts; blocking task."
+                                    )
+                                    target["last_error_type"] = "impl_plan_attempts_exhausted"
                         else:
                             target["status"] = next_status or TASK_STATUS_REVIEW
                     if task_type != "plan":
@@ -1829,6 +2336,15 @@ def run_feature_prd(
             if failure:
                 print(f"\nRun {run_id} failed: {error_detail}")
                 print(f"See logs: {run_dir / 'stderr.log'}")
+                continue
+
+            if planning_impl:
+                if plan_valid:
+                    print(f"\nRun {run_id} complete. Implementation plan created.")
+                else:
+                    print(
+                        f"\nRun {run_id} complete, but implementation plan invalid: {plan_issue}"
+                    )
                 continue
 
             if task_type == "plan":
@@ -1894,7 +2410,82 @@ def run_feature_prd(
             print(f"\nTask {task_id} missing after run; skipping phase work.")
             continue
 
+        plan_path = Path(
+            target.get("impl_plan_path") or _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
+        )
+        prd_text, prd_truncated = _read_text_for_prompt(prd_path)
+        prd_markers = _extract_prd_markers(prd_text)
+        plan_data = _load_data(plan_path, {})
         phase_test_command = phase.get("test_command") or target.get("test_command") or test_command
+        plan_valid, plan_issue = _validate_impl_plan_data(
+            plan_data,
+            phase,
+            prd_markers=prd_markers,
+            prd_truncated=prd_truncated,
+            prd_has_content=bool(prd_text.strip()),
+            expected_test_command=phase_test_command,
+        )
+        if not plan_valid:
+            target["status"] = TASK_STATUS_PLAN_IMPL
+            target["last_error"] = f"Implementation plan invalid: {plan_issue}"
+            target["last_error_type"] = "impl_plan_invalid"
+            attempts = _increment_task_counter(target, "plan_attempts")
+            target["context"] = target.get("context", []) + [
+                f"Implementation plan invalid: {plan_issue}"
+            ]
+            _sync_phase_status(phase, target["status"])
+            _save_queue(paths["task_queue"], queue, tasks)
+            _save_plan(paths["phase_plan"], plan, phases)
+            if attempts >= MAX_IMPL_PLAN_ATTEMPTS:
+                target["status"] = TASK_STATUS_BLOCKED
+                target["last_error"] = (
+                    f"Plan invalid after {attempts} attempts; blocking task."
+                )
+                target["last_error_type"] = "impl_plan_attempts_exhausted"
+                _sync_phase_status(phase, target["status"])
+                _save_queue(paths["task_queue"], queue, tasks)
+                _save_plan(paths["phase_plan"], plan, phases)
+                print(
+                    f"\nImplementation plan invalid for phase {phase.get('id')} after {attempts} attempts. Blocking task."
+                )
+                continue
+            print(f"\nImplementation plan invalid for phase {phase.get('id')}. Re-queueing task.")
+            continue
+
+        plan_hash_current = _hash_json_data(plan_data)
+        target["impl_plan_path"] = str(plan_path)
+        if target.get("impl_plan_hash") and target["impl_plan_hash"] != plan_hash_current:
+            if not _plan_deviations_present(plan_data):
+                target["status"] = TASK_STATUS_IMPLEMENTING
+                target["last_error"] = "Plan changed without plan_deviations"
+                target["last_error_type"] = "plan_deviation_missing"
+                attempts = _increment_task_counter(target, "plan_attempts")
+                target["context"] = target.get("context", []) + [
+                    "Plan changed; add plan_deviations explaining why."
+                ]
+                _sync_phase_status(phase, target["status"])
+                _save_queue(paths["task_queue"], queue, tasks)
+                _save_plan(paths["phase_plan"], plan, phases)
+                if attempts >= MAX_IMPL_PLAN_ATTEMPTS:
+                    target["status"] = TASK_STATUS_BLOCKED
+                    target["last_error"] = (
+                        f"Plan deviation missing after {attempts} attempts; blocking task."
+                    )
+                    target["last_error_type"] = "impl_plan_attempts_exhausted"
+                    _sync_phase_status(phase, target["status"])
+                    _save_queue(paths["task_queue"], queue, tasks)
+                    _save_plan(paths["phase_plan"], plan, phases)
+                    print(
+                        f"\nPlan deviations missing for phase {phase.get('id')} after {attempts} attempts. Blocking task."
+                    )
+                    continue
+                print(
+                    f"\nPlan changed without deviations for phase {phase.get('id')}. Re-queueing implementation."
+                )
+                continue
+        target["impl_plan_hash"] = plan_hash_current
+        target["plan_attempts"] = 0
+
         test_log = None
         if phase_test_command:
             test_log_path = paths["artifacts"] / f"tests_{phase.get('id')}.log"
@@ -1937,19 +2528,44 @@ def run_feature_prd(
 
         prd_text, prd_truncated = _read_text_for_prompt(prd_path)
         prd_markers = _extract_prd_markers(prd_text)
-        changed_files = _git_changed_files(project_dir)
+        plan_text, plan_truncated = _render_json_for_prompt(plan_data)
+        plan_step_ids = [
+            str(step.get("id")).strip()
+            for step in plan_data.get("steps", [])
+            if isinstance(step, dict) and str(step.get("id")).strip()
+        ]
+        changed_files = _git_changed_files(
+            project_dir,
+            include_untracked=False,
+            ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
+        )
         if not changed_files:
             target["status"] = TASK_STATUS_IMPLEMENTING
             target["last_error"] = "No changed files to review"
             target["last_error_type"] = "review_no_changes"
+            attempts = _increment_task_counter(target, "no_change_attempts")
             target["context"] = target.get("context", []) + [
                 "No changed files detected; implement changes before review."
             ]
             _sync_phase_status(phase, target["status"])
             _save_queue(paths["task_queue"], queue, tasks)
             _save_plan(paths["phase_plan"], plan, phases)
+            if attempts >= MAX_NO_CHANGE_ATTEMPTS:
+                target["status"] = TASK_STATUS_BLOCKED
+                target["last_error"] = (
+                    f"No changes detected after {attempts} attempts; blocking task."
+                )
+                target["last_error_type"] = "no_changes_exhausted"
+                _sync_phase_status(phase, target["status"])
+                _save_queue(paths["task_queue"], queue, tasks)
+                _save_plan(paths["phase_plan"], plan, phases)
+                print(
+                    f"\nNo changes for phase {phase.get('id')} after {attempts} attempts. Blocking task."
+                )
+                continue
             print(f"\nNo changed files for phase {phase.get('id')}. Re-queueing task.")
             continue
+        target["no_change_attempts"] = 0
 
         diff_text, diff_truncated = _git_diff_text(project_dir)
         diff_stat, diff_stat_truncated = _git_diff_stat(project_dir)
@@ -1986,6 +2602,9 @@ def run_feature_prd(
             diff_stat_truncated=diff_stat_truncated,
             status_text=status_text,
             status_truncated=status_truncated,
+            impl_plan_text=plan_text,
+            impl_plan_truncated=plan_truncated,
+            plan_step_ids=plan_step_ids,
         )
 
         review_result = _run_codex_worker(
@@ -2008,12 +2627,26 @@ def run_feature_prd(
             target["status"] = TASK_STATUS_REVIEW
             target["last_error"] = f"Review failed: {review_stderr.strip() or review_stdout.strip()}"
             target["last_error_type"] = "review_failed"
+            attempts = _increment_task_counter(target, "review_attempts")
             target["context"] = target.get("context", []) + [
                 "Review failed; rerun review and fix issues."
             ]
             _sync_phase_status(phase, target["status"])
             _save_queue(paths["task_queue"], queue, tasks)
             _save_plan(paths["phase_plan"], plan, phases)
+            if attempts >= MAX_REVIEW_ATTEMPTS:
+                target["status"] = TASK_STATUS_BLOCKED
+                target["last_error"] = (
+                    f"Review failed after {attempts} attempts; blocking task."
+                )
+                target["last_error_type"] = "review_attempts_exhausted"
+                _sync_phase_status(phase, target["status"])
+                _save_queue(paths["task_queue"], queue, tasks)
+                _save_plan(paths["phase_plan"], plan, phases)
+                print(
+                    f"\nReview failed for phase {phase.get('id')} after {attempts} attempts. Blocking task."
+                )
+                continue
             print(f"\nReview step failed for phase {phase.get('id')}. Re-queueing task.")
             continue
 
@@ -2025,17 +2658,32 @@ def run_feature_prd(
             prd_markers=prd_markers,
             prd_truncated=prd_truncated,
             prd_has_content=bool(prd_text.strip()),
+            plan_step_ids=plan_step_ids,
         )
         if not valid_review:
             target["status"] = TASK_STATUS_REVIEW
             target["last_error"] = f"Review output invalid: {review_issue}"
             target["last_error_type"] = "review_invalid"
+            attempts = _increment_task_counter(target, "review_attempts")
             target["context"] = target.get("context", []) + [
                 f"Review output invalid: {review_issue}"
             ]
             _sync_phase_status(phase, target["status"])
             _save_queue(paths["task_queue"], queue, tasks)
             _save_plan(paths["phase_plan"], plan, phases)
+            if attempts >= MAX_REVIEW_ATTEMPTS:
+                target["status"] = TASK_STATUS_BLOCKED
+                target["last_error"] = (
+                    f"Review invalid after {attempts} attempts; blocking task."
+                )
+                target["last_error_type"] = "review_attempts_exhausted"
+                _sync_phase_status(phase, target["status"])
+                _save_queue(paths["task_queue"], queue, tasks)
+                _save_plan(paths["phase_plan"], plan, phases)
+                print(
+                    f"\nReview invalid for phase {phase.get('id')} after {attempts} attempts. Blocking task."
+                )
+                continue
             print(f"\nReview output missing or invalid for phase {phase.get('id')}. Re-queueing task.")
             continue
 
@@ -2044,6 +2692,7 @@ def run_feature_prd(
             target["status"] = TASK_STATUS_IMPLEMENTING
             target["last_error"] = "Review blockers found"
             target["last_error_type"] = "review_blockers"
+            attempts = _increment_task_counter(target, "review_attempts")
             target["context"] = target.get("context", []) + [
                 f"Review blockers: {blocking}"
             ]
@@ -2058,27 +2707,59 @@ def run_feature_prd(
             _sync_phase_status(phase, target["status"])
             _save_queue(paths["task_queue"], queue, tasks)
             _save_plan(paths["phase_plan"], plan, phases)
+            if attempts >= MAX_REVIEW_ATTEMPTS:
+                target["status"] = TASK_STATUS_BLOCKED
+                target["last_error"] = (
+                    f"Review blockers persisted after {attempts} attempts; blocking task."
+                )
+                target["last_error_type"] = "review_attempts_exhausted"
+                _sync_phase_status(phase, target["status"])
+                _save_queue(paths["task_queue"], queue, tasks)
+                _save_plan(paths["phase_plan"], plan, phases)
+                print(
+                    f"\nReview blockers for phase {phase.get('id')} after {attempts} attempts. Blocking task."
+                )
+                continue
             print(f"\nReview blockers found for phase {phase.get('id')}. Re-queueing task.")
             continue
 
-        post_review_files = _git_changed_files(project_dir)
+        post_review_files = _git_changed_files(
+            project_dir,
+            include_untracked=False,
+            ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
+        )
         reviewed_files = review_data.get("changed_files") or []
         if set(post_review_files) != set(reviewed_files):
             target["status"] = TASK_STATUS_REVIEW
             target["last_error"] = "Changes modified after review; re-run review"
             target["last_error_type"] = "review_stale"
+            attempts = _increment_task_counter(target, "review_attempts")
             target["context"] = target.get("context", []) + [
                 "Changes differ from reviewed diff; re-run review."
             ]
             _sync_phase_status(phase, target["status"])
             _save_plan(paths["phase_plan"], plan, phases)
             _save_queue(paths["task_queue"], queue, tasks)
+            if attempts >= MAX_REVIEW_ATTEMPTS:
+                target["status"] = TASK_STATUS_BLOCKED
+                target["last_error"] = (
+                    f"Review stale after {attempts} attempts; blocking task."
+                )
+                target["last_error_type"] = "review_attempts_exhausted"
+                _sync_phase_status(phase, target["status"])
+                _save_plan(paths["phase_plan"], plan, phases)
+                _save_queue(paths["task_queue"], queue, tasks)
+                print(
+                    f"\nReview stale for phase {phase.get('id')} after {attempts} attempts. Blocking task."
+                )
+                continue
             print(f"\nChanges updated after review for phase {phase.get('id')}. Re-queueing review.")
             continue
 
         target["status"] = TASK_STATUS_DONE
         target["last_error"] = None
         target["last_error_type"] = None
+        target["review_attempts"] = 0
         _sync_phase_status(phase, target["status"])
         _save_plan(paths["phase_plan"], plan, phases)
         _save_queue(paths["task_queue"], queue, tasks)
