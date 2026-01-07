@@ -45,8 +45,8 @@ All state lives in `.prd_runner/` inside the project directory:
 - `run_state.yaml`: current status, active task/phase, last error
 - `task_queue.yaml`: tasks derived from phases
 - `phase_plan.yaml`: planned phases
-- `artifacts/`: events, progress snapshot, tests, reviews
-- `runs/`: per-run logs and prompts
+- `artifacts/`: events, tests, reviews
+- `runs/`: per-run logs, prompts, and progress snapshots
 
 ## Resume Prompts
 

@@ -58,6 +58,35 @@ TRANSIENT_ERROR_MARKERS = (
     "Shift timed out",
 )
 
+TASK_STATUS_TODO = "todo"
+TASK_STATUS_DOING = "doing"
+TASK_STATUS_IMPLEMENTING = "implementing"
+TASK_STATUS_TESTING = "testing"
+TASK_STATUS_REVIEW = "review"
+TASK_STATUS_DONE = "done"
+TASK_STATUS_BLOCKED = "blocked"
+
+TASK_IN_PROGRESS_STATUSES = {
+    TASK_STATUS_DOING,
+    "in_progress",
+    TASK_STATUS_IMPLEMENTING,
+    TASK_STATUS_TESTING,
+    TASK_STATUS_REVIEW,
+}
+
+TASK_RUN_CODEX_STATUSES = {
+    TASK_STATUS_DOING,
+    "in_progress",
+    TASK_STATUS_IMPLEMENTING,
+}
+
+ERROR_TYPE_HEARTBEAT_TIMEOUT = "heartbeat_timeout"
+ERROR_TYPE_SHIFT_TIMEOUT = "shift_timeout"
+ERROR_TYPE_CODEX_EXIT = "codex_exit"
+
+REVIEW_MIN_EVIDENCE_ITEMS = 2
+REVIEW_MET_VALUES = {"yes", "no", "partial"}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -126,17 +155,50 @@ def _load_data(path: Path, default: dict[str, Any]) -> dict[str, Any]:
         return default
     try:
         with open(path, "r") as handle:
-            if yaml:
-                data = yaml.safe_load(handle)
+            if path.suffix in {".yaml", ".yml"}:
+                if yaml:
+                    data = yaml.safe_load(handle)
+                else:
+                    data = json.load(handle)
             else:
                 data = json.load(handle)
         return data if isinstance(data, dict) else default
     except (OSError, json.JSONDecodeError):
         return default
+    except Exception as exc:
+        if yaml and isinstance(exc, yaml.YAMLError):
+            return default
+        raise
+
+
+def _atomic_write_yaml(path: Path, data: dict[str, Any]) -> None:
+    if not yaml:
+        _atomic_write_json(path, data)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w") as handle:
+        yaml.safe_dump(
+            data,
+            handle,
+            sort_keys=False,
+            default_flow_style=False,
+            allow_unicode=False,
+        )
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
+
+
+def _atomic_write_data(path: Path, data: dict[str, Any]) -> None:
+    if path.suffix in {".yaml", ".yml"}:
+        _atomic_write_yaml(path, data)
+        return
+    _atomic_write_json(path, data)
 
 
 def _save_data(path: Path, data: dict[str, Any]) -> None:
-    _atomic_write_json(path, data)
+    _atomic_write_data(path, data)
 
 
 def _append_event(events_path: Path, event: dict[str, Any]) -> None:
@@ -212,26 +274,9 @@ def _ensure_state_files(project_dir: Path, prd_path: Path) -> dict[str, Path]:
         )
 
     events_path = artifacts_dir / "events.ndjson"
-    progress_path = artifacts_dir / "progress.json"
 
     if not events_path.exists():
         events_path.touch()
-
-    if not progress_path.exists():
-        _save_data(
-            progress_path,
-            {
-                "run_id": None,
-                "task_id": None,
-                "phase": "idle",
-                "actions": [],
-                "files_changed": [],
-                "claims": [],
-                "next_steps": [],
-                "blocking_issues": [],
-                "heartbeat": _now_iso(),
-            },
-        )
 
     return {
         "state_dir": state_dir,
@@ -241,7 +286,6 @@ def _ensure_state_files(project_dir: Path, prd_path: Path) -> dict[str, Path]:
         "artifacts": artifacts_dir,
         "runs": runs_dir,
         "events": events_path,
-        "progress": progress_path,
     }
 
 
@@ -249,7 +293,7 @@ def _build_plan_task() -> dict[str, Any]:
     return {
         "id": "plan-001",
         "type": "plan",
-        "status": "todo",
+        "status": TASK_STATUS_TODO,
         "priority": 0,
         "deps": [],
         "description": "Review PRD and repository, then create phases and tasks",
@@ -270,7 +314,7 @@ def _build_tasks_from_phases(phases: list[dict[str, Any]]) -> list[dict[str, Any
                 "id": phase_id,
                 "type": "implement",
                 "phase_id": phase_id,
-                "status": "todo",
+                "status": TASK_STATUS_TODO,
                 "priority": index,
                 "deps": phase.get("deps", []) or [],
                 "description": description,
@@ -282,6 +326,19 @@ def _build_tasks_from_phases(phases: list[dict[str, Any]]) -> list[dict[str, Any
     return tasks
 
 
+def _tasks_match_phases(tasks: list[dict[str, Any]], phases: list[dict[str, Any]]) -> bool:
+    phase_ids = {phase.get("id") for phase in phases if phase.get("id")}
+    if not phase_ids:
+        return True
+    implement_tasks = [task for task in tasks if task.get("type") == "implement"]
+    task_phase_ids = {
+        (task.get("phase_id") or task.get("id"))
+        for task in implement_tasks
+        if task.get("phase_id") or task.get("id")
+    }
+    return phase_ids.issubset(task_phase_ids)
+
+
 def _normalize_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
     tasks = queue.get("tasks", [])
     if not isinstance(tasks, list):
@@ -290,7 +347,13 @@ def _normalize_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
     for task in tasks:
         if not isinstance(task, dict):
             continue
-        task.setdefault("status", "todo")
+        status = task.get("status", TASK_STATUS_TODO)
+        if status in {TASK_STATUS_DOING, "in_progress"}:
+            if task.get("type") == "plan":
+                status = TASK_STATUS_DOING
+            else:
+                status = TASK_STATUS_IMPLEMENTING
+        task["status"] = status
         task.setdefault("priority", 0)
         deps = task.get("deps", [])
         if isinstance(deps, list):
@@ -302,6 +365,7 @@ def _normalize_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
         task.setdefault("attempts", 0)
         task.setdefault("auto_resume_attempts", 0)
         task.setdefault("last_error", None)
+        task.setdefault("last_error_type", None)
         task.setdefault("context", [])
         acceptance = task.get("acceptance_criteria", [])
         if isinstance(acceptance, list):
@@ -322,7 +386,7 @@ def _normalize_phases(plan: dict[str, Any]) -> list[dict[str, Any]]:
     for phase in phases:
         if not isinstance(phase, dict):
             continue
-        phase.setdefault("status", "todo")
+        phase.setdefault("status", TASK_STATUS_TODO)
         phase.setdefault("acceptance_criteria", [])
         phase.setdefault("branch", None)
         phase.setdefault("test_command", None)
@@ -333,10 +397,10 @@ def _normalize_phases(plan: dict[str, Any]) -> list[dict[str, Any]]:
 def _task_summary(tasks: list[dict[str, Any]]) -> dict[str, int]:
     counts = {"todo": 0, "doing": 0, "done": 0, "blocked": 0}
     for task in tasks:
-        status = task.get("status", "todo")
-        if status == "in_progress":
-            status = "doing"
-        if status in counts:
+        status = task.get("status", TASK_STATUS_TODO)
+        if status in TASK_IN_PROGRESS_STATUSES:
+            counts["doing"] += 1
+        elif status in counts:
             counts[status] += 1
     return counts
 
@@ -358,7 +422,7 @@ def _select_next_task(tasks: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     )
 
     for _, task in sorted_tasks:
-        if task.get("status") in {"doing", "in_progress"}:
+        if task.get("status") in TASK_IN_PROGRESS_STATUSES:
             return task
 
     for _, task in sorted_tasks:
@@ -368,7 +432,9 @@ def _select_next_task(tasks: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     return None
 
 
-def _is_transient_error(error: Optional[str]) -> bool:
+def _is_transient_error(error: Optional[str], error_type: Optional[str] = None) -> bool:
+    if error_type in {ERROR_TYPE_HEARTBEAT_TIMEOUT, ERROR_TYPE_SHIFT_TIMEOUT}:
+        return True
     if not error:
         return False
     return any(marker in error for marker in TRANSIENT_ERROR_MARKERS)
@@ -384,15 +450,17 @@ def _maybe_auto_resume_blocked(
         if task.get("status") != "blocked":
             continue
         last_error = task.get("last_error")
-        if not _is_transient_error(last_error):
+        last_error_type = task.get("last_error_type")
+        if not _is_transient_error(last_error, last_error_type):
             continue
         attempts = int(task.get("auto_resume_attempts", 0))
         if attempts >= max_auto_resumes:
             continue
 
-        task["status"] = "todo"
+        task["status"] = TASK_STATUS_TODO
         task["attempts"] = 0
         task["last_error"] = None
+        task["last_error_type"] = None
         task["auto_resume_attempts"] = attempts + 1
         task["last_updated_at"] = _now_iso()
         changed = True
@@ -414,6 +482,78 @@ def _read_log_tail(path: Path, max_chars: int = 4000) -> str:
     if len(content) <= max_chars:
         return content
     return content[-max_chars:]
+
+
+def _validate_review_data(review_data: dict[str, Any], phase: dict[str, Any]) -> tuple[bool, str]:
+    if not isinstance(review_data, dict):
+        return False, "Review output is not a JSON object"
+
+    phase_id = phase.get("id")
+    review_phase_id = review_data.get("phase_id")
+    if not review_phase_id:
+        return False, "phase_id missing"
+    if phase_id and str(review_phase_id) != str(phase_id):
+        return False, "phase_id does not match current phase"
+
+    blocking = review_data.get("blocking_issues")
+    if not isinstance(blocking, list):
+        return False, "blocking_issues must be a list"
+
+    files_reviewed = review_data.get("files_reviewed")
+    if not isinstance(files_reviewed, list) or not files_reviewed:
+        return False, "files_reviewed must be a non-empty list"
+    if any(not isinstance(item, str) or not item.strip() for item in files_reviewed):
+        return False, "files_reviewed must contain non-empty strings"
+
+    spec_summary = review_data.get("spec_summary")
+    if not isinstance(spec_summary, list) or not spec_summary:
+        return False, "spec_summary must be a non-empty list"
+
+    evidence = review_data.get("evidence")
+    if not isinstance(evidence, list) or len(evidence) < REVIEW_MIN_EVIDENCE_ITEMS:
+        return False, f"evidence must include at least {REVIEW_MIN_EVIDENCE_ITEMS} items"
+    if any(not isinstance(item, str) or not item.strip() for item in evidence):
+        return False, "evidence must contain non-empty strings"
+
+    checklist = review_data.get("acceptance_criteria_checklist")
+    if not isinstance(checklist, list) or not checklist:
+        return False, "acceptance_criteria_checklist must be a non-empty list"
+
+    missing_fields = []
+    for item in checklist:
+        if not isinstance(item, dict):
+            return False, "acceptance_criteria_checklist items must be objects"
+        criterion = str(item.get("criterion", "")).strip()
+        met = str(item.get("met", "")).strip().lower()
+        item_evidence = str(item.get("evidence", "")).strip()
+        files = item.get("files")
+        if not criterion:
+            missing_fields.append("criterion")
+        if met not in REVIEW_MET_VALUES:
+            missing_fields.append("met")
+        if not item_evidence:
+            missing_fields.append("evidence")
+        if not isinstance(files, list) or not files or any(
+            not isinstance(path, str) or not path.strip() for path in files
+        ):
+            missing_fields.append("files")
+    if missing_fields:
+        return False, "acceptance_criteria_checklist items missing required fields"
+
+    acceptance = phase.get("acceptance_criteria") or []
+    if isinstance(acceptance, list) and acceptance:
+        if len(checklist) < len(acceptance):
+            return False, "acceptance_criteria_checklist does not cover all criteria"
+        checklist_criteria = [str(item.get("criterion", "")).lower() for item in checklist]
+        missing = [
+            criterion
+            for criterion in acceptance
+            if str(criterion).lower() not in " ".join(checklist_criteria)
+        ]
+        if missing:
+            return False, "acceptance_criteria_checklist missing criteria entries"
+
+    return True, ""
 
 
 def _stream_pipe(pipe: Any, file_path: Path, label: str, to_stderr: bool) -> None:
@@ -527,36 +667,82 @@ Progress contract (REQUIRED):
 """
 
 
+def _read_text_for_prompt(path: Path, max_chars: int = 20000) -> tuple[str, bool]:
+    try:
+        content = path.read_text(errors="replace")
+    except OSError:
+        return "", False
+    if len(content) <= max_chars:
+        return content, False
+    return content[:max_chars], True
+
+
 def _build_review_prompt(
     phase: dict[str, Any],
     review_path: Path,
     prd_path: Path,
     user_prompt: Optional[str],
+    progress_path: Optional[Path] = None,
+    run_id: Optional[str] = None,
 ) -> str:
     acceptance = phase.get("acceptance_criteria") or []
     acceptance_block = "\n".join(f"- {item}" for item in acceptance) if acceptance else "- (none)"
     user_block = f"\nSpecial instructions:\n{user_prompt}\n" if user_prompt else ""
+    progress_block = ""
+    if progress_path and run_id:
+        progress_block = (
+            "\nProgress contract (REQUIRED):\n"
+            f"- Write snapshot to: {progress_path}\n"
+            f"  Required fields: run_id={run_id}, task_id, phase, actions, claims, "
+            "next_steps, blocking_issues, heartbeat.\n"
+        )
+    prd_text, prd_truncated = _read_text_for_prompt(prd_path)
+    prd_notice = ""
+    if prd_truncated:
+        prd_notice = (
+            "\nNOTE: PRD content truncated. Open the PRD file to read the full spec.\n"
+        )
     return f"""Perform a code review for the phase below and write JSON to {review_path}.
 
 Phase: {phase.get("name") or phase.get("id")}
 PRD: {prd_path}
+PRD content (read first):
+{prd_text}
+{prd_notice}
 Acceptance criteria:
 {acceptance_block}
 {user_block}
+{progress_block}
 
 Review output schema:
 {{
   "phase_id": "{phase.get('id')}",
+  "spec_summary": ["bullets restating PRD requirements relevant to this phase"],
+  "acceptance_criteria_checklist": [
+    {{
+      "criterion": "exact acceptance criterion text",
+      "met": "yes|no|partial",
+      "evidence": "specific evidence from code or diff",
+      "files": ["path/to/file.ext"]
+    }}
+  ],
   "summary": "Short summary",
   "blocking_issues": ["list of blockers"],
   "non_blocking": ["nice-to-have improvements"],
   "files_reviewed": ["list of paths"],
+  "evidence": ["at least two concrete observations with file/diff references"],
   "recommendations": ["actionable fixes"]
 }}
 
 Review instructions:
-- Compare changes against PRD requirements and phase acceptance criteria.
-- Call out gaps, regressions, or missing README updates.
+- Read the PRD content and restate the relevant requirements in spec_summary.
+- Run: git diff --name-only AND git diff. Base your review on these changes.
+- For each acceptance criterion, fill acceptance_criteria_checklist with met + evidence.
+- If acceptance criteria are empty, include one checklist item with criterion "(none provided)".
+- Provide at least {REVIEW_MIN_EVIDENCE_ITEMS} concrete evidence items tied to files/diff.
+- If README updates are missing or spec requirements are unmet, add blocking_issues.
+- Do not treat passing tests as sufficient evidence of spec compliance.
+- If you cannot access the PRD text or git diff, add a blocking_issue explaining why.
 """
 
 
@@ -569,6 +755,7 @@ def _run_codex_worker(
     heartbeat_seconds: int,
     heartbeat_grace_seconds: int,
     progress_path: Path,
+    expected_run_id: Optional[str] = None,
 ) -> dict[str, Any]:
     prompt_path = run_dir / "prompt.txt"
     prompt_path.write_text(prompt)
@@ -579,6 +766,7 @@ def _run_codex_worker(
             prompt_file=str(prompt_path),
             project_dir=str(project_dir),
             run_dir=str(run_dir),
+            prompt=prompt,
         )
     except KeyError as exc:
         raise ValueError(f"Unknown placeholder in codex command: {exc}") from exc
@@ -638,29 +826,22 @@ def _run_codex_worker(
                 process.kill()
             break
 
-        heartbeat = _heartbeat_from_progress(progress_path)
-        if heartbeat:
-            if heartbeat >= start_wall:
-                last_heartbeat = heartbeat
-                age = (datetime.now(timezone.utc) - heartbeat).total_seconds()
-                if age > heartbeat_grace_seconds:
-                    no_heartbeat = True
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                    break
+        heartbeat = _heartbeat_from_progress(progress_path, expected_run_id)
+        now = datetime.now(timezone.utc)
+        if heartbeat and heartbeat >= start_wall:
+            last_heartbeat = heartbeat
+            age = (now - heartbeat).total_seconds()
         else:
-            age = (datetime.now(timezone.utc) - start_wall).total_seconds()
-            if age > heartbeat_grace_seconds:
-                no_heartbeat = True
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                break
+            age = (now - start_wall).total_seconds()
+
+        if age > heartbeat_grace_seconds:
+            no_heartbeat = True
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            break
 
         time.sleep(poll_interval)
 
@@ -689,10 +870,17 @@ def _run_codex_worker(
     }
 
 
-def _heartbeat_from_progress(progress_path: Path) -> Optional[datetime]:
+def _heartbeat_from_progress(
+    progress_path: Path,
+    expected_run_id: Optional[str] = None,
+) -> Optional[datetime]:
     if not progress_path.exists():
         return None
     progress = _load_data(progress_path, {})
+    if expected_run_id:
+        run_id = progress.get("run_id")
+        if run_id and run_id != expected_run_id:
+            return None
     heartbeat = _parse_iso(progress.get("heartbeat")) or _parse_iso(progress.get("timestamp"))
     if heartbeat:
         return heartbeat
@@ -774,6 +962,13 @@ def _phase_for_task(phases: list[dict[str, Any]], task: dict[str, Any]) -> Optio
         if phase.get("id") == phase_id:
             return phase
     return None
+
+
+def _sync_phase_status(phase: dict[str, Any], task_status: str) -> None:
+    if task_status in {TASK_STATUS_DOING, "in_progress"}:
+        phase["status"] = TASK_STATUS_IMPLEMENTING
+    else:
+        phase["status"] = task_status
 
 
 def _find_task(tasks: list[dict[str, Any]], task_id: str) -> Optional[dict[str, Any]]:
@@ -881,8 +1076,24 @@ def run_feature_prd(
             task_id = str(next_task.get("id"))
             task_type = next_task.get("type", "implement")
             phase_id = next_task.get("phase_id")
-            if next_task.get("status") == "todo":
-                next_task["status"] = "doing"
+            task_status = next_task.get("status", TASK_STATUS_TODO)
+            if task_status == TASK_STATUS_TODO:
+                if task_type == "plan":
+                    next_task["status"] = TASK_STATUS_DOING
+                else:
+                    next_task["status"] = TASK_STATUS_IMPLEMENTING
+                task_status = next_task["status"]
+            if task_type != "plan" and _git_has_changes(project_dir):
+                dirty_note = "Workspace has uncommitted changes; continue from them and do not reset."
+                context = next_task.get("context", []) or []
+                if dirty_note not in context:
+                    context.append(dirty_note)
+                next_task["context"] = context
+            if task_type != "plan":
+                phase_entry = _phase_for_task(phases, next_task)
+                if phase_entry:
+                    _sync_phase_status(phase_entry, next_task["status"])
+                    _save_plan(paths["phase_plan"], plan, phases)
 
             run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             run_id = f"{run_id}-{uuid.uuid4().hex[:8]}"
@@ -902,9 +1113,10 @@ def run_feature_prd(
         iteration += 1
         run_dir = paths["runs"] / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
+        progress_path = run_dir / "progress.json"
 
         _update_progress(
-            paths["progress"],
+            progress_path,
             {
                 "run_id": run_id,
                 "task_id": task_id,
@@ -935,8 +1147,9 @@ def run_feature_prd(
                     tasks = _normalize_tasks(queue)
                     target = _find_task(tasks, task_id)
                     if target:
-                        target["status"] = "blocked"
+                        target["status"] = TASK_STATUS_BLOCKED
                         target["last_error"] = "Phase not found for task"
+                        target["last_error_type"] = "phase_missing"
                         _save_queue(paths["task_queue"], queue, tasks)
                 continue
 
@@ -963,178 +1176,221 @@ def run_feature_prd(
                     tasks = _normalize_tasks(queue)
                     target = _find_task(tasks, task_id)
                     if target:
-                        target["status"] = "blocked"
+                        target["status"] = TASK_STATUS_BLOCKED
                         target["last_error"] = f"Branch checkout failed: {exc}"
+                        target["last_error_type"] = "branch_checkout_failed"
                         _save_queue(paths["task_queue"], queue, tasks)
                 continue
 
-        try:
-            if task_type == "plan":
-                prompt = _build_plan_prompt(
-                    prd_path=prd_path,
-                    phase_plan_path=paths["phase_plan"],
-                    task_queue_path=paths["task_queue"],
-                    events_path=paths["events"],
-                    progress_path=paths["progress"],
-                    run_id=run_id,
-                    user_prompt=user_prompt,
-                )
-            else:
-                if not phase:
-                    raise ValueError("Phase not found for task")
-                prompt = _build_phase_prompt(
-                    prd_path=prd_path,
-                    phase=phase,
-                    task=next_task,
-                    events_path=paths["events"],
-                    progress_path=paths["progress"],
-                    run_id=run_id,
-                    user_prompt=user_prompt,
-                )
+        run_codex = task_type == "plan" or task_status in TASK_RUN_CODEX_STATUSES
 
-            prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-            run_result = _run_codex_worker(
-                command=codex_command,
-                prompt=prompt,
-                project_dir=project_dir,
-                run_dir=run_dir,
-                timeout_seconds=shift_minutes * 60,
-                heartbeat_seconds=heartbeat_seconds,
-                heartbeat_grace_seconds=heartbeat_grace_seconds,
-                progress_path=paths["progress"],
-            )
-
-        except Exception as exc:
-            run_result = {
-                "command": codex_command,
-                "prompt_path": str(run_dir / "prompt.txt"),
-                "stdout_path": str(run_dir / "stdout.log"),
-                "stderr_path": str(run_dir / "stderr.log"),
-                "start_time": _now_iso(),
-                "end_time": _now_iso(),
-                "runtime_seconds": 0,
-                "exit_code": 1,
-                "timed_out": False,
-                "no_heartbeat": False,
-                "last_heartbeat": None,
-            }
-            with open(run_dir / "stderr.log", "a") as handle:
-                handle.write(f"Coordinator error: {exc}\n")
-
-        if user_prompt:
-            user_prompt = None
-
-        stdout_tail = _read_log_tail(Path(run_result["stdout_path"]))
-        stderr_tail = _read_log_tail(Path(run_result["stderr_path"]))
-
-        manifest = {
-            "run_id": run_id,
-            "task_id": task_id,
-            "start_time": run_result["start_time"],
-            "end_time": run_result["end_time"],
-            "exit_code": run_result["exit_code"],
-            "timed_out": run_result["timed_out"],
-            "no_heartbeat": run_result["no_heartbeat"],
-            "runtime_seconds": run_result["runtime_seconds"],
-            "command": run_result["command"],
-            "prompt_hash": prompt_hash,
-            "prompt_path": run_result["prompt_path"],
-            "stdout_path": run_result["stdout_path"],
-            "stderr_path": run_result["stderr_path"],
-            "stdout_tail": stdout_tail,
-            "stderr_tail": stderr_tail,
-        }
-        _save_data(run_dir / "manifest.json", manifest)
-
-        failure = run_result["exit_code"] != 0 or run_result["no_heartbeat"]
-        error_detail = None
-        if run_result["no_heartbeat"]:
-            error_detail = "No heartbeat received within grace period"
-        elif run_result["timed_out"]:
-            error_detail = "Shift timed out"
-        elif run_result["exit_code"] != 0:
-            error_detail = f"Codex CLI exited with code {run_result['exit_code']}"
-            if stderr_tail.strip():
-                error_detail = f"{error_detail}. stderr: {stderr_tail.strip()}"
-            elif stdout_tail.strip():
-                error_detail = f"{error_detail}. stdout: {stdout_tail.strip()}"
-
-        with FileLock(lock_path):
-            run_state = _load_data(paths["run_state"], {})
-            queue = _load_data(paths["task_queue"], {})
-            plan = _load_data(paths["phase_plan"], {})
-            tasks = _normalize_tasks(queue)
-            phases = _normalize_phases(plan)
-            target = _find_task(tasks, task_id)
-            if target:
-                target["last_run_id"] = run_id
-                target["last_updated_at"] = _now_iso()
-                if failure:
-                    target["attempts"] = int(target.get("attempts", 0)) + 1
-                    target["last_error"] = error_detail or "Run failed"
-                    if target["attempts"] >= max_attempts:
-                        target["status"] = "blocked"
-                    else:
-                        target["status"] = "todo"
+        if run_codex:
+            try:
+                if task_type == "plan":
+                    prompt = _build_plan_prompt(
+                        prd_path=prd_path,
+                        phase_plan_path=paths["phase_plan"],
+                        task_queue_path=paths["task_queue"],
+                        events_path=paths["events"],
+                        progress_path=progress_path,
+                        run_id=run_id,
+                        user_prompt=user_prompt,
+                    )
                 else:
-                    target["status"] = "done" if task_type == "plan" else "doing"
-            elif task_type != "plan":
-                raise ValueError(f"Task {task_id} not found in queue")
+                    if not phase:
+                        raise ValueError("Phase not found for task")
+                    prompt = _build_phase_prompt(
+                        prd_path=prd_path,
+                        phase=phase,
+                        task=next_task,
+                        events_path=paths["events"],
+                        progress_path=progress_path,
+                        run_id=run_id,
+                        user_prompt=user_prompt,
+                    )
 
-            if not failure and task_type != "plan":
-                phase_entry = _phase_for_task(phases, {"phase_id": phase_id or task_id, "id": task_id})
-                if phase_entry:
-                    phase_entry["status"] = "doing"
+                prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+                run_result = _run_codex_worker(
+                    command=codex_command,
+                    prompt=prompt,
+                    project_dir=project_dir,
+                    run_dir=run_dir,
+                    timeout_seconds=shift_minutes * 60,
+                    heartbeat_seconds=heartbeat_seconds,
+                    heartbeat_grace_seconds=heartbeat_grace_seconds,
+                    progress_path=progress_path,
+                    expected_run_id=run_id,
+                )
 
-            run_state.update(
-                {
-                    "status": "idle",
-                    "current_task_id": None,
-                    "current_phase_id": phase_id,
-                    "last_error": error_detail or (target.get("last_error") if target else None),
-                    "last_heartbeat": run_result.get("last_heartbeat"),
-                    "updated_at": _now_iso(),
+            except Exception as exc:
+                run_result = {
+                    "command": codex_command,
+                    "prompt_path": str(run_dir / "prompt.txt"),
+                    "stdout_path": str(run_dir / "stdout.log"),
+                    "stderr_path": str(run_dir / "stderr.log"),
+                    "start_time": _now_iso(),
+                    "end_time": _now_iso(),
+                    "runtime_seconds": 0,
+                    "exit_code": 1,
+                    "timed_out": False,
+                    "no_heartbeat": False,
+                    "last_heartbeat": None,
                 }
-            )
+                with open(run_dir / "stderr.log", "a") as handle:
+                    handle.write(f"Coordinator error: {exc}\n")
 
-            _save_data(paths["run_state"], run_state)
-            _save_queue(paths["task_queue"], queue, tasks)
-            _save_plan(paths["phase_plan"], plan, phases)
+            if user_prompt:
+                user_prompt = None
 
-        if failure:
-            print(f"\nRun {run_id} failed: {error_detail}")
-            print(f"See logs: {run_dir / 'stderr.log'}")
-            continue
+            stdout_tail = _read_log_tail(Path(run_result["stdout_path"]))
+            stderr_tail = _read_log_tail(Path(run_result["stderr_path"]))
 
-        if task_type == "plan":
-            plan = _load_data(paths["phase_plan"], {})
-            phases = _normalize_phases(plan)
-            queue = _load_data(paths["task_queue"], {})
-            tasks = _normalize_tasks(queue)
-            tasks_empty = not tasks or (len(tasks) == 1 and tasks[0].get("id") == "plan-001")
-            if phases and tasks_empty:
-                tasks = _build_tasks_from_phases(phases)
-                queue["tasks"] = tasks
+            manifest = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "start_time": run_result["start_time"],
+                "end_time": run_result["end_time"],
+                "exit_code": run_result["exit_code"],
+                "timed_out": run_result["timed_out"],
+                "no_heartbeat": run_result["no_heartbeat"],
+                "runtime_seconds": run_result["runtime_seconds"],
+                "command": run_result["command"],
+                "prompt_hash": prompt_hash,
+                "prompt_path": run_result["prompt_path"],
+                "stdout_path": run_result["stdout_path"],
+                "stderr_path": run_result["stderr_path"],
+                "stdout_tail": stdout_tail,
+                "stderr_tail": stderr_tail,
+            }
+            _save_data(run_dir / "manifest.json", manifest)
+
+            failure = run_result["exit_code"] != 0 or run_result["no_heartbeat"]
+            error_detail = None
+            error_type = None
+            if run_result["no_heartbeat"]:
+                error_detail = "No heartbeat received within grace period"
+                error_type = ERROR_TYPE_HEARTBEAT_TIMEOUT
+            elif run_result["timed_out"]:
+                error_detail = "Shift timed out"
+                error_type = ERROR_TYPE_SHIFT_TIMEOUT
+            elif run_result["exit_code"] != 0:
+                error_detail = f"Codex CLI exited with code {run_result['exit_code']}"
+                error_type = ERROR_TYPE_CODEX_EXIT
+                if stderr_tail.strip():
+                    error_detail = f"{error_detail}. stderr: {stderr_tail.strip()}"
+                elif stdout_tail.strip():
+                    error_detail = f"{error_detail}. stdout: {stdout_tail.strip()}"
+
+            next_status = None
+            if task_type != "plan":
+                phase_test_command = (
+                    phase.get("test_command")
+                    or next_task.get("test_command")
+                    or test_command
+                )
+                next_status = TASK_STATUS_TESTING if phase_test_command else TASK_STATUS_REVIEW
+
+            with FileLock(lock_path):
+                run_state = _load_data(paths["run_state"], {})
+                queue = _load_data(paths["task_queue"], {})
+                plan = _load_data(paths["phase_plan"], {})
+                tasks = _normalize_tasks(queue)
+                phases = _normalize_phases(plan)
+                target = _find_task(tasks, task_id)
+                if target:
+                    target["last_run_id"] = run_id
+                    target["last_updated_at"] = _now_iso()
+                    if failure:
+                        target["attempts"] = int(target.get("attempts", 0)) + 1
+                        target["last_error"] = error_detail or "Run failed"
+                        target["last_error_type"] = error_type
+                        if target["attempts"] >= max_attempts:
+                            target["status"] = TASK_STATUS_BLOCKED
+                        else:
+                            target["status"] = TASK_STATUS_TODO
+                    else:
+                        target["last_error"] = None
+                        target["last_error_type"] = None
+                        if task_type == "plan":
+                            target["status"] = TASK_STATUS_DONE
+                        else:
+                            target["status"] = next_status or TASK_STATUS_REVIEW
+                    if task_type != "plan":
+                        phase_entry = _phase_for_task(
+                            phases, {"phase_id": phase_id or task_id, "id": task_id}
+                        )
+                        if phase_entry:
+                            _sync_phase_status(phase_entry, target["status"])
+                elif task_type != "plan":
+                    raise ValueError(f"Task {task_id} not found in queue")
+
+                run_state.update(
+                    {
+                        "status": "idle",
+                        "current_task_id": None,
+                        "current_phase_id": phase_id,
+                        "last_error": error_detail or (target.get("last_error") if target else None),
+                        "last_heartbeat": run_result.get("last_heartbeat"),
+                        "updated_at": _now_iso(),
+                    }
+                )
+
+                _save_data(paths["run_state"], run_state)
                 _save_queue(paths["task_queue"], queue, tasks)
                 _save_plan(paths["phase_plan"], plan, phases)
-                print(f"\nRun {run_id} complete. Phase plan created.")
+
+            if failure:
+                print(f"\nRun {run_id} failed: {error_detail}")
+                print(f"See logs: {run_dir / 'stderr.log'}")
                 continue
 
-            if not phases or not tasks:
-                if not tasks:
-                    tasks = [_build_plan_task()]
-                plan_task = _find_task(tasks, "plan-001")
-                if plan_task:
-                    plan_task["status"] = "blocked"
-                    plan_task["last_error"] = "Phase plan not generated"
-                _save_queue(paths["task_queue"], queue, tasks)
-                _save_plan(paths["phase_plan"], plan, phases)
-                print(f"\nRun {run_id} complete, but phase plan was not generated.")
-            else:
-                _save_queue(paths["task_queue"], queue, tasks)
-                _save_plan(paths["phase_plan"], plan, phases)
-                print(f"\nRun {run_id} complete. Phase plan created.")
-            continue
+            if task_type == "plan":
+                plan = _load_data(paths["phase_plan"], {})
+                phases = _normalize_phases(plan)
+                queue = _load_data(paths["task_queue"], {})
+                tasks = _normalize_tasks(queue)
+                tasks_empty = not tasks or (len(tasks) == 1 and tasks[0].get("id") == "plan-001")
+                tasks_match = _tasks_match_phases(tasks, phases)
+                if phases and (tasks_empty or not tasks_match):
+                    plan_task = _find_task(tasks, "plan-001") or _build_plan_task()
+                    plan_task["status"] = TASK_STATUS_DONE
+                    tasks = [plan_task] + _build_tasks_from_phases(phases)
+                    queue["tasks"] = tasks
+                    _save_queue(paths["task_queue"], queue, tasks)
+                    _save_plan(paths["phase_plan"], plan, phases)
+                    print(f"\nRun {run_id} complete. Phase plan created.")
+                    continue
+
+                if not phases or not tasks:
+                    if not tasks:
+                        tasks = [_build_plan_task()]
+                    plan_task = _find_task(tasks, "plan-001")
+                    if plan_task:
+                        plan_task["status"] = TASK_STATUS_BLOCKED
+                        plan_task["last_error"] = "Phase plan not generated"
+                        plan_task["last_error_type"] = "plan_missing"
+                    _save_queue(paths["task_queue"], queue, tasks)
+                    _save_plan(paths["phase_plan"], plan, phases)
+                    print(f"\nRun {run_id} complete, but phase plan was not generated.")
+                else:
+                    _save_queue(paths["task_queue"], queue, tasks)
+                    _save_plan(paths["phase_plan"], plan, phases)
+                    print(f"\nRun {run_id} complete. Phase plan created.")
+                continue
+        else:
+            with FileLock(lock_path):
+                run_state = _load_data(paths["run_state"], {})
+                run_state.update(
+                    {
+                        "status": "idle",
+                        "current_task_id": None,
+                        "current_phase_id": phase_id,
+                        "last_error": None,
+                        "last_heartbeat": None,
+                        "updated_at": _now_iso(),
+                    }
+                )
+                _save_data(paths["run_state"], run_state)
 
         plan = _load_data(paths["phase_plan"], {})
         phases = _normalize_phases(plan)
@@ -1158,11 +1414,13 @@ def run_feature_prd(
             test_result = _run_command(phase_test_command, project_dir, test_log_path)
             test_log = test_result["log_path"]
             if test_result["exit_code"] != 0:
-                target["status"] = "todo"
+                target["status"] = TASK_STATUS_IMPLEMENTING
                 target["last_error"] = f"Tests failed. See {test_log}"
+                target["last_error_type"] = "tests_failed"
                 context = target.get("context", [])
                 context.append(f"Tests failed: {test_log}")
                 target["context"] = context
+                _sync_phase_status(phase, target["status"])
                 _append_event(
                     paths["events"],
                     {
@@ -1172,18 +1430,46 @@ def run_feature_prd(
                     },
                 )
                 _save_queue(paths["task_queue"], queue, tasks)
+                _save_plan(paths["phase_plan"], plan, phases)
                 print(f"\nTests failed for phase {phase.get('id')}. Re-queueing task.")
                 continue
+            if target.get("status") != TASK_STATUS_REVIEW:
+                target["status"] = TASK_STATUS_REVIEW
+                target["last_error"] = None
+                target["last_error_type"] = None
+                _sync_phase_status(phase, target["status"])
+                _save_queue(paths["task_queue"], queue, tasks)
+                _save_plan(paths["phase_plan"], plan, phases)
+        elif target.get("status") == TASK_STATUS_TESTING:
+            target["status"] = TASK_STATUS_REVIEW
+            target["last_error"] = None
+            target["last_error_type"] = None
+            _sync_phase_status(phase, target["status"])
+            _save_queue(paths["task_queue"], queue, tasks)
+            _save_plan(paths["phase_plan"], plan, phases)
 
         review_path = paths["artifacts"] / f"review_{phase.get('id')}.json"
+        review_run_id = f"{run_id}-review"
+        review_run_dir = paths["runs"] / review_run_id
+        review_run_dir.mkdir(parents=True, exist_ok=True)
+        review_progress_path = review_run_dir / "progress.json"
+        _update_progress(
+            review_progress_path,
+            {
+                "run_id": review_run_id,
+                "task_id": task_id,
+                "phase": "review",
+                "blocking_issues": [],
+            },
+        )
         review_prompt = _build_review_prompt(
             phase=phase,
             review_path=review_path,
             prd_path=prd_path,
             user_prompt=user_prompt,
+            progress_path=review_progress_path,
+            run_id=review_run_id,
         )
-        review_run_dir = paths["runs"] / f"{run_id}-review"
-        review_run_dir.mkdir(parents=True, exist_ok=True)
 
         review_result = _run_codex_worker(
             command=codex_command,
@@ -1193,35 +1479,47 @@ def run_feature_prd(
             timeout_seconds=shift_minutes * 60,
             heartbeat_seconds=heartbeat_seconds,
             heartbeat_grace_seconds=heartbeat_grace_seconds,
-            progress_path=paths["progress"],
+            progress_path=review_progress_path,
+            expected_run_id=review_run_id,
         )
+        if user_prompt:
+            user_prompt = None
         review_stdout = _read_log_tail(Path(review_result["stdout_path"]))
         review_stderr = _read_log_tail(Path(review_result["stderr_path"]))
 
         if review_result["exit_code"] != 0:
-            target["status"] = "todo"
+            target["status"] = TASK_STATUS_REVIEW
             target["last_error"] = f"Review failed: {review_stderr.strip() or review_stdout.strip()}"
+            target["last_error_type"] = "review_failed"
             target["context"] = target.get("context", []) + [
                 "Review failed; rerun review and fix issues."
             ]
+            _sync_phase_status(phase, target["status"])
             _save_queue(paths["task_queue"], queue, tasks)
+            _save_plan(paths["phase_plan"], plan, phases)
             print(f"\nReview step failed for phase {phase.get('id')}. Re-queueing task.")
             continue
 
         review_data = _load_data(review_path, {})
-        if not review_data or "blocking_issues" not in review_data:
-            target["status"] = "todo"
-            target["last_error"] = f"Review output missing or invalid: {review_path}"
+        valid_review, review_issue = _validate_review_data(review_data, phase)
+        if not valid_review:
+            target["status"] = TASK_STATUS_REVIEW
+            target["last_error"] = f"Review output invalid: {review_issue}"
+            target["last_error_type"] = "review_invalid"
             target["context"] = target.get("context", []) + [
-                f"Review output missing or invalid: {review_path}"
+                f"Review output invalid: {review_issue}"
             ]
+            _sync_phase_status(phase, target["status"])
             _save_queue(paths["task_queue"], queue, tasks)
+            _save_plan(paths["phase_plan"], plan, phases)
             print(f"\nReview output missing or invalid for phase {phase.get('id')}. Re-queueing task.")
             continue
+
         blocking = review_data.get("blocking_issues") or []
-        if isinstance(blocking, list) and blocking:
-            target["status"] = "todo"
+        if blocking:
+            target["status"] = TASK_STATUS_IMPLEMENTING
             target["last_error"] = "Review blockers found"
+            target["last_error_type"] = "review_blockers"
             target["context"] = target.get("context", []) + [
                 f"Review blockers: {blocking}"
             ]
@@ -1233,12 +1531,16 @@ def run_feature_prd(
                     "blocking": blocking,
                 },
             )
+            _sync_phase_status(phase, target["status"])
             _save_queue(paths["task_queue"], queue, tasks)
+            _save_plan(paths["phase_plan"], plan, phases)
             print(f"\nReview blockers found for phase {phase.get('id')}. Re-queueing task.")
             continue
 
-        phase["status"] = "done"
-        target["status"] = "done"
+        target["status"] = TASK_STATUS_DONE
+        target["last_error"] = None
+        target["last_error_type"] = None
+        _sync_phase_status(phase, target["status"])
         _save_plan(paths["phase_plan"], plan, phases)
         _save_queue(paths["task_queue"], queue, tasks)
 
@@ -1256,9 +1558,12 @@ def run_feature_prd(
                     },
                 )
             except subprocess.CalledProcessError as exc:
-                target["status"] = "blocked"
+                target["status"] = TASK_STATUS_BLOCKED
                 target["last_error"] = f"Git push failed: {exc}"
+                target["last_error_type"] = "git_push_failed"
+                _sync_phase_status(phase, target["status"])
                 _save_queue(paths["task_queue"], queue, tasks)
+                _save_plan(paths["phase_plan"], plan, phases)
                 print(f"\nPush failed for phase {phase.get('id')}: {exc}")
                 continue
         else:

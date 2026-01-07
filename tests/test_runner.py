@@ -66,6 +66,8 @@ class TestFeaturePrdRunner:
 
         self.assert_true("PRD:" in prompt, "PRD path included")
         self.assert_true("acceptance criteria" in prompt.lower(), "Acceptance criteria included")
+        self.assert_true("acceptance_criteria_checklist" in prompt, "Checklist schema included")
+        self.assert_true("spec_summary" in prompt, "Spec summary required")
         self.assert_true("Review instructions" in prompt, "Review instructions included")
 
     def test_plan_prompt_includes_resume_prompt(self) -> None:
