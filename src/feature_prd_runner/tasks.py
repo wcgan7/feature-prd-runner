@@ -3,57 +3,31 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-try:
-    from .models import PromptMode, TaskLifecycle, TaskStep
-    from .constants import (
-        AUTO_RESUME_ERROR_TYPES,
-        ERROR_TYPE_HEARTBEAT_TIMEOUT,
-        ERROR_TYPE_SHIFT_TIMEOUT,
-        IGNORED_REVIEW_PATH_PREFIXES,
-        TASK_STATUS_BLOCKED,
-        TASK_STATUS_DOING,
-        TASK_STATUS_IMPLEMENTING,
-        TASK_STATUS_PLAN_IMPL,
-        TASK_STATUS_REVIEW,
-        TASK_STATUS_TESTING,
-        TASK_STATUS_TODO,
-        TRANSIENT_ERROR_MARKERS,
-    )
-    from .git_utils import _git_changed_files
-    from .io_utils import _load_data, _save_data
-    from .utils import (
-        _coerce_int,
-        _coerce_string_list,
-        _is_placeholder_text,
-        _now_iso,
-        _sanitize_phase_id,
-    )
-except ImportError:  # pragma: no cover
-    from models import PromptMode, TaskLifecycle, TaskStep
-    from constants import (
-        AUTO_RESUME_ERROR_TYPES,
-        ERROR_TYPE_HEARTBEAT_TIMEOUT,
-        ERROR_TYPE_SHIFT_TIMEOUT,
-        IGNORED_REVIEW_PATH_PREFIXES,
-        TASK_STATUS_BLOCKED,
-        TASK_STATUS_DOING,
-        TASK_STATUS_IMPLEMENTING,
-        TASK_STATUS_PLAN_IMPL,
-        TASK_STATUS_REVIEW,
-        TASK_STATUS_TESTING,
-        TASK_STATUS_TODO,
-        TRANSIENT_ERROR_MARKERS,
-    )
-    from git_utils import _git_changed_files
-    from io_utils import _load_data, _save_data
-    from utils import (
-        _coerce_int,
-        _coerce_string_list,
-        _is_placeholder_text,
-        _now_iso,
-        _sanitize_phase_id,
-    )
-
+from .models import PromptMode, TaskLifecycle, TaskStep
+from .constants import (
+    AUTO_RESUME_ERROR_TYPES,
+    ERROR_TYPE_HEARTBEAT_TIMEOUT,
+    ERROR_TYPE_SHIFT_TIMEOUT,
+    IGNORED_REVIEW_PATH_PREFIXES,
+    TASK_STATUS_BLOCKED,
+    TASK_STATUS_DOING,
+    TASK_STATUS_DONE,
+    TASK_STATUS_IMPLEMENTING,
+    TASK_STATUS_PLAN_IMPL,
+    TASK_STATUS_REVIEW,
+    TASK_STATUS_TESTING,
+    TASK_STATUS_TODO,
+    TRANSIENT_ERROR_MARKERS,
+)
+from .git_utils import _git_changed_files
+from .io_utils import _load_data, _save_data
+from .utils import (
+    _coerce_int,
+    _coerce_string_list,
+    _is_placeholder_text,
+    _now_iso,
+    _sanitize_phase_id,
+)
 
 _LIFECYCLE_VALUES = {value.value for value in TaskLifecycle}
 _STEP_VALUES = {value.value for value in TaskStep}

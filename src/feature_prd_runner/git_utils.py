@@ -5,10 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-try:
-    from .constants import IGNORED_REVIEW_PATH_PREFIXES, STATE_DIR_NAME
-except ImportError:  # pragma: no cover
-    from constants import IGNORED_REVIEW_PATH_PREFIXES, STATE_DIR_NAME
+from .constants import IGNORED_REVIEW_PATH_PREFIXES, STATE_DIR_NAME
 
 
 def _ignore_file_has_entry(path: Path, ignore_entry: str) -> bool:

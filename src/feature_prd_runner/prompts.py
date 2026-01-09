@@ -3,12 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-try:
-    from .constants import REVIEW_MIN_EVIDENCE_ITEMS
-    from .utils import _normalize_text
-except ImportError:  # pragma: no cover
-    from constants import REVIEW_MIN_EVIDENCE_ITEMS
-    from utils import _normalize_text
+from .constants import REVIEW_MIN_EVIDENCE_ITEMS
+from .utils import _normalize_text
 
 
 def _build_plan_prompt(

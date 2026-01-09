@@ -3,18 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-try:
-    from ..models import VerificationResult
-    from ..signals import build_allowed_files, extract_paths_from_log, needs_allowlist_expansion
-    from ..tasks import _resolve_test_command, _tests_log_path
-    from ..utils import _now_iso
-    from ..worker import _capture_test_result_snapshot, _run_command
-except ImportError:  # pragma: no cover
-    from models import VerificationResult
-    from signals import build_allowed_files, extract_paths_from_log, needs_allowlist_expansion
-    from tasks import _resolve_test_command, _tests_log_path
-    from utils import _now_iso
-    from worker import _capture_test_result_snapshot, _run_command
+from ..models import VerificationResult
+from ..signals import build_allowed_files, extract_paths_from_log, needs_allowlist_expansion
+from ..tasks import _resolve_test_command, _tests_log_path
+from ..utils import _now_iso
+from ..worker import _capture_test_result_snapshot, _run_command
 
 
 def run_verify_action(

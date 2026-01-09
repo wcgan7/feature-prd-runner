@@ -2,40 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
-try:
-    from .constants import (
-        ERROR_TYPE_BLOCKING_ISSUES,
-    )
-    from .models import (
-        AllowlistViolation,
-        CommitResult,
-        NoIntroducedChanges,
-        ProgressHumanBlockers,
-        PromptMode,
-        ReviewResult,
-        TaskLifecycle,
-        TaskState,
-        TaskStep,
-        VerificationResult,
-        WorkerFailed,
-        WorkerSucceeded,
-    )
-except ImportError:  # pragma: no cover
-    from constants import ERROR_TYPE_BLOCKING_ISSUES
-    from models import (
-        AllowlistViolation,
-        CommitResult,
-        NoIntroducedChanges,
-        ProgressHumanBlockers,
-        PromptMode,
-        ReviewResult,
-        TaskLifecycle,
-        TaskState,
-        TaskStep,
-        VerificationResult,
-        WorkerFailed,
-        WorkerSucceeded,
-    )
+from .constants import (
+    ERROR_TYPE_BLOCKING_ISSUES,
+)
+from .models import (
+    AllowlistViolation,
+    CommitResult,
+    NoIntroducedChanges,
+    ProgressHumanBlockers,
+    PromptMode,
+    ReviewResult,
+    TaskLifecycle,
+    TaskState,
+    TaskStep,
+    VerificationResult,
+    WorkerFailed,
+    WorkerSucceeded,
+)
 
 
 def _set_ready(task: TaskState) -> None:
