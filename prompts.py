@@ -76,6 +76,10 @@ def _build_phase_prompt(
     no_progress_attempts: int = 0,
     technical_approach_text: str = "",
     heartbeat_seconds: Optional[int] = None,
+    prompt_mode: Optional[str] = None,
+    last_verification: Optional[dict[str, Any]] = None,
+    review_blockers: Optional[list[str]] = None,
+    review_blocker_files: Optional[list[str]] = None,
 ) -> str:
     phase_name = phase.get("name") or phase.get("id")
     acceptance = phase.get("acceptance_criteria") or []
@@ -107,22 +111,57 @@ def _build_phase_prompt(
     if heartbeat_seconds:
         heartbeat_block = f"  Update heartbeat at least every {heartbeat_seconds} seconds.\n"
 
-    test_block = ""
-    test_failure = task.get("test_failure")
-    if isinstance(test_failure, dict):
-        cmd = str(test_failure.get("command") or "").strip()
-        log_path = str(test_failure.get("log_path") or "").strip()
-        log_tail = str(test_failure.get("log_tail") or "").strip()
-        attempt = test_failure.get("attempt")
-        max_attempts = test_failure.get("max_attempts")
+    banner_block = ""
+    if prompt_mode == "fix_tests":
+        snapshot = last_verification or {}
+        cmd = str(snapshot.get("command") or "").strip()
+        log_path = str(snapshot.get("log_path") or "").strip()
+        log_tail = str(snapshot.get("log_tail") or "").strip()
+        exit_code = snapshot.get("exit_code")
+        banner_block = f"""
+TESTS ARE FAILING -- FIX THIS FIRST
+Command: {cmd or "(unknown)"}
+Exit code: {exit_code if exit_code is not None else "(unknown)"}
+Log: {log_path or "(unknown)"}
+Recent output:
+{log_tail or "(no log output captured)"}
 
-        attempt_str = ""
-        if isinstance(attempt, int) and isinstance(max_attempts, int) and max_attempts > 0:
-            attempt_str = f"(attempt {attempt}/{max_attempts})"
+Priority for this run:
+1) Fix the failing tests (minimal change).
+2) Only then continue implementing remaining acceptance criteria.
+"""
+    elif prompt_mode == "address_review":
+        blockers = review_blockers or []
+        files = review_blocker_files or []
+        blockers_block = "\n".join(f"- {item}" for item in blockers) if blockers else "- (none listed)"
+        files_block = "\n".join(f"- {item}" for item in files) if files else "- (none listed)"
+        banner_block = f"""
+REVIEW BLOCKERS -- ADDRESS THESE FIRST
+Blocking issues:
+{blockers_block}
 
-        # keep this tight; log_tail already capped
-        test_block = f"""
-🚨 TESTS ARE FAILING {attempt_str} — FIX THIS FIRST
+Files implicated:
+{files_block}
+
+Priority for this run:
+1) Address the review blockers.
+2) Re-check acceptance criteria after fixes.
+"""
+    else:
+        test_failure = task.get("test_failure")
+        if isinstance(test_failure, dict):
+            cmd = str(test_failure.get("command") or "").strip()
+            log_path = str(test_failure.get("log_path") or "").strip()
+            log_tail = str(test_failure.get("log_tail") or "").strip()
+            attempt = test_failure.get("attempt")
+            max_attempts = test_failure.get("max_attempts")
+
+            attempt_str = ""
+            if isinstance(attempt, int) and isinstance(max_attempts, int) and max_attempts > 0:
+                attempt_str = f"(attempt {attempt}/{max_attempts})"
+
+            banner_block = f"""
+TESTS ARE FAILING {attempt_str} -- FIX THIS FIRST
 Command: {cmd or "(unknown)"}
 Log: {log_path or "(unknown)"}
 Recent output:
@@ -137,7 +176,7 @@ Priority for this run:
 
 Follow all repository rules in AGENTS.md.
 
-{test_block}
+{banner_block}
 
 PRD: {prd_path}
 Phase: {phase_name}
@@ -196,6 +235,7 @@ def _build_impl_plan_prompt(
     run_id: Optional[str] = None,
     test_command: Optional[str] = None,
     heartbeat_seconds: Optional[int] = None,
+    plan_expansion_request: Optional[list[str]] = None,
 ) -> str:
     acceptance = phase.get("acceptance_criteria") or []
     acceptance_block = "\n".join(f"- {item}" for item in acceptance) if acceptance else "- (none)"
@@ -220,6 +260,13 @@ def _build_impl_plan_prompt(
             f"{heartbeat_block}"
         )
     test_block = test_command or "(none specified)"
+    expansion_block = ""
+    if plan_expansion_request:
+        requested = "\n".join(f"- {item}" for item in plan_expansion_request)
+        expansion_block = (
+            "\nAllowlist expansion request (add if needed):\n"
+            f"{requested}\n"
+        )
     return f"""Produce an implementation plan for the phase below.
 
 Follow all repository rules in AGENTS.md.
@@ -236,6 +283,7 @@ Description: {phase.get("description", "")}
 Acceptance criteria:
 {acceptance_block}
 Global/phase test command: {test_block}
+{expansion_block}
 {user_block}
 {progress_block}
 
@@ -350,10 +398,13 @@ def _build_review_prompt(
         exit_code = tests_snapshot.get("exit_code")
         log_path = str(tests_snapshot.get("log_path") or "").strip() or "(unknown)"
         tail = str(tests_snapshot.get("log_tail") or "").strip()
+        captured_at = str(tests_snapshot.get("captured_at") or "").strip()
+        timestamp_block = f"Captured at: {captured_at}\n" if captured_at else ""
         tests_block = (
             f"Command: {cmd}\n"
-            f"Exit codeCde: {exit_code}\n"
+            f"Exit code: {exit_code}\n"
             f"Log: {log_path}\n"
+            f"{timestamp_block}"
             f"Recent output:\n{tail if tail else '(empty)'}"
         )
 

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
+    from .models import PromptMode, TaskLifecycle, TaskStep
     from .constants import (
         AUTO_RESUME_ERROR_TYPES,
         ERROR_TYPE_HEARTBEAT_TIMEOUT,
@@ -29,6 +30,7 @@ try:
         _sanitize_phase_id,
     )
 except ImportError:  # pragma: no cover
+    from models import PromptMode, TaskLifecycle, TaskStep
     from constants import (
         AUTO_RESUME_ERROR_TYPES,
         ERROR_TYPE_HEARTBEAT_TIMEOUT,
@@ -55,11 +57,65 @@ except ImportError:  # pragma: no cover
     )
 
 
+_LIFECYCLE_VALUES = {value.value for value in TaskLifecycle}
+_STEP_VALUES = {value.value for value in TaskStep}
+_PROMPT_MODE_VALUES = {value.value for value in PromptMode}
+
+
+def _coerce_lifecycle(value: Any) -> Optional[str]:
+    if isinstance(value, TaskLifecycle):
+        return value.value
+    if isinstance(value, str) and value in _LIFECYCLE_VALUES:
+        return value
+    return None
+
+
+def _coerce_step(value: Any) -> Optional[str]:
+    if isinstance(value, TaskStep):
+        return value.value
+    if isinstance(value, str) and value in _STEP_VALUES:
+        return value
+    return None
+
+
+def _coerce_prompt_mode(value: Any) -> Optional[str]:
+    if isinstance(value, PromptMode):
+        return value.value
+    if isinstance(value, str) and value in _PROMPT_MODE_VALUES:
+        return value
+    return None
+
+
+def _infer_lifecycle_step(task: dict[str, Any], status: str) -> tuple[str, str]:
+    task_type = str(task.get("type") or "implement")
+    if status == TASK_STATUS_DONE:
+        return TaskLifecycle.DONE.value, TaskStep.COMMIT.value
+    if status == TASK_STATUS_BLOCKED:
+        intent = task.get("blocked_intent") or {}
+        intent_step = _coerce_step(intent.get("step"))
+        if intent_step:
+            return TaskLifecycle.WAITING_HUMAN.value, intent_step
+        return TaskLifecycle.WAITING_HUMAN.value, TaskStep.PLAN_IMPL.value
+    if task_type == "plan":
+        return TaskLifecycle.READY.value, TaskStep.PLAN_IMPL.value
+    if status == TASK_STATUS_REVIEW:
+        return TaskLifecycle.READY.value, TaskStep.REVIEW.value
+    if status == TASK_STATUS_PLAN_IMPL:
+        return TaskLifecycle.READY.value, TaskStep.PLAN_IMPL.value
+    if status == TASK_STATUS_TESTING:
+        return TaskLifecycle.READY.value, TaskStep.VERIFY.value
+    if status in {TASK_STATUS_IMPLEMENTING, TASK_STATUS_DOING, "in_progress"}:
+        return TaskLifecycle.READY.value, TaskStep.IMPLEMENT.value
+    return TaskLifecycle.READY.value, TaskStep.PLAN_IMPL.value
+
 def _build_plan_task() -> dict[str, Any]:
     return {
         "id": "plan-001",
         "type": "plan",
         "status": TASK_STATUS_TODO,
+        "lifecycle": TaskLifecycle.READY.value,
+        "step": TaskStep.PLAN_IMPL.value,
+        "prompt_mode": None,
         "priority": 0,
         "deps": [],
         "description": "Review PRD and repository, then create phases and tasks",
@@ -81,6 +137,9 @@ def _build_tasks_from_phases(phases: list[dict[str, Any]]) -> list[dict[str, Any
                 "type": "implement",
                 "phase_id": phase_id,
                 "status": TASK_STATUS_TODO,
+                "lifecycle": TaskLifecycle.READY.value,
+                "step": TaskStep.PLAN_IMPL.value,
+                "prompt_mode": None,
                 "priority": index,
                 "deps": phase.get("deps", []) or [],
                 "description": description,
@@ -128,9 +187,27 @@ def _normalize_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
 
         if status in {TASK_STATUS_DOING, "in_progress"}:
             status = TASK_STATUS_DOING if task.get("type") == "plan" else TASK_STATUS_IMPLEMENTING
-        if status == TASK_STATUS_TESTING and task.get("type") != "plan":
-            status = TASK_STATUS_IMPLEMENTING
         task["status"] = status
+
+        lifecycle = _coerce_lifecycle(task.get("lifecycle"))
+        step = _coerce_step(task.get("step"))
+        if not lifecycle or not step:
+            inferred_lifecycle, inferred_step = _infer_lifecycle_step(task, status)
+            if not lifecycle:
+                lifecycle = inferred_lifecycle
+            if not step:
+                step = inferred_step
+        task["lifecycle"] = lifecycle or TaskLifecycle.READY.value
+        task["step"] = step or TaskStep.PLAN_IMPL.value
+        task["prompt_mode"] = _coerce_prompt_mode(task.get("prompt_mode"))
+        if task["lifecycle"] == TaskLifecycle.DONE.value:
+            task["status"] = TASK_STATUS_DONE
+        elif task["lifecycle"] == TaskLifecycle.WAITING_HUMAN.value:
+            task["status"] = TASK_STATUS_BLOCKED
+        elif task["step"] == TaskStep.IMPLEMENT.value:
+            task["status"] = TASK_STATUS_IMPLEMENTING
+        else:
+            task["status"] = task["step"]
 
         task["priority"] = _coerce_int(task.get("priority"), 0)
 
@@ -144,31 +221,56 @@ def _normalize_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
 
         # Coerce numeric counters safely
         for field in [
-            "attempts",
-            "auto_resume_attempts",
-            "review_attempts",
-            "no_change_attempts",
-            "no_progress_attempts",
+            "worker_attempts",
             "plan_attempts",
-            "manual_resume_attempts",
+            "no_progress_attempts",
             "test_fail_attempts",
+            "review_gen_attempts",
+            "review_fix_attempts",
+            "allowlist_expansion_attempts",
+            "auto_resume_attempts",
+            "manual_resume_attempts",
         ]:
             task[field] = _coerce_int(task.get(field), 0)
 
+        legacy_attempts = _coerce_int(task.get("attempts"), 0)
+        if task["worker_attempts"] == 0 and legacy_attempts:
+            task["worker_attempts"] = legacy_attempts
+
+        legacy_review_attempts = _coerce_int(task.get("review_attempts"), 0)
+        if task["review_gen_attempts"] == 0 and legacy_review_attempts:
+            task["review_gen_attempts"] = legacy_review_attempts
+        if task["review_fix_attempts"] == 0 and legacy_review_attempts:
+            task["review_fix_attempts"] = legacy_review_attempts
+
+        legacy_no_change = _coerce_int(task.get("no_change_attempts"), 0)
+        if task["no_progress_attempts"] == 0 and legacy_no_change:
+            task["no_progress_attempts"] = legacy_no_change
+
         task.setdefault("last_tests", None)
+        task.setdefault("last_verification", task.get("last_tests"))
         task.setdefault("last_error", None)
         task.setdefault("last_error_type", None)
         task.setdefault("impl_plan_path", None)
         task.setdefault("impl_plan_hash", None)
+        task.setdefault("last_review_path", None)
         task.setdefault("review_blockers", [])
         task.setdefault("review_blocker_files", [])
+        task.setdefault("block_reason", None)
+        task.setdefault("plan_expansion_request", [])
         task.setdefault("blocked_intent", None)
         task.setdefault("blocked_at", None)
         task.setdefault("last_run_id", None)
 
         # Lists
-        task["blocking_issues"] = _coerce_string_list(task.get("blocking_issues"))
-        task["blocking_next_steps"] = _coerce_string_list(task.get("blocking_next_steps"))
+        task["human_blocking_issues"] = _coerce_string_list(
+            task.get("human_blocking_issues") or task.get("blocking_issues")
+        )
+        task["human_next_steps"] = _coerce_string_list(
+            task.get("human_next_steps") or task.get("blocking_next_steps")
+        )
+        task["blocking_issues"] = list(task["human_blocking_issues"])
+        task["blocking_next_steps"] = list(task["human_next_steps"])
 
         lcf = task.get("last_changed_files", [])
         if not isinstance(lcf, list):
@@ -179,6 +281,14 @@ def _normalize_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(ctx, list):
             ctx = _coerce_string_list(ctx)
         task["context"] = [str(item).strip() for item in ctx if str(item).strip()]
+
+        expansion = task.get("plan_expansion_request", [])
+        if not isinstance(expansion, list):
+            expansion = _coerce_string_list(expansion)
+        task["plan_expansion_request"] = [str(item).strip() for item in expansion if str(item).strip()]
+
+        task["review_blockers"] = _coerce_string_list(task.get("review_blockers"))
+        task["review_blocker_files"] = _coerce_string_list(task.get("review_blocker_files"))
 
         acceptance = task.get("acceptance_criteria", [])
         if isinstance(acceptance, list):
@@ -227,13 +337,16 @@ def _normalize_phases(plan: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _task_summary(tasks: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {"todo": 0, "doing": 0, "done": 0, "blocked": 0}
+    counts = {
+        TaskLifecycle.READY.value: 0,
+        TaskLifecycle.RUNNING.value: 0,
+        TaskLifecycle.DONE.value: 0,
+        TaskLifecycle.WAITING_HUMAN.value: 0,
+    }
     for task in tasks:
-        status = task.get("status", TASK_STATUS_TODO)
-        if status in TASK_IN_PROGRESS_STATUSES:
-            counts["doing"] += 1
-        elif status in counts:
-            counts[status] += 1
+        lifecycle = task.get("lifecycle", TaskLifecycle.READY.value)
+        if lifecycle in counts:
+            counts[lifecycle] += 1
     return counts
 
 
@@ -241,8 +354,12 @@ def _deps_satisfied(task: dict[str, Any], tasks_by_id: dict[str, dict[str, Any]]
     deps = task.get("deps", []) or []
     for dep_id in deps:
         dep = tasks_by_id.get(dep_id)
-        if not dep or dep.get("status") != "done":
+        if not dep:
             return False
+        lifecycle = dep.get("lifecycle")
+        if lifecycle == TaskLifecycle.DONE.value or dep.get("status") == "done":
+            continue
+        return False
     return True
 
 
@@ -254,11 +371,13 @@ def _select_next_task(tasks: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     )
 
     for _, task in sorted_tasks:
-        if task.get("status") in TASK_IN_PROGRESS_STATUSES:
+        lifecycle = task.get("lifecycle")
+        if lifecycle == TaskLifecycle.RUNNING.value or task.get("status") in TASK_IN_PROGRESS_STATUSES:
             return task
 
     for _, task in sorted_tasks:
-        if task.get("status") == "todo" and _deps_satisfied(task, tasks_by_id):
+        lifecycle = task.get("lifecycle", TaskLifecycle.READY.value)
+        if lifecycle == TaskLifecycle.READY.value and _deps_satisfied(task, tasks_by_id):
             return task
 
     return None
@@ -279,7 +398,7 @@ def _maybe_auto_resume_blocked(
 ) -> tuple[list[dict[str, Any]], bool]:
     changed = False
     for task in tasks:
-        if task.get("status") != "blocked":
+        if task.get("lifecycle") != TaskLifecycle.WAITING_HUMAN.value and task.get("status") != "blocked":
             continue
         last_error = task.get("last_error")
         last_error_type = task.get("last_error_type")
@@ -289,12 +408,16 @@ def _maybe_auto_resume_blocked(
         if attempts >= max_auto_resumes:
             continue
 
-        task["status"] = TASK_STATUS_TODO
-        task["attempts"] = 0
+        task["lifecycle"] = TaskLifecycle.READY.value
+        task["step"] = task.get("step") or TaskStep.PLAN_IMPL.value
+        task["status"] = task["step"]
+        task["worker_attempts"] = 0
         task["last_error"] = None
         task["last_error_type"] = None
-        task["blocking_issues"] = []
-        task["blocking_next_steps"] = []
+        task["block_reason"] = None
+        task["human_blocking_issues"] = []
+        task["human_next_steps"] = []
+        task["prompt_mode"] = None
         task["auto_resume_attempts"] = attempts + 1
         task["last_updated_at"] = _now_iso()
         changed = True
@@ -312,7 +435,10 @@ def _blocked_dependency_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any
     for task in tasks:
         for dep_id in task.get("deps", []) or []:
             dep = tasks_by_id.get(dep_id)
-            if dep and dep.get("status") == TASK_STATUS_BLOCKED:
+            if dep and (
+                dep.get("lifecycle") == TaskLifecycle.WAITING_HUMAN.value
+                or dep.get("status") == TASK_STATUS_BLOCKED
+            ):
                 blocked[str(dep.get("id"))] = dep
     return list(blocked.values())
 
@@ -334,12 +460,16 @@ def _auto_resume_blocked_dependencies(
         attempts = int(task.get("auto_resume_attempts", 0))
         if attempts >= max_auto_resumes:
             continue
-        task["status"] = TASK_STATUS_TODO
-        task["attempts"] = 0
+        task["lifecycle"] = TaskLifecycle.READY.value
+        task["step"] = task.get("step") or TaskStep.PLAN_IMPL.value
+        task["status"] = task["step"]
+        task["worker_attempts"] = 0
         task["last_error"] = None
         task["last_error_type"] = None
-        task["blocking_issues"] = []
-        task["blocking_next_steps"] = []
+        task["block_reason"] = None
+        task["human_blocking_issues"] = []
+        task["human_next_steps"] = []
+        task["prompt_mode"] = None
         task["auto_resume_attempts"] = attempts + 1
         task["last_updated_at"] = _now_iso()
         changed = True
@@ -389,6 +519,9 @@ def _record_blocked_intent(
     branch: Optional[str],
     test_command: Optional[str],
     run_id: Optional[str],
+    step: Optional[str] = None,
+    lifecycle: Optional[str] = None,
+    prompt_mode: Optional[str] = None,
 ) -> None:
     task["blocked_intent"] = {
         "task_status": task_status,
@@ -397,6 +530,9 @@ def _record_blocked_intent(
         "branch": branch,
         "test_command": test_command,
         "run_id": run_id,
+        "step": step,
+        "lifecycle": lifecycle,
+        "prompt_mode": prompt_mode,
     }
     task["blocked_at"] = _now_iso()
 
@@ -406,7 +542,12 @@ def _maybe_resume_blocked_last_intent(
     tasks: list[dict[str, Any]],
     max_manual_resumes: int,
 ) -> tuple[list[dict[str, Any]], bool]:
-    blocked = [task for task in tasks if task.get("status") == TASK_STATUS_BLOCKED]
+    blocked = [
+        task
+        for task in tasks
+        if task.get("lifecycle") == TaskLifecycle.WAITING_HUMAN.value
+        or task.get("status") == TASK_STATUS_BLOCKED
+    ]
     if not blocked:
         return tasks, False
     candidates = [
@@ -430,22 +571,16 @@ def _maybe_resume_blocked_last_intent(
 
     target = sorted(candidates, key=sort_key)[-1]
     intent = target.get("blocked_intent") or {}
-    prev_status = intent.get("task_status") or TASK_STATUS_TODO
-    if prev_status in {
-        TASK_STATUS_PLAN_IMPL,
-        TASK_STATUS_IMPLEMENTING,
-        TASK_STATUS_REVIEW,
-        TASK_STATUS_DOING,
-    }:
-        restore_status = prev_status
-    else:
-        restore_status = TASK_STATUS_TODO
-
-    target["status"] = restore_status
+    restore_step = _coerce_step(intent.get("step")) or target.get("step") or TaskStep.PLAN_IMPL.value
+    target["step"] = restore_step
+    target["status"] = restore_step
+    target["lifecycle"] = TaskLifecycle.READY.value
     target["last_error"] = None
     target["last_error_type"] = None
-    target["blocking_issues"] = []
-    target["blocking_next_steps"] = []
+    target["block_reason"] = None
+    target["human_blocking_issues"] = []
+    target["human_next_steps"] = []
+    target["prompt_mode"] = _coerce_prompt_mode(intent.get("prompt_mode"))
     target["last_updated_at"] = _now_iso()
     target["manual_resume_attempts"] = int(target.get("manual_resume_attempts", 0)) + 1
 
@@ -477,7 +612,12 @@ def _tests_log_path(artifacts_dir: Path, phase_id: str) -> Path:
 
 
 def _blocking_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [task for task in tasks if task.get("status") == TASK_STATUS_BLOCKED]
+    return [
+        task
+        for task in tasks
+        if task.get("lifecycle") == TaskLifecycle.WAITING_HUMAN.value
+        or task.get("status") == TASK_STATUS_BLOCKED
+    ]
 
 
 def _summarize_blocking_tasks(blocked_tasks: list[dict[str, Any]]) -> str:
@@ -499,8 +639,9 @@ def _blocking_event_payload(blocked_tasks: list[dict[str, Any]]) -> dict[str, An
                 "phase_id": task.get("phase_id"),
                 "last_error": task.get("last_error"),
                 "last_error_type": task.get("last_error_type"),
-                "blocking_issues": _coerce_string_list(task.get("blocking_issues")),
-                "blocking_next_steps": _coerce_string_list(task.get("blocking_next_steps")),
+                "block_reason": task.get("block_reason"),
+                "blocking_issues": _coerce_string_list(task.get("human_blocking_issues")),
+                "blocking_next_steps": _coerce_string_list(task.get("human_next_steps")),
             }
             for task in blocked_tasks
         ],
@@ -521,7 +662,7 @@ def _report_blocking_tasks(
         error_type = task.get("last_error_type") or "unknown"
         last_error = task.get("last_error") or "Blocking issue reported"
         print(f"\nTask {task_id} blocked ({error_type}): {last_error}")
-        issues = _coerce_string_list(task.get("blocking_issues"))
+        issues = _coerce_string_list(task.get("human_blocking_issues"))
         if issues:
             print("Reported blocking issues:")
             for issue in issues:
@@ -556,11 +697,22 @@ def _phase_for_task(phases: list[dict[str, Any]], task: dict[str, Any]) -> Optio
     return None
 
 
-def _sync_phase_status(phase: dict[str, Any], task_status: str) -> None:
-    if task_status in {TASK_STATUS_DOING, "in_progress"}:
+def _sync_phase_status(phase: dict[str, Any], task: dict[str, Any]) -> None:
+    lifecycle = task.get("lifecycle")
+    step = task.get("step")
+    if lifecycle == TaskLifecycle.DONE.value:
+        phase["status"] = TASK_STATUS_DONE
+        return
+    if lifecycle == TaskLifecycle.WAITING_HUMAN.value:
+        phase["status"] = TASK_STATUS_BLOCKED
+        return
+    if step == TaskStep.IMPLEMENT.value:
         phase["status"] = TASK_STATUS_IMPLEMENTING
-    else:
-        phase["status"] = task_status
+        return
+    if step:
+        phase["status"] = step
+        return
+    phase["status"] = task.get("status", TASK_STATUS_TODO)
 
 
 def _find_task(tasks: list[dict[str, Any]], task_id: str) -> Optional[dict[str, Any]]:

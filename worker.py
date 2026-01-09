@@ -175,18 +175,41 @@ def _run_codex_worker(
     }
 
 
-def _run_command(command: str, project_dir: Path, log_path: Path) -> dict[str, Any]:
+def _run_command(
+    command: str,
+    project_dir: Path,
+    log_path: Path,
+    *,
+    timeout_seconds: Optional[int] = None,
+) -> dict[str, Any]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    timed_out = False
     with open(log_path, "w") as handle:
-        result = subprocess.run(
-            command,
-            cwd=project_dir,
-            shell=True,
-            stdout=handle,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-    return {"command": command, "exit_code": result.returncode, "log_path": str(log_path)}
+        try:
+            result = subprocess.run(
+                command,
+                cwd=project_dir,
+                shell=True,
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            handle.write(f"\n[runner] Command timed out after {timeout_seconds}s\n")
+            return {
+                "command": command,
+                "exit_code": 124,
+                "log_path": str(log_path),
+                "timed_out": True,
+            }
+    return {
+        "command": command,
+        "exit_code": result.returncode,
+        "log_path": str(log_path),
+        "timed_out": timed_out,
+    }
 
 
 def _capture_test_result_snapshot(

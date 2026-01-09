@@ -38,19 +38,17 @@ python -m feature_prd_runner.runner \
 1. Plans phases from the PRD and repository context.
 2. Creates one task per phase.
 3. For each phase:
-   - Generates a per-phase implementation plan (`impl_plan_<phase_id>.json`).
-   - Checks out a branch for the phase.
-   - Runs Codex CLI one plan step at a time and only advances when changes are made.
-   - Re-queues or blocks the phase if a step run makes no edits repeatedly.
-   - Implements the phase following the plan (plan deviations must be recorded).
-   - Runs tests and fixes failures.
-   - Runs a review against PRD requirements, acceptance criteria, and the plan using real diffs.
-   - Commits and pushes when clean.
+   - Generates a per-phase implementation plan (`PLAN_IMPL`).
+   - Implements the phase with Codex (`IMPLEMENT`), enforcing the plan allowlist.
+   - Runs coordinator tests/lints and stores a verification artifact (`VERIFY`).
+   - Runs a review against PRD requirements, acceptance criteria, and the plan (`REVIEW`).
+   - Commits and pushes when clean (`COMMIT`).
 
-Each step writes progress to durable files for easy resume.
+Each step writes progress to durable files for easy resume. Verification evidence is
+recorded and fed into review prompts to avoid “not evidenced” failures.
 
-Review-fix mode: if a review returns blocking issues, the runner temporarily runs a focused
-fix step based on the reviewer blockers/files, then resumes the prior plan step index.
+Review-fix mode: if a review returns blocking issues, the runner routes back to IMPLEMENT
+with a “address review issues” banner and tracked blocker files.
 
 Blocking issues: if a run reports blocking issues that require human intervention, the
 runner stops and prints the issues plus proposed resolve steps. Disable this behavior
