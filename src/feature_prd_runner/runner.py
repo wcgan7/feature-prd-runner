@@ -13,30 +13,17 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-try:
-    from .constants import (
-        DEFAULT_HEARTBEAT_GRACE_SECONDS,
-        DEFAULT_HEARTBEAT_SECONDS,
-        DEFAULT_MAX_ATTEMPTS,
-        DEFAULT_MAX_AUTO_RESUMES,
-        DEFAULT_SHIFT_MINUTES,
-        DEFAULT_STOP_ON_BLOCKING_ISSUES,
-    )
-    from .orchestrator import run_feature_prd
-    from .prompts import _build_phase_prompt, _build_plan_prompt, _build_review_prompt
-    from .tasks import _read_progress_human_blockers
-except ImportError:  # pragma: no cover
-    from constants import (
-        DEFAULT_HEARTBEAT_GRACE_SECONDS,
-        DEFAULT_HEARTBEAT_SECONDS,
-        DEFAULT_MAX_ATTEMPTS,
-        DEFAULT_MAX_AUTO_RESUMES,
-        DEFAULT_SHIFT_MINUTES,
-        DEFAULT_STOP_ON_BLOCKING_ISSUES,
-    )
-    from orchestrator import run_feature_prd
-    from prompts import _build_phase_prompt, _build_plan_prompt, _build_review_prompt
-    from tasks import _read_progress_human_blockers
+from .constants import (
+    DEFAULT_HEARTBEAT_GRACE_SECONDS,
+    DEFAULT_HEARTBEAT_SECONDS,
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_MAX_AUTO_RESUMES,
+    DEFAULT_SHIFT_MINUTES,
+    DEFAULT_STOP_ON_BLOCKING_ISSUES,
+)
+from .orchestrator import run_feature_prd
+from .prompts import _build_phase_prompt, _build_plan_prompt, _build_review_prompt
+from .tasks import _read_progress_human_blockers
 
 
 __all__ = [

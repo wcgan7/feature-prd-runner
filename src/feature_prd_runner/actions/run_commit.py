@@ -2,12 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-try:
-    from ..git_utils import _git_commit_and_push, _git_has_changes
-    from ..models import CommitResult
-except ImportError:  # pragma: no cover
-    from git_utils import _git_commit_and_push, _git_has_changes
-    from models import CommitResult
+from ..git_utils import _git_commit_and_push, _git_has_changes
+from ..models import CommitResult
 
 
 def run_commit_action(

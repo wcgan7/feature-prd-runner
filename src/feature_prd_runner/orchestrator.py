@@ -8,120 +8,62 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-try:
-    from .actions.run_commit import run_commit_action
-    from .actions.run_verify import run_verify_action
-    from .actions.run_worker import run_worker_action
-    from .constants import (
-        DEFAULT_HEARTBEAT_GRACE_SECONDS,
-        DEFAULT_HEARTBEAT_SECONDS,
-        DEFAULT_MAX_ATTEMPTS,
-        DEFAULT_MAX_AUTO_RESUMES,
-        DEFAULT_SHIFT_MINUTES,
-        DEFAULT_STOP_ON_BLOCKING_ISSUES,
-        ERROR_TYPE_BLOCKING_ISSUES,
-        ERROR_TYPE_PLAN_MISSING,
-        LOCK_FILE,
-        MAX_ALLOWLIST_EXPANSION_ATTEMPTS,
-        MAX_IMPL_PLAN_ATTEMPTS,
-        MAX_MANUAL_RESUME_ATTEMPTS,
-        MAX_NO_PROGRESS_ATTEMPTS,
-        MAX_REVIEW_ATTEMPTS,
-        MAX_TEST_FAIL_ATTEMPTS,
-        TASK_STATUS_BLOCKED,
-    )
-    from .fsm import reduce_task
-    from .git_utils import _ensure_branch, _ensure_gitignore, _git_has_changes
-    from .io_utils import (
-        FileLock,
-        _append_event,
-        _load_data,
-        _require_yaml,
-        _save_data,
-        _update_progress,
-    )
-    from .models import ProgressHumanBlockers, TaskLifecycle, TaskState, TaskStep, WorkerFailed, WorkerSucceeded
-    from .state import _active_run_is_stale, _ensure_state_files, _finalize_run_state
-    from .tasks import (
-        _auto_resume_blocked_dependencies,
-        _blocking_event_payload,
-        _blocking_tasks,
-        _build_plan_task,
-        _build_tasks_from_phases,
-        _find_task,
-        _impl_plan_path,
-        _maybe_auto_resume_blocked,
-        _maybe_resume_blocked_last_intent,
-        _normalize_phases,
-        _normalize_tasks,
-        _phase_for_task,
-        _record_blocked_intent,
-        _report_blocking_tasks,
-        _save_plan,
-        _save_queue,
-        _select_next_task,
-        _summarize_blocking_tasks,
-        _sync_phase_status,
-        _task_summary,
-    )
-    from .utils import _now_iso
-except ImportError:  # pragma: no cover
-    from actions.run_commit import run_commit_action
-    from actions.run_verify import run_verify_action
-    from actions.run_worker import run_worker_action
-    from constants import (
-        DEFAULT_HEARTBEAT_GRACE_SECONDS,
-        DEFAULT_HEARTBEAT_SECONDS,
-        DEFAULT_MAX_ATTEMPTS,
-        DEFAULT_MAX_AUTO_RESUMES,
-        DEFAULT_SHIFT_MINUTES,
-        DEFAULT_STOP_ON_BLOCKING_ISSUES,
-        ERROR_TYPE_BLOCKING_ISSUES,
-        ERROR_TYPE_PLAN_MISSING,
-        LOCK_FILE,
-        MAX_ALLOWLIST_EXPANSION_ATTEMPTS,
-        MAX_IMPL_PLAN_ATTEMPTS,
-        MAX_MANUAL_RESUME_ATTEMPTS,
-        MAX_NO_PROGRESS_ATTEMPTS,
-        MAX_REVIEW_ATTEMPTS,
-        MAX_TEST_FAIL_ATTEMPTS,
-        TASK_STATUS_BLOCKED,
-    )
-    from fsm import reduce_task
-    from git_utils import _ensure_branch, _ensure_gitignore, _git_has_changes
-    from io_utils import (
-        FileLock,
-        _append_event,
-        _load_data,
-        _require_yaml,
-        _save_data,
-        _update_progress,
-    )
-    from models import ProgressHumanBlockers, TaskLifecycle, TaskState, TaskStep, WorkerFailed, WorkerSucceeded
-    from state import _active_run_is_stale, _ensure_state_files, _finalize_run_state
-    from tasks import (
-        _auto_resume_blocked_dependencies,
-        _blocking_event_payload,
-        _blocking_tasks,
-        _build_plan_task,
-        _build_tasks_from_phases,
-        _find_task,
-        _impl_plan_path,
-        _maybe_auto_resume_blocked,
-        _maybe_resume_blocked_last_intent,
-        _normalize_phases,
-        _normalize_tasks,
-        _phase_for_task,
-        _record_blocked_intent,
-        _report_blocking_tasks,
-        _save_plan,
-        _save_queue,
-        _select_next_task,
-        _summarize_blocking_tasks,
-        _sync_phase_status,
-        _task_summary,
-    )
-    from utils import _now_iso
+from .actions.run_commit import run_commit_action
+from .actions.run_verify import run_verify_action
+from .actions.run_worker import run_worker_action
+from .constants import (
+    DEFAULT_HEARTBEAT_GRACE_SECONDS,
+    DEFAULT_HEARTBEAT_SECONDS,
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_MAX_AUTO_RESUMES,
+    DEFAULT_SHIFT_MINUTES,
+    DEFAULT_STOP_ON_BLOCKING_ISSUES,
+    ERROR_TYPE_BLOCKING_ISSUES,
+    ERROR_TYPE_PLAN_MISSING,
+    LOCK_FILE,
+    MAX_ALLOWLIST_EXPANSION_ATTEMPTS,
+    MAX_IMPL_PLAN_ATTEMPTS,
+    MAX_MANUAL_RESUME_ATTEMPTS,
+    MAX_NO_PROGRESS_ATTEMPTS,
+    MAX_REVIEW_ATTEMPTS,
+    MAX_TEST_FAIL_ATTEMPTS,
+    TASK_STATUS_BLOCKED,
+)
+from .fsm import reduce_task
+from .git_utils import _ensure_branch, _ensure_gitignore, _git_has_changes
+from .io_utils import (
+    FileLock,
+    _append_event,
+    _load_data,
+    _require_yaml,
+    _save_data,
+    _update_progress,
+)
+from .models import ProgressHumanBlockers, TaskLifecycle, TaskState, TaskStep, WorkerFailed, WorkerSucceeded
+from .state import _active_run_is_stale, _ensure_state_files, _finalize_run_state
+from .tasks import (
+    _auto_resume_blocked_dependencies,
+    _blocking_event_payload,
+    _blocking_tasks,
+    _build_plan_task,
+    _build_tasks_from_phases,
+    _find_task,
+    _impl_plan_path,
+    _maybe_auto_resume_blocked,
+    _maybe_resume_blocked_last_intent,
+    _normalize_phases,
+    _normalize_tasks,
+    _phase_for_task,
+    _record_blocked_intent,
+    _report_blocking_tasks,
+    _save_plan,
+    _save_queue,
+    _select_next_task,
+    _summarize_blocking_tasks,
+    _sync_phase_status,
+    _task_summary,
+)
+from .utils import _now_iso
 
 
 def run_feature_prd(

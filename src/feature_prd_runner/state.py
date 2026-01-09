@@ -4,19 +4,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-try:
-    from .constants import ARTIFACTS_DIR, LOCK_FILE, PHASE_PLAN_FILE, RUNS_DIR, RUN_STATE_FILE, STATE_DIR_NAME, TASK_QUEUE_FILE
-    from .io_utils import FileLock, _load_data, _save_data
-    from .utils import _coerce_int, _now_iso, _parse_iso, _pid_is_running
-except ImportError:  # pragma: no cover
-    from constants import ARTIFACTS_DIR, LOCK_FILE, PHASE_PLAN_FILE, RUNS_DIR, RUN_STATE_FILE, STATE_DIR_NAME, TASK_QUEUE_FILE
-    from io_utils import FileLock, _load_data, _save_data
-    from utils import _coerce_int, _now_iso, _parse_iso, _pid_is_running
-
-try:
-    from .io_utils import _heartbeat_from_progress
-except ImportError:  # pragma: no cover
-    from io_utils import _heartbeat_from_progress
+from .constants import ARTIFACTS_DIR, LOCK_FILE, PHASE_PLAN_FILE, RUNS_DIR, RUN_STATE_FILE, STATE_DIR_NAME, TASK_QUEUE_FILE
+from .io_utils import FileLock, _load_data, _save_data, _heartbeat_from_progress
+from .utils import _coerce_int, _now_iso, _parse_iso, _pid_is_running
 
 
 def _ensure_state_files(project_dir: Path, prd_path: Path) -> dict[str, Path]:

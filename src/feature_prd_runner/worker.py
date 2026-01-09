@@ -9,12 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-try:
-    from .io_utils import _heartbeat_from_progress, _read_log_tail
-    from .utils import _now_iso
-except ImportError:  # pragma: no cover
-    from io_utils import _heartbeat_from_progress, _read_log_tail
-    from utils import _now_iso
+from .io_utils import _heartbeat_from_progress, _read_log_tail
+from .utils import _now_iso
 
 
 def _stream_pipe(pipe: Any, file_path: Path, label: str, to_stderr: bool) -> None:

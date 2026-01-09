@@ -4,92 +4,49 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-try:
-    from ..constants import (
-        ERROR_TYPE_CODEX_EXIT,
-        ERROR_TYPE_DISALLOWED_FILES,
-        ERROR_TYPE_HEARTBEAT_TIMEOUT,
-        ERROR_TYPE_SHIFT_TIMEOUT,
-        IGNORED_REVIEW_PATH_PREFIXES,
-    )
-    from ..git_utils import (
-        _diff_file_sets,
-        _git_changed_files,
-        _git_diff_stat,
-        _git_diff_text,
-        _git_status_porcelain,
-        _snapshot_repo_changes,
-        _validate_changes_for_mode,
-    )
-    from ..io_utils import _load_data, _read_log_tail, _read_text_for_prompt, _render_json_for_prompt, _save_data
-    from ..models import (
-        AllowlistViolation,
-        NoIntroducedChanges,
-        ProgressHumanBlockers,
-        ReviewResult,
-        TaskStep,
-        WorkerFailed,
-        WorkerSucceeded,
-    )
-    from ..prompts import (
-        _build_impl_plan_prompt,
-        _build_phase_prompt,
-        _build_plan_prompt,
-        _build_review_prompt,
-        _extract_prd_markers,
-    )
-    from ..signals import build_allowed_files
-    from ..tasks import _impl_plan_path, _read_progress_human_blockers, _review_output_path
-    from ..utils import _hash_json_data
-    from ..validation import _extract_review_blocker_files
-    from ..worker import _run_codex_worker
-    from .load_plan import load_plan
-    from .load_review import load_review
-    from .validate_plan import validate_plan
-    from .validate_review import validate_review
-except ImportError:  # pragma: no cover
-    from constants import (
-        ERROR_TYPE_CODEX_EXIT,
-        ERROR_TYPE_DISALLOWED_FILES,
-        ERROR_TYPE_HEARTBEAT_TIMEOUT,
-        ERROR_TYPE_SHIFT_TIMEOUT,
-        IGNORED_REVIEW_PATH_PREFIXES,
-    )
-    from git_utils import (
-        _diff_file_sets,
-        _git_changed_files,
-        _git_diff_stat,
-        _git_diff_text,
-        _git_status_porcelain,
-        _snapshot_repo_changes,
-        _validate_changes_for_mode,
-    )
-    from io_utils import _load_data, _read_log_tail, _read_text_for_prompt, _render_json_for_prompt, _save_data
-    from models import (
-        AllowlistViolation,
-        NoIntroducedChanges,
-        ProgressHumanBlockers,
-        ReviewResult,
-        TaskStep,
-        WorkerFailed,
-        WorkerSucceeded,
-    )
-    from prompts import (
-        _build_impl_plan_prompt,
-        _build_phase_prompt,
-        _build_plan_prompt,
-        _build_review_prompt,
-        _extract_prd_markers,
-    )
-    from signals import build_allowed_files
-    from tasks import _impl_plan_path, _read_progress_human_blockers, _review_output_path
-    from utils import _hash_json_data
-    from validation import _extract_review_blocker_files
-    from worker import _run_codex_worker
-    from actions.load_plan import load_plan
-    from actions.load_review import load_review
-    from actions.validate_plan import validate_plan
-    from actions.validate_review import validate_review
+from ..constants import (
+    ERROR_TYPE_CODEX_EXIT,
+    ERROR_TYPE_DISALLOWED_FILES,
+    ERROR_TYPE_HEARTBEAT_TIMEOUT,
+    ERROR_TYPE_SHIFT_TIMEOUT,
+    IGNORED_REVIEW_PATH_PREFIXES,
+)
+from ..git_utils import (
+    _diff_file_sets,
+    _git_changed_files,
+    _git_diff_stat,
+    _git_diff_text,
+    _git_status_porcelain,
+    _snapshot_repo_changes,
+    _validate_changes_for_mode,
+)
+from ..io_utils import _load_data, _read_log_tail, _read_text_for_prompt, _render_json_for_prompt, _save_data
+from ..models import (
+    AllowlistViolation,
+    NoIntroducedChanges,
+    ProgressHumanBlockers,
+    ReviewResult,
+    TaskStep,
+    WorkerFailed,
+    WorkerSucceeded,
+)
+from ..prompts import (
+    _build_impl_plan_prompt,
+    _build_phase_prompt,
+    _build_plan_prompt,
+    _build_review_prompt,
+    _extract_prd_markers,
+)
+from ..signals import build_allowed_files
+from ..tasks import _impl_plan_path, _read_progress_human_blockers, _review_output_path
+from ..utils import _hash_json_data
+from ..validation import _extract_review_blocker_files
+from ..worker import _run_codex_worker
+from .load_plan import load_plan
+from .load_review import load_review
+from .validate_plan import validate_plan
+from .validate_review import validate_review
+
 
 
 def _classify_worker_failure(

@@ -16,5 +16,7 @@ dependencies = [
 feature-prd-runner = "feature_prd_runner.runner:main"
 
 [tool.setuptools]
-packages = ["feature_prd_runner"]
-package-dir = { "feature_prd_runner" = "." }
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
