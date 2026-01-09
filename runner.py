@@ -138,6 +138,10 @@ MAX_NO_CHANGE_ATTEMPTS = 3
 MAX_IMPL_PLAN_ATTEMPTS = 3
 MAX_NO_PROGRESS_ATTEMPTS = 3  # Allowed "no-op" runs before blocking
 MAX_MANUAL_RESUME_ATTEMPTS = 10
+MAX_TEST_FAIL_ATTEMPTS = 3
+REVIEW_SEVERITIES = {"critical", "high", "medium", "low"}
+REVIEW_BLOCKING_SEVERITIES = {"critical", "high"}  # gate commit on these
+
 
 IGNORED_REVIEW_PATH_PREFIXES = [
     ".prd_runner/",
@@ -485,9 +489,11 @@ def _normalize_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
             "no_progress_attempts",
             "plan_attempts",
             "manual_resume_attempts",
+            "test_fail_attempts",
         ]:
             task[field] = _coerce_int(task.get(field), 0)
 
+        task.setdefault("last_tests", None)
         task.setdefault("last_error", None)
         task.setdefault("last_error_type", None)
         task.setdefault("impl_plan_path", None)
@@ -989,18 +995,11 @@ def _extract_review_blocker_files(review_data: dict[str, Any]) -> list[str]:
     _add(review_data.get("files_reviewed"))
     _add(review_data.get("changed_files"))
 
-    for key, field in [
-        ("spec_traceability", "files"),
-        ("architecture_checklist", "files"),
-        ("acceptance_criteria_checklist", "files"),
-        ("logic_risks", "evidence_files"),
-    ]:
-        items = review_data.get(key)
-        if not isinstance(items, list):
-            continue
-        for item in items:
+    issues = review_data.get("issues")
+    if isinstance(issues, list):
+        for item in issues:
             if isinstance(item, dict):
-                _add(item.get(field))
+                _add(item.get("files"))
 
     return collected
 
@@ -1087,11 +1086,38 @@ def _validate_review_data(
     if phase_id and str(review_phase_id) != str(phase_id):
         return False, "phase_id does not match current phase"
 
-    blocking = review_data.get("blocking_issues")
-    if not isinstance(blocking, list):
-        return False, "blocking_issues must be a list"
-    if not prd_has_content and not blocking:
-        return False, "blocking_issues must include PRD access failure"
+    # PRD access: if missing, require an explicit critical/high issue
+    issues = review_data.get("issues")
+    if not isinstance(issues, list):
+        return False, "issues must be a list"
+    for i, item in enumerate(issues):
+        if not isinstance(item, dict):
+            return False, f"issues[{i}] must be an object"
+        sev = str(item.get("severity", "")).strip().lower()
+        if sev not in REVIEW_SEVERITIES:
+            return False, f"issues[{i}].severity must be one of: {sorted(REVIEW_SEVERITIES)}"
+        summ = item.get("summary")
+        if not isinstance(summ, str) or not summ.strip():
+            return False, f"issues[{i}].summary must be a non-empty string"
+        rationale = item.get("rationale")
+        if not isinstance(rationale, str) or not rationale.strip():
+            return False, f"issues[{i}].rationale must be a non-empty string"
+        files = item.get("files")
+        if not isinstance(files, list) or any(not isinstance(f, str) or not f.strip() for f in files):
+            return False, f"issues[{i}].files must be a list of non-empty strings"
+        suggested_fix = item.get("suggested_fix")
+        if not isinstance(suggested_fix, str) or not suggested_fix.strip():
+            return False, f"issues[{i}].suggested_fix must be a non-empty string"
+
+    if not prd_has_content:
+        has_prd_access_issue = any(
+            isinstance(it, dict)
+            and str(it.get("severity", "")).strip().lower() in REVIEW_BLOCKING_SEVERITIES
+            and "prd" in str(it.get("summary", "")).lower()
+            for it in issues
+        )
+        if not has_prd_access_issue:
+            return False, "issues must include a critical/high PRD access failure when PRD content missing"
 
     files_reviewed = review_data.get("files_reviewed")
     if not isinstance(files_reviewed, list) or not files_reviewed:
@@ -1102,10 +1128,8 @@ def _validate_review_data(
 
     expected_files = [path.strip() for path in (changed_files or []) if str(path).strip()]
     expected_set = {path for path in expected_files if path}
-    
-    # We are lenient here if expected_set is empty, assuming changes might be untracked or previously committed
     if expected_set and not expected_set.issubset(files_reviewed_set):
-        # We can make this a warning or just assume the reviewer knows best
+        # keep lenient as before
         pass
 
     evidence = review_data.get("evidence")
@@ -1147,7 +1171,9 @@ def _build_plan_prompt(
     heartbeat_block = ""
     if heartbeat_seconds:
         heartbeat_block = f"  Update heartbeat at least every {heartbeat_seconds} seconds.\n"
-    return f"""You are a Codex CLI worker. Your task is to plan phases for a new feature.
+    return f"""Your task is to plan phases for a new feature.
+
+Follow all repository rules in AGENTS.md.
 
 Inputs:
 - PRD: {prd_path}
@@ -1179,7 +1205,7 @@ Output files (write/update):
 Progress contract (REQUIRED):
 - Append events to: {events_path}
 - Write snapshot to: {progress_path}
-  Required fields: run_id={run_id}, task_id, phase, actions, claims, next_steps, blocking_issues, heartbeat.
+  Required fields: run_id={run_id}, task_id, phase, actions, claims, next_steps, human_blocking_issues, human_next_steps, heartbeat.
 {heartbeat_block}"""
 
 
@@ -1224,8 +1250,38 @@ def _build_phase_prompt(
     heartbeat_block = ""
     if heartbeat_seconds:
         heartbeat_block = f"  Update heartbeat at least every {heartbeat_seconds} seconds.\n"
+        
+    test_block = ""
+    test_failure = task.get("test_failure")
+    if isinstance(test_failure, dict):
+        cmd = str(test_failure.get("command") or "").strip()
+        log_path = str(test_failure.get("log_path") or "").strip()
+        log_tail = str(test_failure.get("log_tail") or "").strip()
+        attempt = test_failure.get("attempt")
+        max_attempts = test_failure.get("max_attempts")
 
-    return f"""You are a Codex CLI worker. Implement the COMPLETE phase described below.
+        attempt_str = ""
+        if isinstance(attempt, int) and isinstance(max_attempts, int) and max_attempts > 0:
+            attempt_str = f"(attempt {attempt}/{max_attempts})"
+
+        # keep this tight; log_tail already capped
+        test_block = f"""
+🚨 TESTS ARE FAILING {attempt_str} — FIX THIS FIRST
+Command: {cmd or "(unknown)"}
+Log: {log_path or "(unknown)"}
+Recent output:
+{log_tail or "(no log output captured)"}
+
+Priority for this run:
+1) Fix the failing tests (minimal change).
+2) Only then continue implementing remaining acceptance criteria.
+"""
+
+    return f"""Implement the COMPLETE phase described below.
+
+Follow all repository rules in AGENTS.md.
+
+{test_block}
 
 PRD: {prd_path}
 Phase: {phase_name}
@@ -1242,17 +1298,17 @@ Implementation plan file: {plan_path_display}
 
 Rules:
 - Work on the ENTIRE phase scope. Implement all necessary changes.
-- Do not commit or push; the coordinator will handle git.
-- If tests fail, fix them (the coordinator will run tests after you finish).
-- Keep the project's README.md updated with changes in this phase.
 - Allowed files to read/edit:
 {allowed_block}
 {no_progress_block}
 
+Do not run the full test suite. The coordinator runs tests. If you run any tests, run only a fast, targeted subset (≤60s).
+If tests are failing (see banner/context), prioritize fixing them before any additional feature work.
+
 Progress contract (REQUIRED):
 - Append events to: {events_path}
 - Write snapshot to: {progress_path}
-  Required fields: run_id={run_id}, task_id, phase, actions, claims, next_steps, blocking_issues, heartbeat.
+  Required fields: run_id={run_id}, task_id, phase, actions, claims, next_steps, human_blocking_issues, human_next_steps, heartbeat.
 {heartbeat_block}"""
 
 
@@ -1314,11 +1370,13 @@ def _build_impl_plan_prompt(
             "\nProgress contract (REQUIRED):\n"
             f"- Write snapshot to: {progress_path}\n"
             f"  Required fields: run_id={run_id}, task_id, phase, actions, claims, "
-            "next_steps, blocking_issues, heartbeat.\n"
+            "next_steps, human_blocking_issues, human_next_steps, heartbeat.\n"
             f"{heartbeat_block}"
         )
     test_block = test_command or "(none specified)"
-    return f"""You are a Codex CLI worker. Produce an implementation plan for the phase below.
+    return f"""Produce an implementation plan for the phase below.
+
+Follow all repository rules in AGENTS.md.
 
 PRD: {prd_path}
 PRD content (read first):
@@ -1393,6 +1451,7 @@ def _build_review_prompt(
     impl_plan_text: str = "",
     impl_plan_truncated: bool = False,
     heartbeat_seconds: Optional[int] = None,
+    tests_snapshot: Optional[dict[str, Any]] = None,
 ) -> str:
     acceptance = phase.get("acceptance_criteria") or []
     acceptance_block = "\n".join(f"- {item}" for item in acceptance) if acceptance else "- (none)"
@@ -1406,7 +1465,7 @@ def _build_review_prompt(
             "\nProgress contract (REQUIRED):\n"
             f"- Write snapshot to: {progress_path}\n"
             f"  Required fields: run_id={run_id}, task_id, phase, actions, claims, "
-            "next_steps, blocking_issues, heartbeat.\n"
+            "next_steps, human_blocking_issues, human_next_steps, heartbeat.\n"
             f"{heartbeat_block}"
         )
     
@@ -1438,8 +1497,23 @@ def _build_review_prompt(
     plan_notice = ""
     if impl_plan_truncated:
         plan_notice = "\nNOTE: Implementation plan truncated. Open the plan file for full details.\n"
+        
+    tests_block = "(no coordinator test run recorded)"
+    if isinstance(tests_snapshot, dict):
+        cmd = str(tests_snapshot.get("command") or "").strip() or "(unknown)"
+        exit_code = tests_snapshot.get("exit_code")
+        log_path = str(tests_snapshot.get("log_path") or "").strip() or "(unknown)"
+        tail = str(tests_snapshot.get("log_tail") or "").strip()
+        tests_block = (
+            f"Command: {cmd}\n"
+            f"Exit codeCde: {exit_code}\n"
+            f"Log: {log_path}\n"
+            f"Recent output:\n{tail if tail else '(empty)'}"
+        )
     
-    return f"""Perform a code review for the phase below and write JSON to {review_path}.
+    return f"""Perform a thorough code review for the phase below and write JSON to {review_path}.
+
+Follow all repository rules in AGENTS.md.
 
 Phase: {phase.get("name") or phase.get("id")}
 PRD: {prd_path}
@@ -1469,6 +1543,9 @@ Diff (from coordinator):
 {diff_text}
 {diff_notice}
 
+Coordinator test results:
+{tests_block}
+
 Implementation plan (from coordinator):
 {impl_plan_text or "(missing)"}
 {plan_notice}
@@ -1489,8 +1566,16 @@ Review output schema:
       "files": ["path/to/file.ext"]
     }}
   ],
+  "issues": [
+    {{
+      "severity": "critical|high|medium|low",
+      "summary": "One sentence",
+      "rationale": "Why it matters",
+      "files": ["path/to/file.ext"],
+      "suggested_fix": "Actionable change"
+    }}
+  ],
   "summary": "Short summary",
-  "blocking_issues": ["list of blockers"],
   "changed_files": ["exact list from coordinator"],
   "files_reviewed": ["list of paths"],
   "evidence": ["at least two concrete observations with file/diff references"],
@@ -1501,6 +1586,9 @@ Review instructions:
 - Verify implementation aligns with the plan.
 - If acceptance criteria are empty, include one checklist item with criterion "(none provided)".
 - Provide at least {REVIEW_MIN_EVIDENCE_ITEMS} concrete evidence items tied to files/diff.
+- Use the "Coordinator test results" section as the source of truth for baseline tests:
+  - Exit code 0 => tests passed (do not raise issues just for lack of proof).
+  - Non-zero exit => include at least one high/critical issue describing the failure and files involved.
 - If tests passed (coordinator verified), assume logic works but check for code quality and specs.
 """
 
@@ -1807,6 +1895,84 @@ def _git_changed_files(
     return sorted(changed)
 
 
+def _snapshot_repo_changes(project_dir: Path) -> list[str]:
+    return _git_changed_files(
+        project_dir,
+        include_untracked=True,
+        ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
+    )
+    
+
+def _diff_file_sets(before: list[str], after: list[str]) -> tuple[list[str], list[str]]:
+    before_set = set(before)
+    after_set = set(after)
+    added = sorted(after_set - before_set)   # new changes introduced by this run
+    removed = sorted(before_set - after_set) # changes that got reverted/cleaned up
+    return added, removed
+
+
+def _is_prd_runner_artifact(path: str) -> bool:
+    return path == STATE_DIR_NAME or path.startswith(f"{STATE_DIR_NAME}/")
+
+def _filter_non_prd_runner_changes(paths: list[str]) -> list[str]:
+    return [p for p in paths if not _is_prd_runner_artifact(p)]
+
+def _is_only_allowed_gitignore_addition(project_dir: Path) -> bool:
+    # You already have this helper:
+    # _gitignore_change_is_prd_runner_only(project_dir)
+    return _gitignore_change_is_prd_runner_only(project_dir)
+
+def _validate_changes_for_mode(
+    *,
+    project_dir: Path,
+    mode: str,  # "plan" | "plan_impl" | "review" | "implement"
+    introduced_changes: list[str],
+    allowed_files: Optional[list[str]] = None,
+) -> tuple[bool, str, list[str]]:
+    """
+    Returns (ok, error_message, disallowed_paths).
+    """
+    # PLAN / PLAN_IMPL / REVIEW: no repo changes outside .prd_runner (and optional .gitignore addition)
+    if mode in {"plan", "plan_impl", "review"}:
+        non_runner = _filter_non_prd_runner_changes(introduced_changes)
+
+        # allow a very specific .gitignore tweak
+        if ".gitignore" in non_runner and _is_only_allowed_gitignore_addition(project_dir):
+            non_runner = [p for p in non_runner if p != ".gitignore"]
+
+        if non_runner:
+            return (
+                False,
+                f"Run mode '{mode}' must not modify repo files outside {STATE_DIR_NAME}/ "
+                f"(disallowed: {', '.join(non_runner)[:400]})",
+                non_runner,
+            )
+        return True, "", []
+
+    # IMPLEMENT: enforce allowed_files patterns (you mostly do this already)
+    if mode == "implement":
+        allowed_files = allowed_files or []
+        if not allowed_files:
+            # If allowed list is missing, treat as violation to avoid silent repo edits.
+            return False, "IMPLEMENT mode missing allowed_files policy; refusing to proceed.", introduced_changes
+
+        disallowed = [p for p in introduced_changes if not _path_is_allowed(project_dir, p, allowed_files)]
+        if disallowed:
+            # allow that same gitignore tweak
+            if ".gitignore" in disallowed and _is_only_allowed_gitignore_addition(project_dir):
+                disallowed = [p for p in disallowed if p != ".gitignore"]
+
+        if disallowed:
+            return (
+                False,
+                "Changes outside allowed files: " + ", ".join(disallowed)[:400],
+                disallowed,
+            )
+        return True, "", []
+
+    return False, f"Unknown mode '{mode}'", introduced_changes
+
+
 def _git_diff_text(project_dir: Path, max_chars: int = 20000) -> tuple[str, bool]:
     sections: list[str] = []
     commands = [
@@ -2051,7 +2217,7 @@ def _active_run_is_stale(
     return True
 
 
-def _read_progress_blocking_issues(
+def _read_progress_human_blockers(
     progress_path: Path,
     expected_run_id: Optional[str] = None,
 ) -> tuple[list[str], list[str]]:
@@ -2062,8 +2228,10 @@ def _read_progress_blocking_issues(
         run_id = progress.get("run_id")
         if run_id and str(run_id) != str(expected_run_id):
             return [], []
-    issues = _coerce_string_list(progress.get("blocking_issues"))
-    next_steps = _coerce_string_list(progress.get("next_steps"))
+
+    issues = _coerce_string_list(progress.get("human_blocking_issues"))
+    next_steps = _coerce_string_list(progress.get("human_next_steps"))
+
     issues = [item for item in issues if not _is_placeholder_text(item)]
     next_steps = [item for item in next_steps if not _is_placeholder_text(item)]
     return issues, next_steps
@@ -2101,6 +2269,22 @@ def _save_plan(path: Path, plan: dict[str, Any], phases: list[dict[str, Any]]) -
     plan["phases"] = phases
     plan["updated_at"] = _now_iso()
     _save_data(path, plan)
+
+
+def _capture_test_result_snapshot(
+    *,
+    command: str,
+    exit_code: int,
+    log_path: Path,
+    max_tail_chars: int = 4000,
+) -> dict[str, Any]:
+    return {
+        "command": command,
+        "exit_code": int(exit_code),
+        "log_path": str(log_path),
+        "log_tail": _read_log_tail(log_path, max_chars=max_tail_chars),
+        "captured_at": _now_iso(),
+    }
 
 
 def run_feature_prd(
@@ -2384,7 +2568,8 @@ def run_feature_prd(
                 "run_id": run_id,
                 "task_id": task_id,
                 "phase": progress_phase,
-                "blocking_issues": [],
+                "human_blocking_issues": [],
+                "human_next_steps": [],
             },
         )
 
@@ -2470,6 +2655,7 @@ def run_feature_prd(
         allowed_files_set: Optional[set[str]] = None
 
         if run_codex:
+            pre_run_changed = _snapshot_repo_changes(project_dir)
             try:
                 if task_type == "plan":
                     prompt = _build_plan_prompt(
@@ -2528,6 +2714,8 @@ def run_feature_prd(
                         ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
                     )
                     
+                    tests_snapshot = next_task.get("last_tests") if isinstance(next_task, dict) else None
+                    
                     prompt = _build_review_prompt(
                         phase=phase,
                         review_path=review_path,
@@ -2548,6 +2736,7 @@ def run_feature_prd(
                         impl_plan_text=plan_text,
                         impl_plan_truncated=plan_truncated,
                         heartbeat_seconds=heartbeat_seconds,
+                        tests_snapshot=tests_snapshot,
                     )
                 else:
                     # IMPLEMENTATION logic
@@ -2639,11 +2828,11 @@ def run_feature_prd(
             stdout_tail = _read_log_tail(Path(run_result["stdout_path"]))
             stderr_tail = _read_log_tail(Path(run_result["stderr_path"]))
 
-            progress_blocking, progress_next_steps = _read_progress_blocking_issues(
+            human_blocking, human_next_steps = _read_progress_human_blockers(
                 progress_path,
                 expected_run_id=run_id,
             )
-            progress_blocking_detected = bool(progress_blocking)
+            human_blocking_detected = bool(human_blocking)
 
             failure = run_result["exit_code"] != 0 or run_result["no_heartbeat"]
             error_detail = None
@@ -2661,64 +2850,67 @@ def run_feature_prd(
                     error_detail = f"{error_detail}. stderr: {stderr_tail.strip()}"
                 elif stdout_tail.strip():
                     error_detail = f"{error_detail}. stdout: {stdout_tail.strip()}"
+                    
+            post_run_changed = _snapshot_repo_changes(project_dir)
+            introduced, removed = _diff_file_sets(pre_run_changed, post_run_changed)
 
-            changed_files_after_run = None
-            progress_files = None
+            # Decide mode
+            if task_type == "plan":
+                mode = "plan"
+            elif planning_impl:
+                mode = "plan_impl"
+            elif task_status == TASK_STATUS_REVIEW:
+                mode = "review"
+            else:
+                mode = "implement"
+
+            ok, msg, disallowed = _validate_changes_for_mode(
+                project_dir=project_dir,
+                mode=mode,
+                introduced_changes=introduced,
+                allowed_files=allowed_files if mode == "implement" else None,
+            )
             disallowed_files: list[str] = []
-            if task_type != "plan" and not planning_impl and not failure:
-                changed_files_after_run = _git_changed_files(
-                    project_dir,
-                    include_untracked=True,
-                    ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
-                )
-                progress_files = changed_files_after_run
-                if allowed_files and changed_files_after_run:
-                    progress_files = [
-                        p for p in changed_files_after_run
-                        if _path_is_allowed(project_dir, p, allowed_files)
-                    ]
-                    disallowed_files = [
-                        p for p in changed_files_after_run
-                        if not _path_is_allowed(project_dir, p, allowed_files)
-                    ]
-                    if ".gitignore" in disallowed_files and _gitignore_change_is_prd_runner_only(
-                        project_dir
-                    ):
-                        disallowed_files = [path for path in disallowed_files if path != ".gitignore"]
-            if disallowed_files and not failure:
+            if not ok and not failure:
                 failure = True
-                error_detail = (
-                    "Changes outside allowed files: "
-                    + ", ".join(disallowed_files)[:400]
-                )
+                error_detail = msg
                 error_type = ERROR_TYPE_DISALLOWED_FILES
+                disallowed_files = disallowed
+
+            # Use post_run_changed as the definitive changed_files snapshot
+            changed_files_after_run = post_run_changed
+            progress_files = changed_files_after_run  # if you still need this later
 
             manifest = {
                 "run_id": run_id,
                 "task_id": task_id,
-                # ... standard manifest fields ...
+                "mode": mode,
                 "start_time": run_result["start_time"],
                 "end_time": run_result["end_time"],
                 "exit_code": run_result["exit_code"],
-                "changed_files": changed_files_after_run or [],
+                "changed_files": changed_files_after_run,
                 "disallowed_files": disallowed_files,
+                "pre_run_snapshot": pre_run_changed,
+                "post_run_snapshot": post_run_changed,
+                "introduced_changes": introduced,
+                "removed_changes": removed,
             }
             _save_data(run_dir / "manifest.json", manifest)
             _finalize_run_state(paths, lock_path, status="idle", last_error=error_detail)
 
             # --- 1. HANDLE BLOCKING ISSUES ---
-            if progress_blocking_detected:
-                issue_summary = "; ".join(progress_blocking).strip()[:400]
+            if human_blocking_detected:
+                issue_summary = "; ".join(human_blocking).strip()[:400]
                 with FileLock(lock_path):
                     queue = _load_data(paths["task_queue"], {})
                     tasks = _normalize_tasks(queue)
                     target = _find_task(tasks, task_id)
                     if target:
                         _record_task_run(target, run_id, changed_files_after_run)
-                        target["last_error"] = f"Blocking issues reported: {issue_summary}"
+                        target["blocking_issues"] = human_blocking
+                        target["blocking_next_steps"] = human_next_steps
+                        target["last_error"] = f"Human intervention required: {issue_summary}"
                         target["last_error_type"] = ERROR_TYPE_BLOCKING_ISSUES
-                        target["blocking_issues"] = progress_blocking
-                        target["blocking_next_steps"] = progress_next_steps
                         target["status"] = TASK_STATUS_BLOCKED
                         intent_test_command = _resolve_test_command(phase, target, test_command)
                         _record_blocked_intent(
@@ -2931,15 +3123,22 @@ def run_feature_prd(
                      or test_command
                 )
                 tests_passed = True
+                tests_snapshot = None
                 if phase_test_command:
                     test_log_path = _tests_log_path(paths["artifacts"], str(phase.get("id") or phase_id or task_id))
                     test_result = _run_command(phase_test_command, project_dir, test_log_path)
+                    tests_snapshot = _capture_test_result_snapshot(
+                        command=phase_test_command,
+                        exit_code=test_result["exit_code"],
+                        log_path=test_log_path,
+                    )
                     if test_result["exit_code"] != 0:
                         tests_passed = False
                         print(f"\nTests failed for phase {phase.get('id')}. Log: {test_log_path}")
 
                 # 2. Check Progress
-                has_changes = bool(progress_files)
+                repo_changes = [p for p in changed_files_after_run if not _is_prd_runner_artifact(p)]
+                has_changes = bool(repo_changes)
                 
                 with FileLock(lock_path):
                     queue = _load_data(paths["task_queue"], {})
@@ -2952,16 +3151,50 @@ def run_feature_prd(
                             # Success! Move to Review
                             target["status"] = TASK_STATUS_REVIEW
                             target["last_error"] = None
+                            target["last_error_type"] = None
                             target["no_progress_attempts"] = 0
+                            target["test_fail_attempts"] = 0
+                            # keep target["last_tests"] so review can cite it
+                            target.pop("test_failure", None)
                         else:
                             # Failure Loop
                             target["status"] = TASK_STATUS_IMPLEMENTING
                             if not tests_passed:
-                                target["last_error"] = "Tests failed"
-                                target["context"] = target.get("context", []) + [f"Tests failed. See logs."]
+                                attempts = _increment_task_counter(target, "test_fail_attempts")
+                                target["last_error"] = f"Tests failed (attempt {attempts}/{MAX_TEST_FAIL_ATTEMPTS})"
+                                target["last_error_type"] = "tests_failed"
+                                target["last_tests"] = tests_snapshot  # may be None if no test_command
+                                log_tail = _read_log_tail(test_log_path, max_chars=4000)
+                                target["test_failure"] = {
+                                    "command": phase_test_command,
+                                    "log_path": str(test_log_path),
+                                    "log_tail": log_tail,
+                                    "attempt": attempts,
+                                    "max_attempts": MAX_TEST_FAIL_ATTEMPTS,
+                                    "run_id": run_id,
+                                }
+
+                                ctx = target.get("context", []) or []
+                                # keep 1 short context line for humans scanning history
+                                ctx.append(f"Tests failed. See logs: {test_log_path}")
+                                target["context"] = ctx
+
+                                if attempts >= MAX_TEST_FAIL_ATTEMPTS:
+                                    target["status"] = TASK_STATUS_BLOCKED
+                                    target["last_error_type"] = "test_fail_attempts_exhausted"
+                                    _record_blocked_intent(
+                                        target,
+                                        task_status=TASK_STATUS_IMPLEMENTING,
+                                        task_type=task_type,
+                                        phase_id=phase_id or target.get("phase_id") or target.get("id"),
+                                        branch=branch,
+                                        test_command=phase_test_command,
+                                        run_id=run_id,
+                                    )
                             elif not has_changes:
                                 attempts = _increment_task_counter(target, "no_progress_attempts")
                                 target["last_error"] = "No changes detected"
+                                target["test_fail_attempts"] = 0
                                 if attempts >= MAX_NO_PROGRESS_ATTEMPTS:
                                      target["status"] = TASK_STATUS_BLOCKED
                                      _record_blocked_intent(
@@ -3026,7 +3259,12 @@ def run_feature_prd(
                     continue
 
                 # Check for blocking issues in review
-                review_blocking = review_data.get("blocking_issues") or []
+                issues = review_data.get("issues") or []
+                blocking_issues = [
+                    it for it in issues
+                    if isinstance(it, dict)
+                    and str(it.get("severity", "")).strip().lower() in REVIEW_BLOCKING_SEVERITIES
+                ]
                 
                 with FileLock(lock_path):
                     queue = _load_data(paths["task_queue"], {})
@@ -3034,12 +3272,13 @@ def run_feature_prd(
                     target = _find_task(tasks, task_id)
                     
                     if target:
-                        if review_blocking:
+                        if blocking_issues:
                             target["status"] = TASK_STATUS_IMPLEMENTING
                             target["last_error"] = "Review blockers found"
-                            target["review_blockers"] = review_blocking
+                            summaries = [str(it.get("severity","")).upper() + ": " + str(it.get("summary","")) for it in blocking_issues]
+                            target["review_blockers"] = summaries
                             target["review_blocker_files"] = _extract_review_blocker_files(review_data)
-                            target["context"] = target.get("context", []) + [f"Review blockers: {review_blocking}"]
+                            target["context"] = target.get("context", []) + [f"Review blockers: {summaries}"]
                             attempts = _increment_task_counter(target, "review_attempts")
                             if attempts >= MAX_REVIEW_ATTEMPTS:
                                 target["status"] = TASK_STATUS_BLOCKED
@@ -3111,7 +3350,7 @@ def run_feature_prd(
 
     print("\nDone!")
 
-# ... (main/parse_args remain same) ...
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Feature PRD Runner - autonomous feature implementation coordinator",
