@@ -6,12 +6,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import orchestrator
-from actions import run_worker
-from io_utils import _load_data, _save_data
-from models import AllowlistViolation, TaskStep
-from state import _ensure_state_files
-from utils import _now_iso
+from feature_prd_runner import orchestrator
+from feature_prd_runner.actions import run_worker
+from feature_prd_runner.io_utils import _load_data, _save_data
+from feature_prd_runner.models import AllowlistViolation, TaskStep
+from feature_prd_runner.state import _ensure_state_files
+from feature_prd_runner.utils import _now_iso
 
 
 def test_missing_phase_blocks_without_branch(tmp_path, monkeypatch):

@@ -2,12 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-try:
-    from .constants import REVIEW_BLOCKING_SEVERITIES, REVIEW_MIN_EVIDENCE_ITEMS, REVIEW_SEVERITIES
-    from .utils import _validate_string_list
-except ImportError:  # pragma: no cover
-    from constants import REVIEW_BLOCKING_SEVERITIES, REVIEW_MIN_EVIDENCE_ITEMS, REVIEW_SEVERITIES
-    from utils import _validate_string_list
+from .constants import REVIEW_BLOCKING_SEVERITIES, REVIEW_MIN_EVIDENCE_ITEMS, REVIEW_SEVERITIES
+from .utils import _validate_string_list
 
 
 def _extract_review_blocker_files(review_data: dict[str, Any]) -> list[str]:

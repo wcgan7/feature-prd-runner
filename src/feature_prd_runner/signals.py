@@ -5,10 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-try:
-    from .git_utils import _path_is_allowed
-except ImportError:  # pragma: no cover
-    from git_utils import _path_is_allowed
+from .git_utils import _path_is_allowed
 
 
 _PATH_TOKEN_RE = re.compile(r"([A-Za-z0-9_./\\-]+\.[A-Za-z0-9_]+)")

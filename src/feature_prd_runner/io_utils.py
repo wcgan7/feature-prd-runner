@@ -11,12 +11,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     yaml = None
 
-try:
-    from .constants import WINDOWS_LOCK_BYTES
-    from .utils import _now_iso, _parse_iso
-except ImportError:  # pragma: no cover
-    from constants import WINDOWS_LOCK_BYTES
-    from utils import _now_iso, _parse_iso
+from .constants import WINDOWS_LOCK_BYTES
+from .utils import _now_iso, _parse_iso
 
 
 def _require_yaml() -> None:
