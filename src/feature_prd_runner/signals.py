@@ -132,3 +132,23 @@ def extract_failing_paths_from_pytest_log(log_text: str, project_dir: Path) -> l
             out.add(candidate.relative_to(root).as_posix())
 
     return sorted(out)
+
+_TRACE_PATH_RE = re.compile(r"(?m)^(?P<path>(?:src|tests)/[^\s:]+\.py):\d+:")
+
+def extract_traceback_repo_paths(log_text: str, project_dir: Path) -> list[str]:
+    if not log_text:
+        return []
+    root = project_dir.resolve()
+    out: set[str] = set()
+
+    for m in _TRACE_PATH_RE.finditer(log_text):
+        rel = m.group("path").strip().lstrip("./")
+        p = (root / rel).resolve()
+        try:
+            p.relative_to(root)
+        except Exception:
+            continue
+        if p.is_file():
+            out.add(p.relative_to(root).as_posix())
+
+    return sorted(out)

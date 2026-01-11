@@ -10,8 +10,11 @@ and committing changes using a step-based FSM.
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from pathlib import Path
-from typing import Optional
+
+from loguru import logger
 
 from .constants import (
     DEFAULT_HEARTBEAT_GRACE_SECONDS,
@@ -33,6 +36,19 @@ __all__ = [
     "_build_review_prompt",
     "_read_progress_human_blockers",
 ]
+
+LOG_LEVEL = os.environ.get("RUNNER_LOG_LEVEL", "INFO")
+logger.remove()
+logger.add(
+    sys.stderr,
+    level=LOG_LEVEL,
+    format=(
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{module}</cyan>:<cyan>{line}</cyan>\n"
+        "{message}"
+    ),
+)
 
 
 def parse_args() -> argparse.Namespace:

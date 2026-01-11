@@ -7,8 +7,9 @@ from loguru import logger
 
 from ..git_utils import _path_is_allowed
 from ..io_utils import _save_data
+from ..logging_utils import summarize_pytest_failures
 from ..models import VerificationResult
-from ..signals import build_allowed_files, extract_paths_from_log, filter_repo_file_paths, extract_failing_paths_from_pytest_log
+from ..signals import build_allowed_files, extract_failing_paths_from_pytest_log, extract_traceback_repo_paths
 from ..tasks import _resolve_test_command, _tests_log_path
 from ..utils import _now_iso
 from ..worker import _capture_test_result_snapshot, _run_command
@@ -38,6 +39,7 @@ def run_verify_action(
     )
 
     if not test_command:
+        logger.info("Running verification: no test command configured (phase={})", phase_id)
         return VerificationResult(
             run_id=run_id,
             passed=True,
@@ -50,6 +52,8 @@ def run_verify_action(
             needs_allowlist_expansion=False,
             error_type=None,
         )
+    else:
+        logger.info("Running verification: command={} phase={}", test_command, phase_id)
 
     log_path = _tests_log_path(artifacts_dir, phase_id)
     result = _run_command(
@@ -65,23 +69,15 @@ def run_verify_action(
     )
     log_tail = snapshot.get("log_tail", "")
     
-    repo_paths = extract_failing_paths_from_pytest_log(log_tail, project_dir)
+    failed_tests = extract_failing_paths_from_pytest_log(log_tail, project_dir)
+    trace_paths = extract_traceback_repo_paths(log_tail, project_dir)
+    failing_repo_paths = sorted(set(failed_tests) | set(trace_paths))
     EXCLUDE_PREFIXES = (
         ".git/", ".prd_runner/", ".venv/", "venv/", "__pycache__/",
         ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".nox/",
     )
-    repo_paths = [p for p in repo_paths if not p.startswith(EXCLUDE_PREFIXES)]
-    failing_paths = sorted(repo_paths)
-
-    logger.debug(
-        "Verify parsed failing paths: {}",
-        failing_paths,
-    )
-
-    logger.debug(
-        "Verify allowlist_used={}",
-        allowed_files,
-    )
+    failing_repo_paths = [p for p in failing_repo_paths if not p.startswith(EXCLUDE_PREFIXES)]
+    failing_paths = sorted(failing_repo_paths)
 
     meaningful_allowlist = [p for p in allowed_files if p and p != "README.md"]
     if not meaningful_allowlist:
@@ -93,19 +89,35 @@ def run_verify_action(
     
     expansion_paths = outside if needs_expansion else []
 
+    logger.debug("Verify failing_repo_paths: {}", failing_paths)
+    logger.debug("Verify expansion_paths: {}", expansion_paths)
+    logger.debug(
+        "Verify allowlist_used={}",
+        allowed_files,
+    )
+    
     timed_out = bool(result.get("timed_out"))
     passed = result["exit_code"] == 0 and not timed_out
     error_type = "test_timeout" if timed_out else None
     
+    if not passed:
+        summary = summarize_pytest_failures(log_tail, max_failed=5)
+        failed = summary.get("failed") or []
+        first_error = summary.get("first_error")
+
+        if failed:
+            logger.info("Tests failed: {}", ", ".join(failed))
+        elif failing_paths:
+            logger.info("Failing files: {}", ", ".join(failing_paths[:5]))
+
+        if first_error:
+            logger.info("First error: {}", first_error)
+
     if needs_expansion:
-        logger.info(
-            "Verification requires allowlist expansion: {}",
-            expansion_paths,
-        )
+        logger.info("Verification failed; switching to PLAN_IMPL (expand allowlist)")
+        logger.info("Expansion paths: {}", expansion_paths)
     elif not passed:
-        logger.info(
-            "Verification failed; retrying IMPLEMENT (fix tests)",
-        )
+        logger.info("Verification failed; retrying IMPLEMENT (fix tests)")
     else:
         logger.info("Verification passed")
 

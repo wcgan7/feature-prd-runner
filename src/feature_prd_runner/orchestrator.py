@@ -41,17 +41,18 @@ from .io_utils import (
     _save_data,
     _update_progress,
 )
-from .logging_utils import summarize_event
+from .logging_utils import pretty, summarize_event
 from .models import (
+    AllowlistViolation,
     NoIntroducedChanges,
     ProgressHumanBlockers,
     TaskLifecycle,
     TaskState,
     TaskStep,
+    VerificationResult,
     WorkerFailed,
     WorkerSucceeded,
 )
-from .models import VerificationResult, AllowlistViolation
 from .state import _active_run_is_stale, _ensure_state_files, _finalize_run_state
 from .tasks import (
     _auto_resume_blocked_dependencies,
@@ -140,7 +141,7 @@ def run_feature_prd(
             str(plan_path) if plan_path else None,
         )
 
-    def _log_event(event: object) -> None:
+    def _log_event(event: object, run_dir: Path) -> None:
         if not event:
             return
         logger.info(
@@ -155,6 +156,7 @@ def run_feature_prd(
                 event.needs_allowlist_expansion,
                 event.failing_paths,
             )
+            logger.info("Verify manifest: {}", run_dir / "verify_manifest.json")
         if isinstance(event, AllowlistViolation):
             logger.warning(
                 "Allowlist violation detected: {}",
@@ -165,6 +167,18 @@ def run_feature_prd(
                 "No introduced changes detected (repo_dirty={})",
                 event.repo_dirty,
             )
+        if isinstance(event, WorkerFailed):
+            logger.warning(
+                "WorkerFailed: step={} type={} detail={}",
+                getattr(event, "step", None),
+                event.error_type,
+                (event.error_detail[:240] + "…") if len(event.error_detail) > 240 else event.error_detail,
+            )
+            logger.info("Artifacts: run_dir={}", str(run_dir))  # requires run_dir in scope OR pass it in
+            logger.info("Codex logs: stdout={} stderr={}", run_dir / "stdout.log", run_dir / "stderr.log")
+            manifest = run_dir / "manifest.json"
+            if manifest.exists():
+                logger.info("Manifest: {}", manifest)
 
     while True:
         if max_iterations and iteration >= max_iterations:
@@ -321,7 +335,20 @@ def run_feature_prd(
                 task_id = str(next_task.get("id"))
                 task_type = next_task.get("type", "implement")
                 phase_id = next_task.get("phase_id")
-                task_step = next_task.get("step") or TaskStep.PLAN_IMPL.value
+                task_step = next_task.get("step") or TaskStep.PLAN_IMPL.value    
+                
+                logger.info(
+                    "\n===== TASK START =====\n"
+                    "task: {}\n"
+                    "phase: {}\n"
+                    "step: {}\n"
+                    "branch: {}\n"
+                    "======================",
+                    task_id,
+                    phase_id,
+                    task_step,
+                    branch,
+                )
 
                 next_task["step"] = task_step
                 next_task["lifecycle"] = TaskLifecycle.RUNNING.value
@@ -449,6 +476,7 @@ def run_feature_prd(
         run_dir = paths["runs"] / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         progress_path = run_dir / "progress.json"
+        logger.debug("Run context: run_id={} run_dir={}", run_id, str(run_dir))
 
         progress_phase = task_type if task_type == "plan" else str(phase_id or task_id)
         _update_progress(
@@ -496,7 +524,7 @@ def run_feature_prd(
         event = None
         if task_type == "plan":
             _log_task_start(
-                step_value=step_enum.value,
+                step_value=TaskStep.PLAN_IMPL.value,
                 task_id=task_id,
                 phase_id=phase_id,
                 branch=branch,
@@ -524,8 +552,6 @@ def run_feature_prd(
                 test_command=test_command,
                 on_spawn=_on_worker_spawn,
             )
-            _log_event(event)
-            summarize_event(event)
 
         elif step_enum in {TaskStep.PLAN_IMPL, TaskStep.IMPLEMENT, TaskStep.REVIEW}:
             plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
@@ -558,8 +584,6 @@ def run_feature_prd(
                 test_command=test_command,
                 on_spawn=_on_worker_spawn,
             )
-            _log_event(event)
-            summarize_event(event)
 
         elif step_enum == TaskStep.VERIFY:
             plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
@@ -583,8 +607,6 @@ def run_feature_prd(
                 default_test_command=test_command,
                 timeout_seconds=shift_minutes * 60,
             )
-            _log_event(event)
-            summarize_event(event)
 
         elif step_enum == TaskStep.COMMIT:
             commit_message = f"{phase.get('id')}: {phase.get('name') or 'phase'}" if phase else task_id
@@ -602,8 +624,6 @@ def run_feature_prd(
                 commit_message=commit_message,
                 run_id=run_id,
             )
-            _log_event(event)
-            summarize_event(event)
         else:
             event = WorkerFailed(
                 step=step_enum,
@@ -614,8 +634,10 @@ def run_feature_prd(
                 timed_out=False,
                 no_heartbeat=False,
             )
-            _log_event(event)
-            summarize_event(event)
+            
+        _log_event(event, run_dir)
+        summary = summarize_event(event, run_dir=run_dir)
+        logger.debug("Event summary:\n{}", pretty(summary))
 
         if user_prompt:
             user_prompt = None
@@ -716,11 +738,43 @@ def run_feature_prd(
                         task_state.step,
                         task_state.lifecycle,
                     )
+                    logger.info(
+                        "FSM decision:\n"
+                        "  from_step: {}\n"
+                        "  to_step: {}\n"
+                        "  lifecycle: {}\n"
+                        "  reason: {}\n"
+                        "  error_type: {}",
+                        previous_step,
+                        task_state.step,
+                        task_state.lifecycle,
+                        task_state.block_reason or "none",
+                        task_state.last_error_type or "none",
+                    )
+
                     logger.debug(
-                        "FSM details: block_reason={} last_error_type={} prompt_mode={}",
+                        "FSM counters:\n"
+                        "  worker_attempts: {}\n"
+                        "  plan_attempts: {}\n"
+                        "  no_progress_attempts: {}\n"
+                        "  test_fail_attempts: {}\n"
+                        "  review_gen_attempts: {}\n"
+                        "  review_fix_attempts: {}\n"
+                        "  allowlist_expansion_attempts: {}",
+                        task_state.worker_attempts,
+                        task_state.plan_attempts,
+                        task_state.no_progress_attempts,
+                        task_state.test_fail_attempts,
+                        task_state.review_gen_attempts,
+                        task_state.review_fix_attempts,
+                        task_state.allowlist_expansion_attempts,
+                    )
+                    logger.debug(
+                        "FSM details: block_reason={} last_error_type={} prompt_mode={} last_error={}",
                         task_state.block_reason,
                         task_state.last_error_type,
                         task_state.prompt_mode,
+                        task_state.last_error,
                     )
 
 

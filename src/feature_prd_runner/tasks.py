@@ -8,8 +8,6 @@ from loguru import logger
 from .models import PromptMode, TaskLifecycle, TaskStep
 from .constants import (
     AUTO_RESUME_ERROR_TYPES,
-    ERROR_TYPE_HEARTBEAT_TIMEOUT,
-    ERROR_TYPE_SHIFT_TIMEOUT,
     IGNORED_REVIEW_PATH_PREFIXES,
     TASK_STATUS_BLOCKED,
     TASK_STATUS_DOING,
@@ -23,6 +21,7 @@ from .constants import (
 )
 from .git_utils import _git_changed_files
 from .io_utils import _load_data, _save_data
+from .logging_utils import pretty
 from .utils import (
     _coerce_int,
     _coerce_string_list,
@@ -640,7 +639,10 @@ def _report_blocking_tasks(
         if issues:
             logger.warning("Reported blocking issues:")
             for issue in issues:
-                logger.warning("- {}", issue)
+                logger.warning(
+                    "Human intervention requested:\n{}",
+                    pretty(issue),
+                )
 
 
 def _read_progress_human_blockers(
