@@ -3,17 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from ..git_utils import _path_is_allowed
+from ..io_utils import _save_data
 from ..models import VerificationResult
-from ..signals import build_allowed_files, extract_paths_from_log, needs_allowlist_expansion
+from ..signals import build_allowed_files, extract_paths_from_log, filter_repo_file_paths, extract_failing_paths_from_pytest_log
 from ..tasks import _resolve_test_command, _tests_log_path
 from ..utils import _now_iso
 from ..worker import _capture_test_result_snapshot, _run_command
+
 
 
 def run_verify_action(
     *,
     project_dir: Path,
     artifacts_dir: Path,
+    run_dir: Path,
     phase: Optional[dict],
     task: dict,
     run_id: str,
@@ -52,13 +56,30 @@ def run_verify_action(
         log_path=Path(result["log_path"]),
     )
     log_tail = snapshot.get("log_tail", "")
-    failing_paths = extract_paths_from_log(log_tail, project_dir)
-    needs_expansion = needs_allowlist_expansion(failing_paths, allowed_files, project_dir)
+    
+    repo_paths = extract_failing_paths_from_pytest_log(log_tail, project_dir)
+    EXCLUDE_PREFIXES = (
+        ".git/", ".prd_runner/", ".venv/", "venv/", "__pycache__/",
+        ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".nox/",
+    )
+    repo_paths = [p for p in repo_paths if not p.startswith(EXCLUDE_PREFIXES)]
+    failing_paths = sorted(repo_paths)
+
+    meaningful_allowlist = [p for p in allowed_files if p and p != "README.md"]
+    if not meaningful_allowlist:
+        outside = []
+        needs_expansion = False
+    else:
+        outside = [p for p in failing_paths if not _path_is_allowed(project_dir, p, allowed_files)]
+        needs_expansion = bool(outside)
+    
+    expansion_paths = outside if needs_expansion else []
+
     timed_out = bool(result.get("timed_out"))
     passed = result["exit_code"] == 0 and not timed_out
     error_type = "test_timeout" if timed_out else None
-
-    return VerificationResult(
+    
+    event = VerificationResult(
         run_id=run_id,
         passed=passed,
         command=test_command,
@@ -66,7 +87,29 @@ def run_verify_action(
         log_path=result["log_path"],
         log_tail=log_tail,
         captured_at=snapshot.get("captured_at", _now_iso()),
-        failing_paths=failing_paths,
+        failing_paths=expansion_paths,
         needs_allowlist_expansion=needs_expansion,
         error_type=error_type,
     )
+    
+    verify_manifest = {
+        "run_id": run_id,
+        "task_id": str(task.get("id")),
+        "phase_id": str(task.get("phase_id") or task.get("id") or ""),
+        "step": "verify",
+        "command": event.command,
+        "exit_code": int(event.exit_code),
+        "passed": bool(event.passed),
+        "error_type": getattr(event, "error_type", None) or None,
+        "timed_out": timed_out,
+        "log_path": str(event.log_path),
+        "log_tail": str(event.log_tail or ""),
+        "captured_at": str(event.captured_at),
+        "needs_allowlist_expansion": bool(getattr(event, "needs_allowlist_expansion", False)),
+        "failing_paths": list(getattr(event, "failing_paths", []) or []),
+        "allowlist_used": allowed_files,
+        "failing_repo_paths": failing_paths,
+        "expansion_paths": expansion_paths,
+    }
+    _save_data(run_dir / "verify_manifest.json", verify_manifest)
+    return event

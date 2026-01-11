@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from loguru import logger
+
 from .actions.run_commit import run_commit_action
 from .actions.run_verify import run_verify_action
 from .actions.run_worker import run_worker_action
@@ -40,6 +42,7 @@ from .io_utils import (
     _update_progress,
 )
 from .models import ProgressHumanBlockers, TaskLifecycle, TaskState, TaskStep, WorkerFailed, WorkerSucceeded
+from .models import VerificationResult, AllowlistViolation
 from .state import _active_run_is_stale, _ensure_state_files, _finalize_run_state
 from .tasks import (
     _auto_resume_blocked_dependencies,
@@ -220,6 +223,15 @@ def run_feature_prd(
 
             if not blocked_tasks_snapshot:
                 next_task = _select_next_task(tasks)
+                logger.info(
+                    "Selected task={} phase={} step={} lifecycle={} prompt_mode={}",
+                    next_task.get("id"),
+                    next_task.get("phase_id"),
+                    next_task.get("step"),
+                    next_task.get("lifecycle"),
+                    next_task.get("prompt_mode"),
+                )
+
                 if not next_task:
                     if _auto_resume_blocked_dependencies(queue, tasks, max_auto_resumes):
                         _save_data(paths["task_queue"], queue)
@@ -427,6 +439,18 @@ def run_feature_prd(
                 step_enum = TaskStep.PLAN_IMPL
         event = None
         if task_type == "plan":
+            logger.info(
+                "Running step={} for task={} (phase={})",
+                step_enum.value,
+                task_id,
+                phase_id,
+            )
+            logger.debug(
+                "Action context: branch={} prompt_mode={} plan_path={}",
+                branch,
+                next_task.get("prompt_mode"),
+                next_task.get("impl_plan_path"),
+            )
             event = run_worker_action(
                 step=TaskStep.PLAN_IMPL,
                 task=next_task,
@@ -448,7 +472,37 @@ def run_feature_prd(
                 test_command=test_command,
                 on_spawn=_on_worker_spawn,
             )
+            if event:
+                print(
+                    f"[TRACE] Event emitted: {event.__class__.__name__} "
+                    f"step={getattr(event, 'step', None)} "
+                    f"run_id={event.run_id}"
+                )
+                if isinstance(event, VerificationResult):
+                    print(
+                        f"[TRACE] VERIFY result: passed={event.passed} "
+                        f"needs_expansion={event.needs_allowlist_expansion} "
+                        f"expansion_paths={event.failing_paths}"
+                    )
+
+                if isinstance(event, AllowlistViolation):
+                    print(
+                        f"[TRACE] ALLOWLIST VIOLATION: disallowed={event.disallowed_paths}"
+                    )
+
         elif step_enum in {TaskStep.PLAN_IMPL, TaskStep.IMPLEMENT, TaskStep.REVIEW}:
+            logger.info(
+                "Running step={} for task={} (phase={})",
+                step_enum.value,
+                task_id,
+                phase_id,
+            )
+            logger.debug(
+                "Action context: branch={} prompt_mode={} plan_path={}",
+                branch,
+                next_task.get("prompt_mode"),
+                next_task.get("impl_plan_path"),
+            )
             event = run_worker_action(
                 step=step_enum,
                 task=next_task,
@@ -470,12 +524,43 @@ def run_feature_prd(
                 test_command=test_command,
                 on_spawn=_on_worker_spawn,
             )
+            if event:
+                print(
+                    f"[TRACE] Event emitted: {event.__class__.__name__} "
+                    f"step={getattr(event, 'step', None)} "
+                    f"run_id={event.run_id}"
+                )
+                if isinstance(event, VerificationResult):
+                    print(
+                        f"[TRACE] VERIFY result: passed={event.passed} "
+                        f"needs_expansion={event.needs_allowlist_expansion} "
+                        f"expansion_paths={event.failing_paths}"
+                    )
+
+                if isinstance(event, AllowlistViolation):
+                    print(
+                        f"[TRACE] ALLOWLIST VIOLATION: disallowed={event.disallowed_paths}"
+                    )
+
         elif step_enum == TaskStep.VERIFY:
             plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
             plan_data = _load_data(plan_path, {})
+            logger.info(
+                "Running step={} for task={} (phase={})",
+                step_enum.value,
+                task_id,
+                phase_id,
+            )
+            logger.debug(
+                "Action context: branch={} prompt_mode={} plan_path={}",
+                branch,
+                next_task.get("prompt_mode"),
+                next_task.get("impl_plan_path"),
+            )
             event = run_verify_action(
                 project_dir=project_dir,
                 artifacts_dir=paths["artifacts"],
+                run_dir=run_dir,
                 phase=phase,
                 task=next_task,
                 run_id=run_id,
@@ -483,8 +568,38 @@ def run_feature_prd(
                 default_test_command=test_command,
                 timeout_seconds=shift_minutes * 60,
             )
+            if event:
+                print(
+                    f"[TRACE] Event emitted: {event.__class__.__name__} "
+                    f"step={getattr(event, 'step', None)} "
+                    f"run_id={event.run_id}"
+                )
+                if isinstance(event, VerificationResult):
+                    print(
+                        f"[TRACE] VERIFY result: passed={event.passed} "
+                        f"needs_expansion={event.needs_allowlist_expansion} "
+                        f"expansion_paths={event.failing_paths}"
+                    )
+
+                if isinstance(event, AllowlistViolation):
+                    print(
+                        f"[TRACE] ALLOWLIST VIOLATION: disallowed={event.disallowed_paths}"
+                    )
+
         elif step_enum == TaskStep.COMMIT:
             commit_message = f"{phase.get('id')}: {phase.get('name') or 'phase'}" if phase else task_id
+            logger.info(
+                "Running step={} for task={} (phase={})",
+                step_enum.value,
+                task_id,
+                phase_id,
+            )
+            logger.debug(
+                "Action context: branch={} prompt_mode={} plan_path={}",
+                branch,
+                next_task.get("prompt_mode"),
+                next_task.get("impl_plan_path"),
+            )
             event = run_commit_action(
                 project_dir=project_dir,
                 branch=branch or next_task.get("branch") or "",
@@ -594,6 +709,16 @@ def run_feature_prd(
                         "allowlist_expansion_attempts": MAX_ALLOWLIST_EXPANSION_ATTEMPTS,
                     }
                     task_state = reduce_task(task_state, event, caps=caps)
+                    print(
+                        f"[TRACE] FSM transition: "
+                        f"{target.get('step')} -> {task_state.step} | "
+                        f"lifecycle={task_state.lifecycle} | "
+                        f"block_reason={task_state.block_reason} | "
+                        f"prompt_mode={task_state.prompt_mode}"
+                    )
+                    if not task_state.step:
+                        print(f"[BUG] task_state.step is None after reduce_task for task {task_id}")
+
                     updated = task_state.to_dict()
                     target.clear()
                     target.update(updated)

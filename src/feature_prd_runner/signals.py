@@ -76,3 +76,59 @@ def needs_allowlist_expansion(
         if not _path_is_allowed(project_dir, path, allowed_files):
             return True
     return False
+
+
+def filter_repo_file_paths(paths: list[str], project_dir: Path) -> list[str]:
+    root = project_dir.resolve()
+    out: set[str] = set()
+
+    for raw in paths:
+        s = str(raw).strip()
+        if not s:
+            continue
+
+        # Handle absolute paths
+        p = Path(s)
+        if p.is_absolute():
+            try:
+                rel = p.resolve().relative_to(root)
+            except Exception:
+                continue
+            candidate = root / rel
+        else:
+            # Treat as repo-relative candidate
+            candidate = (root / p).resolve()
+            try:
+                candidate.relative_to(root)
+            except Exception:
+                continue
+
+        # Only keep actual files under repo root
+        if candidate.is_file():
+            out.add(candidate.relative_to(root).as_posix())
+
+    return sorted(out)
+
+
+_FAILED_LINE_RE = re.compile(r"^FAILED\s+([^\s:]+\.py)(?:::|\s|$)")
+
+def extract_failing_paths_from_pytest_log(log_text: str, project_dir: Path) -> list[str]:
+    if not log_text:
+        return []
+    root = project_dir.resolve()
+    out: set[str] = set()
+
+    for line in log_text.splitlines():
+        m = _FAILED_LINE_RE.match(line.strip())
+        if not m:
+            continue
+        p = m.group(1).strip().lstrip("./")
+        candidate = (root / p).resolve()
+        try:
+            candidate.relative_to(root)
+        except Exception:
+            continue
+        if candidate.is_file():
+            out.add(candidate.relative_to(root).as_posix())
+
+    return sorted(out)
