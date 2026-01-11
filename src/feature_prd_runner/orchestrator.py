@@ -41,6 +41,7 @@ from .io_utils import (
     _save_data,
     _update_progress,
 )
+from .logging_utils import summarize_event
 from .models import (
     NoIntroducedChanges,
     ProgressHumanBlockers,
@@ -525,6 +526,7 @@ def run_feature_prd(
                 on_spawn=_on_worker_spawn,
             )
             _log_event(event)
+            summarize_event(event)
 
         elif step_enum in {TaskStep.PLAN_IMPL, TaskStep.IMPLEMENT, TaskStep.REVIEW}:
             plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
@@ -558,6 +560,7 @@ def run_feature_prd(
                 on_spawn=_on_worker_spawn,
             )
             _log_event(event)
+            summarize_event(event)
 
         elif step_enum == TaskStep.VERIFY:
             plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
@@ -582,6 +585,7 @@ def run_feature_prd(
                 timeout_seconds=shift_minutes * 60,
             )
             _log_event(event)
+            summarize_event(event)
 
         elif step_enum == TaskStep.COMMIT:
             commit_message = f"{phase.get('id')}: {phase.get('name') or 'phase'}" if phase else task_id
@@ -600,6 +604,7 @@ def run_feature_prd(
                 run_id=run_id,
             )
             _log_event(event)
+            summarize_event(event)
         else:
             event = WorkerFailed(
                 step=step_enum,
@@ -611,6 +616,7 @@ def run_feature_prd(
                 no_heartbeat=False,
             )
             _log_event(event)
+            summarize_event(event)
 
         if user_prompt:
             user_prompt = None
