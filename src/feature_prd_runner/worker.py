@@ -13,12 +13,14 @@ from .io_utils import _heartbeat_from_progress, _read_log_tail
 from .utils import _now_iso
 
 
-def _stream_pipe(pipe: Any, file_path: Path, label: str, to_stderr: bool) -> None:
+def _stream_pipe(pipe: Any, file_path: Path, label: str, to_stderr: bool, quiet: bool = True) -> None:
     prefix = f"[codex {label}] "
     with open(file_path, "w") as handle:
         for line in iter(pipe.readline, ""):
             handle.write(line)
             handle.flush()
+            if quiet:
+                continue
             if to_stderr:
                 sys.stderr.write(prefix + line)
                 sys.stderr.flush()

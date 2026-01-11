@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from loguru import logger
+
 from .actions.run_commit import run_commit_action
 from .actions.run_verify import run_verify_action
 from .actions.run_worker import run_worker_action
@@ -39,7 +41,19 @@ from .io_utils import (
     _save_data,
     _update_progress,
 )
-from .models import ProgressHumanBlockers, TaskLifecycle, TaskState, TaskStep, WorkerFailed, WorkerSucceeded
+from .signals import build_allowed_files
+from .logging_utils import pretty, summarize_event
+from .models import (
+    AllowlistViolation,
+    NoIntroducedChanges,
+    ProgressHumanBlockers,
+    TaskLifecycle,
+    TaskState,
+    TaskStep,
+    VerificationResult,
+    WorkerFailed,
+    WorkerSucceeded,
+)
 from .state import _active_run_is_stale, _ensure_state_files, _finalize_run_state
 from .tasks import (
     _auto_resume_blocked_dependencies,
@@ -90,26 +104,148 @@ def run_feature_prd(
     lock_path = paths["state_dir"] / LOCK_FILE
     iteration = 0
 
-    print("\n" + "=" * 70)
-    print("  FEATURE PRD RUNNER (FSM)")
-    print("=" * 70)
-    print(f"\nProject directory: {project_dir}")
-    print(f"PRD file: {prd_path}")
-    print(f"Codex command: {codex_command}")
-    print(f"Shift length: {shift_minutes} minutes")
-    print(f"Heartbeat: {heartbeat_seconds}s (grace {heartbeat_grace_seconds}s)")
-    print(f"Max attempts per task: {max_attempts}")
-    print(f"Max auto-resumes: {max_auto_resumes}")
-    print(f"Stop on blocking issues: {stop_on_blocking_issues}")
+    logger.info("=" * 70)
+    logger.info("FEATURE PRD RUNNER (FSM)")
+    logger.info("=" * 70)
+    logger.info("Project directory: {}", project_dir)
+    logger.info("PRD file: {}", prd_path)
+    logger.info("Codex command: {}", codex_command)
+    logger.info("Shift length: {} minutes", shift_minutes)
+    logger.info("Heartbeat: {}s (grace {}s)", heartbeat_seconds, heartbeat_grace_seconds)
+    logger.info("Max attempts per task: {}", max_attempts)
+    logger.info("Max auto-resumes: {}", max_auto_resumes)
+    logger.info("Stop on blocking issues: {}", stop_on_blocking_issues)
     if test_command:
-        print(f"Test command: {test_command}")
-    print()
+        logger.info("Test command: {}", test_command)
 
     user_prompt = resume_prompt
 
+    def _log_task_start(
+        *,
+        step_value: str,
+        task_id: str,
+        phase_id: Optional[str],
+        branch: Optional[str],
+        task: dict,
+        plan_path: Optional[Path],
+    ) -> None:
+        logger.info(
+            "Running step={} for task={} (phase={})",
+            step_value,
+            task_id,
+            phase_id,
+        )
+        logger.debug(
+            "Action context: branch={} prompt_mode={} plan_path={}",
+            branch,
+            task.get("prompt_mode"),
+            str(plan_path) if plan_path else None,
+        )
+
+    def _log_event(event: object, run_dir: Path) -> None:
+        if not event:
+            return
+        logger.info(
+            "Event emitted: {} (run_id={})",
+            event.__class__.__name__,
+            getattr(event, "run_id", None),
+        )
+
+        # Content-level observability for WorkerSucceeded
+        if isinstance(event, WorkerSucceeded):
+            event_step = getattr(event, "step", None)
+
+            # 1) On PLAN_IMPL success: log plan summary
+            if event_step == TaskStep.PLAN_IMPL:
+                if getattr(event, "plan_valid", False):
+                    plan_path = Path(getattr(event, "impl_plan_path", "") or "")
+                    if plan_path and plan_path.exists():
+                        plan = _load_data(plan_path, {})
+                        files = plan.get("files_to_change") or []
+                        new_files = plan.get("new_files") or []
+                        spec = plan.get("spec_summary") or []
+                        logger.info(
+                            "Plan accepted: path={} files_to_change={} new_files={}",
+                            str(plan_path),
+                            len(files),
+                            len(new_files),
+                        )
+                        logger.info("Plan allowlist sample: {}", (files + new_files)[:8])
+                        if spec:
+                            logger.debug("Plan spec_summary sample:\n- {}", "\n- ".join(str(s) for s in spec[:3]))
+                else:
+                    # Plan invalid warning
+                    logger.warning("Plan invalid: {}", getattr(event, "plan_issue", "unknown"))
+
+            # 3) After IMPLEMENT finishes: log introduced changes
+            if event_step == TaskStep.IMPLEMENT:
+                manifest_path = run_dir / "manifest.json"
+                if manifest_path.exists():
+                    manifest = _load_data(manifest_path, {})
+                    intro = manifest.get("introduced_changes") or []
+                    logger.info("Introduced changes: {} files (sample={})", len(intro), intro[:8])
+                    disallowed = manifest.get("disallowed_files") or []
+                    if disallowed:
+                        logger.warning("Disallowed changes: {}", disallowed)
+
+        # 4) VERIFY failure with expansion request at INFO level
+        if isinstance(event, VerificationResult):
+            logger.info(
+                "VERIFY result: passed={} needs_expansion={}",
+                event.passed,
+                event.needs_allowlist_expansion,
+            )
+            if event.needs_allowlist_expansion:
+                logger.info("Verify requested allowlist expansion: {}", event.failing_paths)
+            elif not event.passed:
+                # Log verify manifest for debugging test failures
+                verify_manifest_path = run_dir / "verify_manifest.json"
+                if verify_manifest_path.exists():
+                    vm = _load_data(verify_manifest_path, {})
+                    failed_tests = vm.get("failed_test_files") or []
+                    trace_files = vm.get("trace_files") or []
+                    suspects = vm.get("suspect_source_files") or []
+                    if failed_tests:
+                        logger.info("Failed test files: {}", failed_tests[:5])
+                    if trace_files:
+                        logger.info("Trace files: {}", trace_files[:5])
+                    if suspects:
+                        logger.info("Suspect source files: {}", suspects[:5])
+            logger.debug("Verify manifest: {}", run_dir / "verify_manifest.json")
+
+        if isinstance(event, AllowlistViolation):
+            logger.warning(
+                "Allowlist violation detected: {}",
+                event.disallowed_paths,
+            )
+        if isinstance(event, NoIntroducedChanges):
+            logger.debug(
+                "No introduced changes detected (repo_dirty={})",
+                event.repo_dirty,
+            )
+        if isinstance(event, WorkerFailed):
+            event_step = getattr(event, "step", None)
+            logger.warning(
+                "WorkerFailed: step={} type={} detail={}",
+                event_step,
+                event.error_type,
+                (event.error_detail[:240] + "…") if len(event.error_detail) > 240 else event.error_detail,
+            )
+            logger.info("Artifacts: run_dir={}", str(run_dir))
+            logger.info("Codex logs: stdout={} stderr={}", run_dir / "stdout.log", run_dir / "stderr.log")
+            manifest = run_dir / "manifest.json"
+            if manifest.exists():
+                logger.info("Manifest: {}", manifest)
+                # Also log introduced changes on failure for debugging
+                if event_step == TaskStep.IMPLEMENT:
+                    m = _load_data(manifest, {})
+                    intro = m.get("introduced_changes") or []
+                    if intro:
+                        logger.info("Introduced changes before failure: {} files (sample={})", len(intro), intro[:8])
+
     while True:
         if max_iterations and iteration >= max_iterations:
-            print(f"\nReached max iterations ({max_iterations})")
+            logger.info("Reached max iterations ({})", max_iterations)
             _finalize_run_state(paths, lock_path, status="idle", last_error="Reached max iterations")
             break
 
@@ -141,7 +277,7 @@ def run_feature_prd(
                     heartbeat_grace_seconds,
                     shift_minutes,
                 ):
-                    print("\nAnother run is already active. Exiting to avoid overlap.")
+                    logger.info("Another run is already active. Exiting to avoid overlap.")
                     return
                 run_state.update(
                     {
@@ -173,7 +309,7 @@ def run_feature_prd(
             tasks, resumed = _maybe_auto_resume_blocked(queue, tasks, max_auto_resumes)
             if resumed:
                 _save_data(paths["task_queue"], queue)
-                print("Auto-resumed blocked tasks after auto-resumable failure")
+                logger.info("Auto-resumed blocked tasks after auto-resumable failure")
 
             if resume_blocked:
                 tasks, manually_resumed = _maybe_resume_blocked_last_intent(
@@ -198,7 +334,7 @@ def run_feature_prd(
                     )
                     _save_data(paths["run_state"], run_state)
                     _save_data(paths["task_queue"], queue)
-                    print("Resumed most recent blocked task to replay last step")
+                    logger.info("Resumed most recent blocked task to replay last step")
 
             if stop_on_blocking_issues and not manually_resumed:
                 blocked_tasks = _blocking_tasks(tasks)
@@ -223,7 +359,7 @@ def run_feature_prd(
                 if not next_task:
                     if _auto_resume_blocked_dependencies(queue, tasks, max_auto_resumes):
                         _save_data(paths["task_queue"], queue)
-                        print("Auto-resumed blocked dependency tasks to resolve deadlock")
+                        logger.info("Auto-resumed blocked dependency tasks to resolve deadlock")
                         continue
                     run_state.update(
                         {
@@ -241,19 +377,41 @@ def run_feature_prd(
                     _save_data(paths["run_state"], run_state)
                     _save_data(paths["task_queue"], queue)
                     summary = _task_summary(tasks)
-                    print(
-                        "\nNo runnable tasks. Queue summary: "
-                        f"{summary[TaskLifecycle.READY.value]} ready, "
-                        f"{summary[TaskLifecycle.RUNNING.value]} running, "
-                        f"{summary[TaskLifecycle.DONE.value]} done, "
-                        f"{summary[TaskLifecycle.WAITING_HUMAN.value]} waiting_human"
+                    logger.info(
+                        "No runnable tasks. Queue summary: {} ready, {} running, {} done, {} waiting_human",
+                        summary[TaskLifecycle.READY.value],
+                        summary[TaskLifecycle.RUNNING.value],
+                        summary[TaskLifecycle.DONE.value],
+                        summary[TaskLifecycle.WAITING_HUMAN.value],
                     )
                     break
+
+                logger.info(
+                    "Selected task={} phase={} step={} lifecycle={} prompt_mode={}",
+                    next_task.get("id"),
+                    next_task.get("phase_id"),
+                    next_task.get("step"),
+                    next_task.get("lifecycle"),
+                    next_task.get("prompt_mode"),
+                )
 
                 task_id = str(next_task.get("id"))
                 task_type = next_task.get("type", "implement")
                 phase_id = next_task.get("phase_id")
-                task_step = next_task.get("step") or TaskStep.PLAN_IMPL.value
+                task_step = next_task.get("step") or TaskStep.PLAN_IMPL.value    
+                
+                logger.info(
+                    "\n===== TASK START =====\n"
+                    "task: {}\n"
+                    "phase: {}\n"
+                    "step: {}\n"
+                    "branch: {}\n"
+                    "======================",
+                    task_id,
+                    phase_id,
+                    task_step,
+                    branch,
+                )
 
                 next_task["step"] = task_step
                 next_task["lifecycle"] = TaskLifecycle.RUNNING.value
@@ -381,6 +539,7 @@ def run_feature_prd(
         run_dir = paths["runs"] / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         progress_path = run_dir / "progress.json"
+        logger.debug("Run context: run_id={} run_dir={}", run_id, str(run_dir))
 
         progress_phase = task_type if task_type == "plan" else str(phase_id or task_id)
         _update_progress(
@@ -427,6 +586,14 @@ def run_feature_prd(
                 step_enum = TaskStep.PLAN_IMPL
         event = None
         if task_type == "plan":
+            _log_task_start(
+                step_value=TaskStep.PLAN_IMPL.value,
+                task_id=task_id,
+                phase_id=phase_id,
+                branch=branch,
+                task=next_task,
+                plan_path=None,
+            )
             event = run_worker_action(
                 step=TaskStep.PLAN_IMPL,
                 task=next_task,
@@ -448,7 +615,22 @@ def run_feature_prd(
                 test_command=test_command,
                 on_spawn=_on_worker_spawn,
             )
+
         elif step_enum in {TaskStep.PLAN_IMPL, TaskStep.IMPLEMENT, TaskStep.REVIEW}:
+            plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
+            _log_task_start(
+                step_value=step_enum.value,
+                task_id=task_id,
+                phase_id=phase_id,
+                branch=branch,
+                task=next_task,
+                plan_path=plan_path,
+            )
+            # 2) On IMPLEMENT start: log the allowlist being enforced
+            if step_enum == TaskStep.IMPLEMENT and plan_path.exists():
+                plan_for_allowlist = _load_data(plan_path, {})
+                allowlist = build_allowed_files(plan_for_allowlist)
+                logger.info("Implement allowlist: {} files (sample={})", len(allowlist), allowlist[:8])
             event = run_worker_action(
                 step=step_enum,
                 task=next_task,
@@ -470,12 +652,22 @@ def run_feature_prd(
                 test_command=test_command,
                 on_spawn=_on_worker_spawn,
             )
+
         elif step_enum == TaskStep.VERIFY:
             plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
             plan_data = _load_data(plan_path, {})
+            _log_task_start(
+                step_value=step_enum.value,
+                task_id=task_id,
+                phase_id=phase_id,
+                branch=branch,
+                task=next_task,
+                plan_path=plan_path,
+            )
             event = run_verify_action(
                 project_dir=project_dir,
                 artifacts_dir=paths["artifacts"],
+                run_dir=run_dir,
                 phase=phase,
                 task=next_task,
                 run_id=run_id,
@@ -483,8 +675,17 @@ def run_feature_prd(
                 default_test_command=test_command,
                 timeout_seconds=shift_minutes * 60,
             )
+
         elif step_enum == TaskStep.COMMIT:
             commit_message = f"{phase.get('id')}: {phase.get('name') or 'phase'}" if phase else task_id
+            _log_task_start(
+                step_value=step_enum.value,
+                task_id=task_id,
+                phase_id=phase_id,
+                branch=branch,
+                task=next_task,
+                plan_path=None,
+            )
             event = run_commit_action(
                 project_dir=project_dir,
                 branch=branch or next_task.get("branch") or "",
@@ -501,6 +702,10 @@ def run_feature_prd(
                 timed_out=False,
                 no_heartbeat=False,
             )
+            
+        _log_event(event, run_dir)
+        summary = summarize_event(event, run_dir=run_dir)
+        logger.debug("Event summary:\n{}", pretty(summary))
 
         if user_prompt:
             user_prompt = None
@@ -584,6 +789,7 @@ def run_feature_prd(
                         final_error = target.get("last_error")
                 else:
                     task_state = TaskState.from_dict(target)
+                    previous_step = task_state.step
                     caps = {
                         "worker_attempts": max_attempts,
                         "plan_attempts": MAX_IMPL_PLAN_ATTEMPTS,
@@ -594,6 +800,58 @@ def run_feature_prd(
                         "allowlist_expansion_attempts": MAX_ALLOWLIST_EXPANSION_ATTEMPTS,
                     }
                     task_state = reduce_task(task_state, event, caps=caps)
+                    logger.info(
+                        "FSM transition: {} -> {} (lifecycle={})",
+                        previous_step,
+                        task_state.step,
+                        task_state.lifecycle,
+                    )
+                    logger.info(
+                        "FSM decision:\n"
+                        "  from_step: {}\n"
+                        "  to_step: {}\n"
+                        "  lifecycle: {}\n"
+                        "  reason: {}\n"
+                        "  error_type: {}",
+                        previous_step,
+                        task_state.step,
+                        task_state.lifecycle,
+                        task_state.block_reason or "none",
+                        task_state.last_error_type or "none",
+                    )
+
+                    logger.debug(
+                        "FSM counters:\n"
+                        "  worker_attempts: {}\n"
+                        "  plan_attempts: {}\n"
+                        "  no_progress_attempts: {}\n"
+                        "  test_fail_attempts: {}\n"
+                        "  review_gen_attempts: {}\n"
+                        "  review_fix_attempts: {}\n"
+                        "  allowlist_expansion_attempts: {}",
+                        task_state.worker_attempts,
+                        task_state.plan_attempts,
+                        task_state.no_progress_attempts,
+                        task_state.test_fail_attempts,
+                        task_state.review_gen_attempts,
+                        task_state.review_fix_attempts,
+                        task_state.allowlist_expansion_attempts,
+                    )
+                    logger.debug(
+                        "FSM details: block_reason={} last_error_type={} prompt_mode={} last_error={}",
+                        task_state.block_reason,
+                        task_state.last_error_type,
+                        task_state.prompt_mode,
+                        task_state.last_error,
+                    )
+
+
+                    if not task_state.step:
+                        logger.error(
+                            "Task {} missing step after reduce_task",
+                            task_id,
+                        )
+
                     updated = task_state.to_dict()
                     target.clear()
                     target.update(updated)
@@ -616,6 +874,13 @@ def run_feature_prd(
                         if phase_entry:
                             _sync_phase_status(phase_entry, target)
                     final_error = target.get("last_error")
+                    if task_state.lifecycle == TaskLifecycle.WAITING_HUMAN:
+                        logger.error(
+                            "Task {} blocked: reason={} error={}",
+                            task_id,
+                            task_state.block_reason,
+                            task_state.last_error,
+                        )
 
             _save_queue(paths["task_queue"], queue, tasks)
             _save_plan(paths["phase_plan"], plan, phases)
@@ -634,9 +899,9 @@ def run_feature_prd(
             _report_blocking_tasks(blocked_snapshot, paths, stopping=False)
 
         if plan_created:
-            print(f"\nRun {run_id} complete. Phase plan created.")
+            logger.info("Run {} complete. Phase plan created.", run_id)
             continue
 
         time.sleep(1)
 
-    print("\nDone!")
+    logger.info("Done!")

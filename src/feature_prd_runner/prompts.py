@@ -257,12 +257,23 @@ def _build_impl_plan_prompt(
         )
     test_block = test_command or "(none specified)"
     expansion_block = ""
-    if plan_expansion_request:
-        requested = "\n".join(f"- {item}" for item in plan_expansion_request)
-        expansion_block = (
-            "\nAllowlist expansion request (add if needed):\n"
-            f"{requested}\n"
-        )
+    req = [str(x).strip() for x in (plan_expansion_request or []) if str(x).strip()]
+    if req:
+        requested = "\n".join(f"- {item}" for item in req)
+        expansion_block = f"""
+🚨 ALLOWLIST EXPANSION REQUIRED
+
+Verification found failing repo files outside the current plan allowlist.
+Your plan MUST cover ALL of the following paths by including them in:
+- files_to_change and/or new_files (preferred: exact paths), OR
+- a narrow covering directory/glob (only if supported by this repo’s allowlist policy).
+
+Do NOT add unrelated files or broad globs like "src/**" unless absolutely necessary.
+
+Requested paths (MUST be covered):
+{requested}
+"""
+
     return f"""Produce an implementation plan for the phase below.
 
 Follow all repository rules in AGENTS.md.
@@ -318,6 +329,7 @@ Rules:
 - Focus on a coherent technical approach, not just a list of rigid steps.
 - files_to_change must be non-empty unless the phase is docs-only.
 - Set plan_deviations to an empty list in the initial plan.
+- If an allowlist expansion request is present, files_to_change/new_files MUST cover every requested path.
 """
 
 
