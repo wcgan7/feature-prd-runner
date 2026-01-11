@@ -9,7 +9,13 @@ from ..git_utils import _path_is_allowed
 from ..io_utils import _save_data
 from ..logging_utils import summarize_pytest_failures
 from ..models import VerificationResult
-from ..signals import build_allowed_files, extract_failing_paths_from_pytest_log, extract_failures_section, extract_traceback_repo_paths
+from ..signals import (
+    build_allowed_files,
+    extract_failed_test_files,
+    extract_failures_section,
+    extract_traceback_repo_paths,
+    infer_suspect_source_files,
+)
 from ..tasks import _resolve_test_command, _tests_log_path
 from ..utils import _now_iso
 from ..worker import _capture_test_result_snapshot, _run_command
@@ -86,10 +92,24 @@ def run_verify_action(
     fail_path = run_dir / "pytest_failures.txt"
     fail_path.write_text(fail_text)
 
-    # Use fail_text (not log_tail) for failure extraction
-    failed_tests = extract_failing_paths_from_pytest_log(fail_text, project_dir)
-    trace_paths = extract_traceback_repo_paths(fail_text, project_dir)
-    failing_repo_paths = sorted(set(failed_tests) | set(trace_paths))
+    # Part 1: Extract failing test files from stable pytest markers
+    failed_test_files = extract_failed_test_files(fail_text, project_dir)
+
+    # Part 2: Extract source files from tracebacks (when present)
+    trace_files = extract_traceback_repo_paths(fail_text, project_dir)
+
+    # Part 3: Infer suspect source files from test imports when tracebacks don't show them
+    # Only infer if trace_files doesn't contain any src/ files
+    src_in_traces = [p for p in trace_files if p.startswith("src/")]
+    if not src_in_traces and failed_test_files:
+        suspect_source_files = infer_suspect_source_files(failed_test_files, project_dir)
+    else:
+        suspect_source_files = []
+
+    # Combine all signals into failing_repo_paths
+    failing_repo_paths = sorted(set(failed_test_files) | set(trace_files) | set(suspect_source_files))
+
+    # Exclude internal/noise directories
     EXCLUDE_PREFIXES = (
         ".git/", ".prd_runner/", ".venv/", "venv/", "__pycache__/",
         ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".nox/",
@@ -168,6 +188,10 @@ def run_verify_action(
         "needs_allowlist_expansion": bool(getattr(event, "needs_allowlist_expansion", False)),
         "failing_paths": list(getattr(event, "failing_paths", []) or []),
         "allowlist_used": allowed_files,
+        # Diagnostic breakdown of all signals
+        "failed_test_files": failed_test_files,
+        "trace_files": trace_files,
+        "suspect_source_files": suspect_source_files,
         "failing_repo_paths": failing_paths,
         "expansion_paths": expansion_paths,
         "failures_excerpt_path": str(fail_path),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import importlib.util
 import os
 import re
 from pathlib import Path
@@ -110,28 +112,50 @@ def filter_repo_file_paths(paths: list[str], project_dir: Path) -> list[str]:
     return sorted(out)
 
 
-_FAILED_LINE_RE = re.compile(r"^FAILED\s+([^\s:]+\.py)(?:::|\s|$)")
+# Robust pytest failure markers
+_FAILED_NODEID_RE = re.compile(r"(?m)^FAILED\s+(\S+)")
+_LOC_RE = re.compile(r"(?m)^(tests/[^\s:]+\.py):\d+:\s")
 
-def extract_failing_paths_from_pytest_log(log_text: str, project_dir: Path) -> list[str]:
-    if not log_text:
-        return []
+
+def extract_failed_test_files(text: str, project_dir: Path) -> list[str]:
+    """
+    Extract failing test file paths from pytest output using stable markers.
+
+    Parses:
+    - FAILED nodeids like `FAILED tests/foo/test_bar.py::test_func`
+    - Location lines like `tests/foo.py:123: AssertionError`
+    """
     root = project_dir.resolve()
     out: set[str] = set()
 
-    for line in log_text.splitlines():
-        m = _FAILED_LINE_RE.match(line.strip())
-        if not m:
-            continue
-        p = m.group(1).strip().lstrip("./")
-        candidate = (root / p).resolve()
+    # 1) From FAILED nodeids
+    for nodeid in _FAILED_NODEID_RE.findall(text or ""):
+        path = nodeid.split("::", 1)[0].lstrip("./")
+        p = (root / path).resolve()
         try:
-            candidate.relative_to(root)
+            p.relative_to(root)
         except Exception:
             continue
-        if candidate.is_file():
-            out.add(candidate.relative_to(root).as_posix())
+        if p.is_file():
+            out.add(p.relative_to(root).as_posix())
+
+    # 2) From location lines like tests/foo.py:123:
+    for path in _LOC_RE.findall(text or ""):
+        p = (root / path).resolve()
+        try:
+            p.relative_to(root)
+        except Exception:
+            continue
+        if p.is_file():
+            out.add(p.relative_to(root).as_posix())
 
     return sorted(out)
+
+
+# Keep old name as alias for backwards compatibility
+def extract_failing_paths_from_pytest_log(log_text: str, project_dir: Path) -> list[str]:
+    """Alias for extract_failed_test_files for backwards compatibility."""
+    return extract_failed_test_files(log_text, project_dir)
 
 # pytest frame: src/foo.py:123: in func
 _PYTEST_FRAME_RE = re.compile(r"(?m)^(?P<path>(?:src|tests)/[^\s:]+\.py):\d+:")
@@ -171,3 +195,116 @@ def extract_traceback_repo_paths(log_text: str, project_dir: Path) -> list[str]:
                 out.add(p.relative_to(root).as_posix())
 
     return sorted(out)
+
+
+# Pattern to find monkeypatch.setattr targets
+_MONKEYPATCH_RE = re.compile(r"monkeypatch\.setattr\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*,")
+
+
+def resolve_test_import_aliases_to_paths(test_file: str, project_dir: Path) -> dict[str, str]:
+    """
+    Parse a test file with AST and resolve import aliases to repo-relative file paths.
+
+    Returns mapping: alias_name -> repo-relative python file path (if resolvable).
+    This helps identify source files that may need changes when tracebacks don't show them.
+    """
+    root = project_dir.resolve()
+    test_path = (root / test_file).resolve()
+    if not test_path.is_file():
+        return {}
+
+    try:
+        tree = ast.parse(test_path.read_text(errors="replace"))
+    except SyntaxError:
+        return {}
+
+    alias_to_module: dict[str, str] = {}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                name = a.name  # e.g. company_intel.genesis.orchestrator
+                asname = a.asname or name.split(".")[-1]
+                alias_to_module[asname] = name
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            for a in node.names:
+                # from company_intel.genesis import orchestrator as orchestrator_module
+                name = f"{mod}.{a.name}" if mod else a.name
+                asname = a.asname or a.name
+                alias_to_module[asname] = name
+
+    # Resolve modules to file paths (only if they are inside repo root)
+    out: dict[str, str] = {}
+    for alias, module in alias_to_module.items():
+        try:
+            spec = importlib.util.find_spec(module)
+        except (ModuleNotFoundError, ValueError, ImportError):
+            continue
+        if not spec or not spec.origin:
+            continue
+        origin = Path(spec.origin).resolve()
+        try:
+            rel = origin.relative_to(root)
+        except ValueError:
+            continue
+        if origin.is_file():
+            out[alias] = rel.as_posix()
+
+    return out
+
+
+def extract_monkeypatch_targets(test_file: str, project_dir: Path) -> set[str]:
+    """
+    Extract alias names used as first argument to monkeypatch.setattr() in a test file.
+
+    These aliases are likely pointing to modules that need to be modified.
+    """
+    root = project_dir.resolve()
+    test_path = (root / test_file).resolve()
+    if not test_path.is_file():
+        return set()
+
+    try:
+        content = test_path.read_text(errors="replace")
+    except Exception:
+        return set()
+
+    return set(_MONKEYPATCH_RE.findall(content))
+
+
+def infer_suspect_source_files(
+    failed_test_files: list[str],
+    project_dir: Path,
+) -> list[str]:
+    """
+    Infer likely source files that may need changes based on failing test file imports.
+
+    Strategy:
+    1. For each failing test file, resolve its import aliases to repo paths
+    2. Filter to only "suspect" aliases:
+       - Names ending with _module
+       - Names used in monkeypatch.setattr()
+    3. Return the unique set of resolved source file paths
+    """
+    root = project_dir.resolve()
+    suspects: set[str] = set()
+
+    for test_file in failed_test_files:
+        # Get all import aliases -> paths
+        alias_to_path = resolve_test_import_aliases_to_paths(test_file, root)
+        if not alias_to_path:
+            continue
+
+        # Get monkeypatch targets
+        monkeypatch_targets = extract_monkeypatch_targets(test_file, root)
+
+        # Filter to suspect aliases
+        for alias, path in alias_to_path.items():
+            # Include if alias ends with _module or is a monkeypatch target
+            if alias.endswith("_module") or alias in monkeypatch_targets:
+                # Only include src/ files as suspects (not test files)
+                if path.startswith("src/") or not path.startswith("tests/"):
+                    suspects.add(path)
+
+    return sorted(suspects)
