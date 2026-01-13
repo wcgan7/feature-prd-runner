@@ -83,6 +83,14 @@ def _hash_json_data(data: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _hash_file(path: str) -> Optional[str]:
+    try:
+        data = open(path, "rb").read()
+    except OSError:
+        return None
+    return hashlib.sha256(data).hexdigest()
+
+
 def _pid_is_running(pid_value: Any) -> bool:
     pid = _coerce_int(pid_value, 0)
     if pid <= 0:

@@ -95,6 +95,17 @@ def _git_has_changes(project_dir: Path) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def _git_is_repo(project_dir: Path) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip().lower() == "true"
+
+
 def _path_is_ignored(path: str, ignore_patterns: Optional[list[str]] = None) -> bool:
     if not ignore_patterns:
         return False
@@ -387,16 +398,22 @@ def _git_tracked_paths(project_dir: Path, path: str) -> list[str]:
 
 
 def _git_commit_and_push(project_dir: Path, branch: str, message: str) -> None:
+    _git_commit(project_dir, message)
+    _git_push(project_dir, branch)
+
+
+def _git_commit(project_dir: Path, message: str) -> None:
     if _git_tracked_paths(project_dir, ".prd_runner"):
         raise RuntimeError(".prd_runner is tracked; remove it from git history before committing")
     if not _git_is_ignored(project_dir, ".prd_runner"):
         _ensure_gitignore(project_dir)
         if not _git_is_ignored(project_dir, ".prd_runner"):
             raise RuntimeError(".prd_runner is not ignored; add it to .gitignore before committing")
-    subprocess.run(
-        ["git", "add", "-A", "--", "."],
-        cwd=project_dir,
-        check=True,
-    )
+    subprocess.run(["git", "add", "-A", "--", "."], cwd=project_dir, check=True)
     subprocess.run(["git", "commit", "-m", message], cwd=project_dir, check=True)
+
+
+def _git_push(project_dir: Path, branch: str) -> None:
+    if not branch:
+        raise RuntimeError("Branch is required to push")
     subprocess.run(["git", "push", "-u", "origin", branch], cwd=project_dir, check=True)

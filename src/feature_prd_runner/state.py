@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ def _ensure_state_files(project_dir: Path, prd_path: Path) -> dict[str, Path]:
                 "last_error": None,
                 "updated_at": _now_iso(),
                 "prd_path": str(prd_path),
+                "prd_hash": None,
                 "coordinator_pid": None,
                 "worker_pid": None,
                 "coordinator_started_at": None,
@@ -138,3 +140,17 @@ def _active_run_is_stale(
         return age > max(heartbeat_grace_seconds, shift_minutes * 60)
 
     return True
+
+
+def _reset_state_dir(project_dir: Path) -> Path:
+    """
+    Archive existing .prd_runner state directory (if present) and return the new path.
+    """
+    state_dir = project_dir / STATE_DIR_NAME
+    if not state_dir.exists():
+        return state_dir
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_dir = project_dir / f"{STATE_DIR_NAME}.bak-{ts}"
+    shutil.move(str(state_dir), str(backup_dir))
+    return state_dir

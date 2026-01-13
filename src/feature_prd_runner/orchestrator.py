@@ -21,7 +21,13 @@ from .constants import (
     DEFAULT_SHIFT_MINUTES,
     DEFAULT_STOP_ON_BLOCKING_ISSUES,
     ERROR_TYPE_BLOCKING_ISSUES,
+    ERROR_TYPE_DIRTY_WORKTREE,
     ERROR_TYPE_PLAN_MISSING,
+    ERROR_TYPE_PRD_READ_FAILED,
+    ERROR_TYPE_PRD_MISMATCH,
+    ERROR_TYPE_STATE_CORRUPT,
+    ERROR_TYPE_STATE_INVALID,
+    ERROR_TYPE_STATE_RESET_FAILED,
     LOCK_FILE,
     MAX_ALLOWLIST_EXPANSION_ATTEMPTS,
     MAX_IMPL_PLAN_ATTEMPTS,
@@ -32,11 +38,18 @@ from .constants import (
     TASK_STATUS_BLOCKED,
 )
 from .fsm import reduce_task
-from .git_utils import _ensure_branch, _ensure_gitignore, _git_has_changes
+from .git_utils import (
+    _ensure_branch,
+    _ensure_gitignore,
+    _git_has_changes,
+    _git_is_repo,
+    _gitignore_change_is_prd_runner_only,
+)
 from .io_utils import (
     FileLock,
     _append_event,
     _load_data,
+    _load_data_with_error,
     _require_yaml,
     _save_data,
     _update_progress,
@@ -55,7 +68,7 @@ from .models import (
     WorkerFailed,
     WorkerSucceeded,
 )
-from .state import _active_run_is_stale, _ensure_state_files, _finalize_run_state
+from .state import _active_run_is_stale, _ensure_state_files, _finalize_run_state, _reset_state_dir
 from .tasks import (
     _auto_resume_blocked_dependencies,
     _blocking_event_payload,
@@ -78,7 +91,34 @@ from .tasks import (
     _sync_phase_status,
     _task_summary,
 )
-from .utils import _now_iso
+from .utils import _hash_file, _now_iso
+from .git_utils import _git_changed_files
+from .constants import IGNORED_REVIEW_PATH_PREFIXES
+from .validation import validate_phase_plan_schema, validate_task_queue_schema
+
+
+def _write_blocked_report(
+    state_dir: Path,
+    *,
+    error_type: str,
+    summary: str,
+    details: dict[str, object] | None = None,
+    next_steps: list[str] | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "error_type": error_type,
+        "summary": summary,
+        "created_at": _now_iso(),
+    }
+    if details:
+        payload["details"] = details
+    if next_steps:
+        payload["next_steps"] = list(next_steps)
+    try:
+        _save_data(state_dir / "runner_blocked.json", payload)
+    except Exception:
+        # Best-effort only; avoid masking the original failure
+        pass
 
 
 def _step_suffix(task_type: str, task_step: str) -> str:
@@ -112,19 +152,43 @@ def run_feature_prd(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     max_auto_resumes: int = DEFAULT_MAX_AUTO_RESUMES,
     test_command: Optional[str] = None,
+    format_command: Optional[str] = None,
+    lint_command: Optional[str] = None,
+    typecheck_command: Optional[str] = None,
+    verify_profile: str = "none",
+    ensure_ruff: str = "off",
     custom_prompt: Optional[str] = None,
     stop_on_blocking_issues: bool = DEFAULT_STOP_ON_BLOCKING_ISSUES,
     resume_blocked: bool = True,
     simple_review: bool = False,
+    reset_state: bool = False,
+    require_clean: bool = True,
+    commit_enabled: bool = True,
+    push_enabled: bool = True,
 ) -> None:
     _require_yaml()
     project_dir = project_dir.resolve()
     prd_path = prd_path.resolve()
-    _ensure_gitignore(project_dir, only_if_clean=True)
-    paths = _ensure_state_files(project_dir, prd_path)
 
-    lock_path = paths["state_dir"] / LOCK_FILE
-    iteration = 0
+    if reset_state:
+        try:
+            _reset_state_dir(project_dir)
+        except Exception as exc:
+            state_dir = project_dir / ".prd_runner"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            msg = "Failed to reset .prd_runner state directory"
+            logger.error("{}: {}", msg, exc)
+            _write_blocked_report(
+                state_dir,
+                error_type=ERROR_TYPE_STATE_RESET_FAILED,
+                summary=msg,
+                details={"error": f"{exc.__class__.__name__}: {exc}"},
+                next_steps=[
+                    "Close other runners, fix permissions, or move/delete .prd_runner manually.",
+                    "Re-run with --reset-state.",
+                ],
+            )
+            return
 
     logger.info("=" * 70)
     logger.info("FEATURE PRD RUNNER (FSM)")
@@ -141,6 +205,197 @@ def run_feature_prd(
         logger.info("Test command: {}", test_command)
     if custom_prompt:
         logger.info("Custom prompt provided (will run as standalone step)")
+    if any([format_command, lint_command, typecheck_command]) or verify_profile != "none":
+        logger.info(
+            "Verify config: profile={} ensure_ruff={} format={} lint={} typecheck={}",
+            verify_profile,
+            ensure_ruff,
+            bool(format_command),
+            bool(lint_command),
+            bool(typecheck_command),
+        )
+    logger.info("Require clean worktree: {}", require_clean)
+    logger.info("Commit enabled: {}", commit_enabled)
+    logger.info("Push enabled: {}", push_enabled)
+
+    if (require_clean or commit_enabled or push_enabled) and not _git_is_repo(project_dir):
+        msg = "Project directory is not a git repository"
+        logger.error(msg)
+        _write_blocked_report(
+            project_dir / ".prd_runner",
+            error_type="not_git_repo",
+            summary=msg,
+            next_steps=["Run inside a git repo (git init), or disable commit/push flags."],
+        )
+        return
+
+    paths = _ensure_state_files(project_dir, prd_path)
+
+    lock_path = paths["state_dir"] / LOCK_FILE
+    iteration = 0
+
+    # Detect corrupted durable state before touching the repo (e.g., .gitignore).
+    run_state_initial, run_state_err = _load_data_with_error(paths["run_state"], {})
+    queue_initial, queue_err = _load_data_with_error(paths["task_queue"], {})
+    plan_initial, plan_err = _load_data_with_error(paths["phase_plan"], {})
+    state_errors = [e for e in [run_state_err, queue_err, plan_err] if e]
+    if state_errors:
+        msg = "Corrupted .prd_runner state detected; refusing to continue"
+        logger.error("{}: {}", msg, "; ".join(state_errors))
+        _write_blocked_report(
+            paths["state_dir"],
+            error_type=ERROR_TYPE_STATE_CORRUPT,
+            summary=msg,
+            details={"errors": state_errors},
+            next_steps=[
+                "Fix/restore the corrupted file(s), or re-run with --reset-state (archives existing .prd_runner)."
+            ],
+        )
+        if not run_state_err:
+            try:
+                run_state_initial.update(
+                    {
+                        "status": "blocked",
+                        "last_error": msg,
+                        "updated_at": _now_iso(),
+                    }
+                )
+                _save_data(paths["run_state"], run_state_initial)
+            except Exception:
+                pass
+        return
+
+    current_prd_hash = _hash_file(str(prd_path))
+    if not current_prd_hash:
+        msg = "Failed to read PRD file for hashing"
+        logger.error("{}: {}", msg, prd_path)
+        _write_blocked_report(
+            paths["state_dir"],
+            error_type=ERROR_TYPE_PRD_READ_FAILED,
+            summary=msg,
+            details={"prd_path": str(prd_path)},
+            next_steps=["Verify the PRD path exists and is readable, then re-run."],
+        )
+        _finalize_run_state(paths, lock_path, status="blocked", last_error=msg)
+        return
+
+    # PRD mismatch detection: refuse to reuse state for a different PRD unless reset_state was requested.
+    stored_prd = run_state_initial.get("prd_path")
+    if stored_prd:
+        try:
+            stored_resolved = Path(str(stored_prd)).expanduser().resolve()
+        except Exception:
+            stored_resolved = None
+        if stored_resolved and stored_resolved != prd_path:
+            msg = "Existing .prd_runner state was created for a different PRD"
+            logger.error("{} (stored={}, requested={})", msg, stored_resolved, prd_path)
+            _write_blocked_report(
+                paths["state_dir"],
+                error_type=ERROR_TYPE_PRD_MISMATCH,
+                summary=msg,
+                details={
+                    "stored_prd_path": str(stored_resolved),
+                    "requested_prd_path": str(prd_path),
+                },
+                next_steps=["Re-run with --reset-state to start fresh for the new PRD."],
+            )
+            _finalize_run_state(paths, lock_path, status="blocked", last_error=msg)
+            return
+
+    stored_prd_hash = run_state_initial.get("prd_hash")
+    if stored_prd_hash and str(stored_prd_hash).strip() and str(stored_prd_hash).strip() != current_prd_hash:
+        msg = "Existing .prd_runner state was created for different PRD content"
+        logger.error("{} (stored_hash={}, current_hash={})", msg, stored_prd_hash, current_prd_hash)
+        _write_blocked_report(
+            paths["state_dir"],
+            error_type=ERROR_TYPE_PRD_MISMATCH,
+            summary=msg,
+            details={
+                "prd_path": str(prd_path),
+                "stored_prd_hash": str(stored_prd_hash),
+                "current_prd_hash": current_prd_hash,
+            },
+            next_steps=["Re-run with --reset-state to start fresh for the updated PRD."],
+        )
+        _finalize_run_state(paths, lock_path, status="blocked", last_error=msg)
+        return
+
+    # Persist current PRD identity for future mismatch detection.
+    try:
+        with FileLock(lock_path):
+            rs = _load_data(paths["run_state"], {})
+            changed = False
+            if rs.get("prd_path") != str(prd_path):
+                rs["prd_path"] = str(prd_path)
+                changed = True
+            if rs.get("prd_hash") != current_prd_hash:
+                rs["prd_hash"] = current_prd_hash
+                changed = True
+            if changed:
+                rs["updated_at"] = _now_iso()
+                _save_data(paths["run_state"], rs)
+    except Exception:
+        pass
+
+    # Validate persisted schemas to avoid confusing downstream behavior.
+    phase_schema_issues = validate_phase_plan_schema(plan_initial)
+    phase_ids = {
+        str(p.get("id")).strip()
+        for p in (plan_initial.get("phases") or [])
+        if isinstance(p, dict) and str(p.get("id") or "").strip()
+    }
+    queue_schema_issues = validate_task_queue_schema(queue_initial, phase_ids=phase_ids)
+    schema_issues = phase_schema_issues + queue_schema_issues
+    if schema_issues:
+        msg = "Invalid .prd_runner state schema detected; refusing to continue"
+        logger.error("{} (sample={})", msg, schema_issues[:5])
+        _write_blocked_report(
+            paths["state_dir"],
+            error_type=ERROR_TYPE_STATE_INVALID,
+            summary=msg,
+            details={"issues": schema_issues},
+            next_steps=[
+                "Fix the listed schema issues in .prd_runner/{phase_plan.yaml,task_queue.yaml}, or re-run with --reset-state.",
+            ],
+        )
+        try:
+            with FileLock(lock_path):
+                rs = _load_data(paths["run_state"], {})
+                rs.update({"status": "blocked", "last_error": msg, "updated_at": _now_iso()})
+                _save_data(paths["run_state"], rs)
+        except Exception:
+            pass
+        return
+
+    if require_clean:
+        non_runner_changes = _git_changed_files(
+            project_dir,
+            include_untracked=True,
+            ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
+        )
+        try:
+            prd_rel = prd_path.relative_to(project_dir).as_posix()
+        except Exception:
+            prd_rel = None
+        if prd_rel:
+            non_runner_changes = [p for p in non_runner_changes if p != prd_rel]
+        if ".gitignore" in non_runner_changes and _gitignore_change_is_prd_runner_only(project_dir):
+            non_runner_changes = [p for p in non_runner_changes if p != ".gitignore"]
+        if non_runner_changes:
+            msg = "Git working tree has changes outside .prd_runner; refusing to run with --require-clean"
+            logger.error("{} (sample={})", msg, non_runner_changes[:8])
+            _write_blocked_report(
+                paths["state_dir"],
+                error_type=ERROR_TYPE_DIRTY_WORKTREE,
+                summary=msg,
+                details={"changed_files": non_runner_changes},
+                next_steps=["Commit/stash/reset your changes, or rerun with --no-require-clean."],
+            )
+            _finalize_run_state(paths, lock_path, status="blocked", last_error=msg)
+            return
+
+    # Safe to update ignore rules now that we know state is usable.
+    _ensure_gitignore(project_dir, only_if_clean=True)
 
     # Handle custom_prompt as a standalone step before the main loop
     if custom_prompt:
@@ -389,14 +644,69 @@ def run_feature_prd(
         branch = None
 
         with FileLock(lock_path):
-            run_state = _load_data(paths["run_state"], {})
-            queue = _load_data(paths["task_queue"], {})
-            plan = _load_data(paths["phase_plan"], {})
+            run_state, run_state_err = _load_data_with_error(paths["run_state"], {})
+            queue, queue_err = _load_data_with_error(paths["task_queue"], {})
+            plan, plan_err = _load_data_with_error(paths["phase_plan"], {})
+
+            state_errors = [e for e in [run_state_err, queue_err, plan_err] if e]
+            if state_errors:
+                msg = "Corrupted .prd_runner state detected; refusing to continue"
+                logger.error("{}: {}", msg, "; ".join(state_errors))
+                _write_blocked_report(
+                    paths["state_dir"],
+                    error_type=ERROR_TYPE_STATE_CORRUPT,
+                    summary=msg,
+                    details={"errors": state_errors},
+                    next_steps=[
+                        "Fix/restore the corrupted file(s), or re-run with --reset-state (archives existing .prd_runner)."
+                    ],
+                )
+                if not run_state_err:
+                    try:
+                        run_state.update(
+                            {
+                                "status": "blocked",
+                                "last_error": msg,
+                                "updated_at": _now_iso(),
+                            }
+                        )
+                        _save_data(paths["run_state"], run_state)
+                    except Exception:
+                        pass
+                # Do not overwrite state files; exit cleanly.
+                return
 
             tasks = _normalize_tasks(queue)
             phases = _normalize_phases(plan)
             queue["tasks"] = tasks
             plan["phases"] = phases
+
+            phase_schema_issues = validate_phase_plan_schema(plan)
+            phase_ids = {
+                str(p.get("id")).strip()
+                for p in (plan.get("phases") or [])
+                if isinstance(p, dict) and str(p.get("id") or "").strip()
+            }
+            queue_schema_issues = validate_task_queue_schema(queue, phase_ids=phase_ids)
+            schema_issues = phase_schema_issues + queue_schema_issues
+            if schema_issues:
+                msg = "Invalid .prd_runner state schema detected; refusing to continue"
+                logger.error("{} (sample={})", msg, schema_issues[:5])
+                _write_blocked_report(
+                    paths["state_dir"],
+                    error_type=ERROR_TYPE_STATE_INVALID,
+                    summary=msg,
+                    details={"issues": schema_issues},
+                    next_steps=[
+                        "Fix the listed schema issues in .prd_runner/{phase_plan.yaml,task_queue.yaml}, or re-run with --reset-state.",
+                    ],
+                )
+                try:
+                    run_state.update({"status": "blocked", "last_error": msg, "updated_at": _now_iso()})
+                    _save_data(paths["run_state"], run_state)
+                except Exception:
+                    pass
+                return
 
             if run_state.get("status") == "running":
                 if not _active_run_is_stale(
@@ -806,6 +1116,11 @@ def run_feature_prd(
                 run_id=run_id,
                 plan_data=plan_data,
                 default_test_command=test_command,
+                default_format_command=format_command,
+                default_lint_command=lint_command,
+                default_typecheck_command=typecheck_command,
+                verify_profile=verify_profile,
+                ensure_ruff=ensure_ruff,
                 timeout_seconds=shift_minutes * 60,
             )
 
@@ -824,6 +1139,8 @@ def run_feature_prd(
                 branch=branch or next_task.get("branch") or "",
                 commit_message=commit_message,
                 run_id=run_id,
+                commit_enabled=commit_enabled,
+                push_enabled=push_enabled,
             )
         else:
             event = WorkerFailed(

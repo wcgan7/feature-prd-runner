@@ -584,6 +584,21 @@ def _tests_log_path(artifacts_dir: Path, phase_id: str) -> Path:
     return artifacts_dir / f"tests_{safe_id}.log"
 
 
+def _format_log_path(artifacts_dir: Path, phase_id: str) -> Path:
+    safe_id = _sanitize_phase_id(phase_id)
+    return artifacts_dir / f"format_{safe_id}.log"
+
+
+def _lint_log_path(artifacts_dir: Path, phase_id: str) -> Path:
+    safe_id = _sanitize_phase_id(phase_id)
+    return artifacts_dir / f"lint_{safe_id}.log"
+
+
+def _typecheck_log_path(artifacts_dir: Path, phase_id: str) -> Path:
+    safe_id = _sanitize_phase_id(phase_id)
+    return artifacts_dir / f"typecheck_{safe_id}.log"
+
+
 def _blocking_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         task

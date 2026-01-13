@@ -87,6 +87,38 @@ def _load_data(path: Path, default: dict[str, Any]) -> dict[str, Any]:
         raise
 
 
+def _load_data_with_error(
+    path: Path,
+    default: dict[str, Any],
+) -> tuple[dict[str, Any], str | None]:
+    """
+    Load JSON/YAML and return (data, error_message).
+
+    Unlike _load_data(), this reports parse/IO failures so callers can avoid
+    overwriting corrupted durable state files.
+    """
+    if not path.exists():
+        return default, None
+    try:
+        with open(path, "r") as handle:
+            if path.suffix in {".yaml", ".yml"}:
+                _require_yaml()
+                data = yaml.safe_load(handle)
+            else:
+                data = json.load(handle)
+        if not isinstance(data, dict):
+            return default, f"{path.name}: expected object, got {type(data).__name__}"
+        return data, None
+    except OSError as exc:
+        return default, f"{path.name}: {exc.__class__.__name__}: {exc}"
+    except json.JSONDecodeError as exc:
+        return default, f"{path.name}: JSONDecodeError: {exc}"
+    except Exception as exc:
+        if yaml and isinstance(exc, yaml.YAMLError):
+            return default, f"{path.name}: YAMLError: {exc}"
+        return default, f"{path.name}: {exc.__class__.__name__}: {exc}"
+
+
 def _atomic_write_yaml(path: Path, data: dict[str, Any]) -> None:
     _require_yaml()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,15 +163,83 @@ def _update_progress(progress_path: Path, updates: dict[str, Any]) -> None:
 
 
 def _read_log_tail(path: Path, max_chars: int = 4000) -> str:
+    return _read_text_tail(path, max_chars=max_chars)
+
+
+def _read_text_tail(path: Path, *, max_chars: int = 4000, encoding: str = "utf-8") -> str:
+    """
+    Efficiently read the last ~max_chars of a text file without loading the whole file.
+    """
+    if max_chars <= 0:
+        return ""
     if not path.exists():
         return ""
     try:
-        content = path.read_text(errors="replace")
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            # Overshoot in bytes to account for multi-byte encodings.
+            max_bytes = min(size, max_chars * 4)
+            handle.seek(-max_bytes, os.SEEK_END)
+            data = handle.read()
     except OSError:
         return ""
-    if len(content) <= max_chars:
-        return content
-    return content[-max_chars:]
+    text = data.decode(encoding, errors="replace")
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
+
+
+def _read_text_window(
+    path: Path,
+    *,
+    max_chars: int = 120_000,
+    head_chars: int = 40_000,
+    tail_chars: int = 80_000,
+    encoding: str = "utf-8",
+) -> tuple[str, bool]:
+    """
+    Read a bounded excerpt of a potentially large text file.
+
+    Returns (text, truncated). If the file is large, returns a head+tail window.
+    """
+    if max_chars <= 0:
+        return "", False
+    head_chars = max(0, min(head_chars, max_chars))
+    tail_chars = max(0, min(tail_chars, max_chars - head_chars))
+    if not path.exists():
+        return "", False
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            # Heuristic: if it's small, read it all.
+            max_bytes = max_chars * 4
+            if size <= max_bytes:
+                handle.seek(0)
+                data = handle.read()
+                return data.decode(encoding, errors="replace"), False
+
+            # Read head + tail windows.
+            head_bytes = min(size, head_chars * 4)
+            tail_bytes = min(size, tail_chars * 4)
+
+            handle.seek(0)
+            head = handle.read(head_bytes)
+            handle.seek(-tail_bytes, os.SEEK_END)
+            tail = handle.read(tail_bytes)
+    except OSError:
+        return "", False
+
+    text = head.decode(encoding, errors="replace")
+    if tail_bytes:
+        text += "\n\n[runner] ... log truncated ...\n\n"
+        text += tail.decode(encoding, errors="replace")
+    if len(text) > max_chars:
+        # As a last guard, cap the returned text while preserving the tail window.
+        # Failures and tracebacks are more likely to be near the end of a log.
+        text = text[-max_chars:]
+    return text, True
 
 
 def _read_text_for_prompt(path: Path, max_chars: int = 20000) -> tuple[str, bool]:

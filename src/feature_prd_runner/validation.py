@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any, Optional
 
 from .constants import REVIEW_BLOCKING_SEVERITIES, REVIEW_MIN_EVIDENCE_ITEMS, REVIEW_SEVERITIES
@@ -224,3 +225,174 @@ def _validate_simple_review_data(
             return False, f"issues[{i}].text must be a non-empty string"
 
     return True, ""
+
+
+def validate_phase_plan_schema(plan_data: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    phases = plan_data.get("phases")
+    if phases is None:
+        return issues
+    if not isinstance(phases, list):
+        return ["phase_plan.yaml: phases must be a list"]
+
+    ids: list[str] = []
+    for idx, phase in enumerate(phases):
+        if not isinstance(phase, dict):
+            issues.append(f"phase_plan.yaml: phases[{idx}] must be an object")
+            continue
+        pid = phase.get("id")
+        if not isinstance(pid, str) or not pid.strip():
+            issues.append(f"phase_plan.yaml: phases[{idx}].id must be a non-empty string")
+        else:
+            ids.append(pid.strip())
+
+        deps = phase.get("deps", []) or []
+        if deps and not isinstance(deps, list):
+            issues.append(f"phase_plan.yaml: phases[{idx}].deps must be a list of phase ids")
+        elif isinstance(deps, list) and any(not isinstance(d, str) or not d.strip() for d in deps):
+            issues.append(f"phase_plan.yaml: phases[{idx}].deps must contain non-empty strings")
+
+        branch = phase.get("branch")
+        if branch is not None and (not isinstance(branch, str) or not branch.strip()):
+            issues.append(f"phase_plan.yaml: phases[{idx}].branch must be a non-empty string when provided")
+
+        test_command = phase.get("test_command")
+        if test_command is not None and (not isinstance(test_command, str) or not test_command.strip()):
+            issues.append(f"phase_plan.yaml: phases[{idx}].test_command must be a non-empty string when provided")
+
+        acceptance = phase.get("acceptance_criteria")
+        if acceptance is not None and not isinstance(acceptance, list):
+            issues.append(f"phase_plan.yaml: phases[{idx}].acceptance_criteria must be a list of strings when provided")
+
+    counts = defaultdict(int)
+    for pid in ids:
+        counts[pid] += 1
+    duplicates = [pid for pid, c in counts.items() if c > 1]
+    if duplicates:
+        issues.append(f"phase_plan.yaml: duplicate phase ids: {', '.join(sorted(duplicates)[:10])}")
+
+    id_set = set(ids)
+    for idx, phase in enumerate(phases):
+        if not isinstance(phase, dict):
+            continue
+        deps = phase.get("deps", []) or []
+        if not isinstance(deps, list):
+            continue
+        missing = [d.strip() for d in deps if isinstance(d, str) and d.strip() and d.strip() not in id_set]
+        if missing:
+            issues.append(
+                f"phase_plan.yaml: phases[{idx}].deps references unknown phase id(s): {', '.join(missing[:10])}"
+            )
+
+    return issues
+
+
+def validate_task_queue_schema(queue_data: dict[str, Any], phase_ids: set[str]) -> list[str]:
+    issues: list[str] = []
+    tasks = queue_data.get("tasks")
+    if tasks is None:
+        return issues
+    if not isinstance(tasks, list):
+        return ["task_queue.yaml: tasks must be a list"]
+
+    ids: list[str] = []
+    for idx, task in enumerate(tasks):
+        if not isinstance(task, dict):
+            issues.append(f"task_queue.yaml: tasks[{idx}] must be an object")
+            continue
+        tid = task.get("id")
+        if not isinstance(tid, str) or not tid.strip():
+            issues.append(f"task_queue.yaml: tasks[{idx}].id must be a non-empty string")
+        else:
+            ids.append(tid.strip())
+
+        ttype = task.get("type")
+        ttype_str = ttype.strip() if isinstance(ttype, str) else ""
+        effective_type = "plan" if ttype_str == "plan" else "implement"
+
+        if ttype is not None and (not isinstance(ttype, str) or not ttype_str):
+            issues.append(f"task_queue.yaml: tasks[{idx}].type must be a non-empty string when provided")
+        elif isinstance(ttype, str) and ttype_str not in {"plan", "implement"}:
+            issues.append(
+                f"task_queue.yaml: tasks[{idx}].type must be 'plan' or 'implement' (got {ttype!r})"
+            )
+
+        deps = task.get("deps", []) or []
+        if deps and not isinstance(deps, list):
+            issues.append(f"task_queue.yaml: tasks[{idx}].deps must be a list of task ids")
+        elif isinstance(deps, list) and any(not isinstance(d, str) or not d.strip() for d in deps):
+            issues.append(f"task_queue.yaml: tasks[{idx}].deps must contain non-empty strings")
+
+        branch = task.get("branch")
+        if branch is not None and (not isinstance(branch, str) or not branch.strip()):
+            issues.append(f"task_queue.yaml: tasks[{idx}].branch must be a non-empty string when provided")
+
+        test_command = task.get("test_command")
+        if test_command is not None and (not isinstance(test_command, str) or not test_command.strip()):
+            issues.append(f"task_queue.yaml: tasks[{idx}].test_command must be a non-empty string when provided")
+
+        if effective_type == "implement":
+            phase_id = task.get("phase_id") or task.get("id")
+            if not isinstance(phase_id, str) or not phase_id.strip():
+                issues.append(f"task_queue.yaml: tasks[{idx}] implement task missing phase_id")
+            elif phase_ids and phase_id.strip() not in phase_ids:
+                issues.append(
+                    f"task_queue.yaml: tasks[{idx}] references unknown phase_id {phase_id!r}"
+                )
+
+    counts = defaultdict(int)
+    for tid in ids:
+        counts[tid] += 1
+    duplicates = [tid for tid, c in counts.items() if c > 1]
+    if duplicates:
+        issues.append(f"task_queue.yaml: duplicate task ids: {', '.join(sorted(duplicates)[:10])}")
+
+    id_set = set(ids)
+    for idx, task in enumerate(tasks):
+        if not isinstance(task, dict):
+            continue
+        deps = task.get("deps", []) or []
+        if not isinstance(deps, list):
+            continue
+        missing = [d.strip() for d in deps if isinstance(d, str) and d.strip() and d.strip() not in id_set]
+        if missing:
+            issues.append(f"task_queue.yaml: tasks[{idx}].deps references unknown task id(s): {', '.join(missing[:10])}")
+
+    # Cycle detection for deps graph (best-effort; ignore non-string ids)
+    graph: dict[str, list[str]] = {}
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        tid = task.get("id")
+        if not isinstance(tid, str) or not tid.strip():
+            continue
+        deps = task.get("deps", []) or []
+        if not isinstance(deps, list):
+            deps = []
+        graph[tid.strip()] = [d.strip() for d in deps if isinstance(d, str) and d.strip()]
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def dfs(node: str, stack: list[str]) -> None:
+        if node in visited:
+            return
+        if node in visiting:
+            cycle_start = stack.index(node) if node in stack else 0
+            cycle = stack[cycle_start:] + [node]
+            issues.append(f"task_queue.yaml: dependency cycle detected: {' -> '.join(cycle)}")
+            return
+        visiting.add(node)
+        stack.append(node)
+        for dep in graph.get(node, []):
+            if dep in graph:
+                dfs(dep, stack)
+        stack.pop()
+        visiting.remove(node)
+        visited.add(node)
+
+    for node in graph:
+        if node not in visited:
+            dfs(node, [])
+
+    return issues

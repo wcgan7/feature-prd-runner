@@ -197,7 +197,8 @@ def reduce_task(task: TaskState, event: Any, *, caps: dict[str, int]) -> TaskSta
             _set_waiting(task, "TESTS_STUCK", task.last_error_type, task.last_error)
             return task
         _clear_blocking(task)
-        _set_step(task, TaskStep.IMPLEMENT, PromptMode.FIX_TESTS)
+        # Verification can fail due to lint/typecheck/format/tests; treat as fix-verify.
+        _set_step(task, TaskStep.IMPLEMENT, PromptMode.FIX_VERIFY)
         _set_ready(task)
         return task
 
@@ -246,7 +247,7 @@ def reduce_task(task: TaskState, event: Any, *, caps: dict[str, int]) -> TaskSta
 
     if isinstance(event, CommitResult):
         _record_run_id(task, event.run_id)
-        if event.repo_clean or event.pushed:
+        if event.repo_clean or event.pushed or event.committed or getattr(event, "skipped", False):
             task.lifecycle = TaskLifecycle.DONE
             task.last_error = None
             task.last_error_type = None

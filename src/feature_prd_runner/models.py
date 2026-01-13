@@ -25,6 +25,7 @@ class TaskStep(str, Enum):
 class PromptMode(str, Enum):
     IMPLEMENT = "implement"
     FIX_TESTS = "fix_tests"
+    FIX_VERIFY = "fix_verify"
     ADDRESS_REVIEW = "address_review"
     EXPAND_ALLOWLIST = "expand_allowlist"
 
@@ -316,9 +317,11 @@ class ReviewResult(Event):
 @dataclass
 class CommitResult(Event):
     run_id: str
+    committed: bool
     pushed: bool
     error: Optional[str]
     repo_clean: bool
+    skipped: bool = False
 
     event_type: str = field(init=False, default="commit_result")
 

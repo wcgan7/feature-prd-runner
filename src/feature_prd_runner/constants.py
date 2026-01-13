@@ -4,6 +4,7 @@ TASK_QUEUE_FILE = "task_queue.yaml"
 PHASE_PLAN_FILE = "phase_plan.yaml"
 ARTIFACTS_DIR = "artifacts"
 RUNS_DIR = "runs"
+CONFIG_FILE = "config.yaml"
 LOCK_FILE = ".lock"
 
 DEFAULT_SHIFT_MINUTES = 45
@@ -51,6 +52,12 @@ ERROR_TYPE_PLAN_MISSING = "plan_missing"
 ERROR_TYPE_BLOCKING_ISSUES = "blocking_issues"
 ERROR_TYPE_DISALLOWED_FILES = "disallowed_files"
 ERROR_TYPE_TEST_TIMEOUT = "test_timeout"
+ERROR_TYPE_STATE_CORRUPT = "state_corrupt"
+ERROR_TYPE_PRD_MISMATCH = "prd_mismatch"
+ERROR_TYPE_DIRTY_WORKTREE = "dirty_worktree"
+ERROR_TYPE_STATE_RESET_FAILED = "state_reset_failed"
+ERROR_TYPE_PRD_READ_FAILED = "prd_read_failed"
+ERROR_TYPE_STATE_INVALID = "state_invalid"
 AUTO_RESUME_ERROR_TYPES = {
     ERROR_TYPE_HEARTBEAT_TIMEOUT,
     ERROR_TYPE_SHIFT_TIMEOUT,
@@ -81,6 +88,30 @@ BLOCKING_RESOLUTION_STEPS = {
     "git_push_failed": [
         "Check git remote/authentication and resolve conflicts.",
         "Push the branch manually, then re-run the runner.",
+    ],
+    ERROR_TYPE_STATE_CORRUPT: [
+        "Open the listed .prd_runner state file and fix/restore it (or delete it if safe).",
+        "Re-run with --reset-state to start fresh (will archive existing .prd_runner).",
+    ],
+    ERROR_TYPE_STATE_RESET_FAILED: [
+        "Check filesystem permissions and whether another process is using .prd_runner.",
+        "Delete or move .prd_runner manually, then re-run with --reset-state.",
+    ],
+    ERROR_TYPE_STATE_INVALID: [
+        "Open the listed .prd_runner file(s) and fix the invalid entries.",
+        "Re-run with --reset-state to start fresh (will archive existing .prd_runner).",
+    ],
+    ERROR_TYPE_PRD_MISMATCH: [
+        "Confirm you are running against the intended PRD.",
+        "Re-run with --reset-state to start a new run for the new PRD.",
+    ],
+    ERROR_TYPE_PRD_READ_FAILED: [
+        "Verify the PRD file exists and is readable.",
+        "Fix permissions/path and re-run.",
+    ],
+    ERROR_TYPE_DIRTY_WORKTREE: [
+        "Commit/stash your current changes or reset to a clean working tree.",
+        "Re-run with --no-require-clean only if you intentionally want to proceed from a dirty tree.",
     ],
 }
 

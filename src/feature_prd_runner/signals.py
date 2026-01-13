@@ -197,6 +197,56 @@ def extract_traceback_repo_paths(log_text: str, project_dir: Path) -> list[str]:
     return sorted(out)
 
 
+# Support Windows drive prefixes like `C:\...` by allowing an optional `X:` prefix.
+_RUFF_PATH_RE = re.compile(r"(?m)^(?P<path>(?:[A-Za-z]:)?[^:\n]+):\d+:\d+:")
+_RUFF_PATH2_RE = re.compile(r"(?m)^(?P<path>(?:[A-Za-z]:)?[^:\n]+):\d+:")
+_MYPY_PATH_RE = re.compile(r"(?m)^(?P<path>(?:[A-Za-z]:)?[^:\n]+):\d+:")
+
+
+def extract_ruff_repo_paths(text: str, project_dir: Path) -> list[str]:
+    """
+    Extract repo file paths from ruff output like:
+    - path/to/file.py:12:3: F401 ...
+    - path/to/file.py:12: error ...
+    """
+    root = project_dir.resolve()
+    out: set[str] = set()
+    for rx in (_RUFF_PATH_RE, _RUFF_PATH2_RE):
+        for m in rx.finditer(text or ""):
+            rel = m.group("path").strip().replace("\\", "/").lstrip("./")
+            if not rel:
+                continue
+            p = (root / rel).resolve()
+            try:
+                p.relative_to(root)
+            except Exception:
+                continue
+            if p.is_file():
+                out.add(p.relative_to(root).as_posix())
+    return sorted(out)
+
+
+def extract_mypy_repo_paths(text: str, project_dir: Path) -> list[str]:
+    """
+    Extract repo file paths from mypy output like:
+    - path/to/file.py:12: error: ...
+    """
+    root = project_dir.resolve()
+    out: set[str] = set()
+    for m in _MYPY_PATH_RE.finditer(text or ""):
+        rel = m.group("path").strip().replace("\\", "/").lstrip("./")
+        if not rel:
+            continue
+        p = (root / rel).resolve()
+        try:
+            p.relative_to(root)
+        except Exception:
+            continue
+        if p.is_file():
+            out.add(p.relative_to(root).as_posix())
+    return sorted(out)
+
+
 # Pattern to find monkeypatch.setattr targets
 _MONKEYPATCH_RE = re.compile(r"monkeypatch\.setattr\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*,")
 
