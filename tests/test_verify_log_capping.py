@@ -43,10 +43,13 @@ def test_verify_uses_bounded_excerpt_for_large_logs(tmp_path: Path, monkeypatch)
 
     assert event.passed is False
     manifest = _load_data(run_dir / "verify_manifest.json", {})
-    assert manifest.get("excerpt_kind") == "pytest_failures"
-    assert manifest.get("excerpt_truncated") is True
-    assert "pytest_failures.txt" in str(manifest.get("excerpt_path"))
-    excerpt_path = Path(manifest["excerpt_path"])
+    failing_stage = manifest.get("failing_stage") or {}
+    stages = manifest.get("stages") or []
+    assert any(isinstance(s, dict) and s.get("stage") == "tests" for s in stages)
+    assert failing_stage.get("stage") == "tests"
+    assert "pytest_failures.txt" in str(failing_stage.get("excerpt_path"))
+    assert bool(failing_stage.get("excerpt_truncated")) is True
+    excerpt_path = Path(failing_stage["excerpt_path"])
     assert excerpt_path.exists()
 
 
@@ -83,4 +86,6 @@ def test_verify_detects_pytest_behind_wrappers(tmp_path: Path, monkeypatch) -> N
 
     assert event.passed is False
     manifest = _load_data(run_dir / "verify_manifest.json", {})
-    assert manifest.get("excerpt_kind") == "pytest_failures"
+    failing_stage = manifest.get("failing_stage") or {}
+    assert failing_stage.get("stage") == "tests"
+    assert "pytest_failures.txt" in str(failing_stage.get("excerpt_path"))

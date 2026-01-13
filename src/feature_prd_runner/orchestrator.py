@@ -152,6 +152,11 @@ def run_feature_prd(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     max_auto_resumes: int = DEFAULT_MAX_AUTO_RESUMES,
     test_command: Optional[str] = None,
+    format_command: Optional[str] = None,
+    lint_command: Optional[str] = None,
+    typecheck_command: Optional[str] = None,
+    verify_profile: str = "none",
+    ensure_ruff: str = "off",
     custom_prompt: Optional[str] = None,
     stop_on_blocking_issues: bool = DEFAULT_STOP_ON_BLOCKING_ISSUES,
     resume_blocked: bool = True,
@@ -200,6 +205,15 @@ def run_feature_prd(
         logger.info("Test command: {}", test_command)
     if custom_prompt:
         logger.info("Custom prompt provided (will run as standalone step)")
+    if any([format_command, lint_command, typecheck_command]) or verify_profile != "none":
+        logger.info(
+            "Verify config: profile={} ensure_ruff={} format={} lint={} typecheck={}",
+            verify_profile,
+            ensure_ruff,
+            bool(format_command),
+            bool(lint_command),
+            bool(typecheck_command),
+        )
     logger.info("Require clean worktree: {}", require_clean)
     logger.info("Commit enabled: {}", commit_enabled)
     logger.info("Push enabled: {}", push_enabled)
@@ -1102,6 +1116,11 @@ def run_feature_prd(
                 run_id=run_id,
                 plan_data=plan_data,
                 default_test_command=test_command,
+                default_format_command=format_command,
+                default_lint_command=lint_command,
+                default_typecheck_command=typecheck_command,
+                verify_profile=verify_profile,
+                ensure_ruff=ensure_ruff,
                 timeout_seconds=shift_minutes * 60,
             )
 

@@ -67,6 +67,12 @@ The runner is a small FSM with these steps:
 Note: the `COMMIT` step runs `git commit` and `git push -u origin <branch>` by default. Use
 `--no-commit` and/or `--no-push` to disable those behaviors.
 
+## Language Support
+
+The runner is language-agnostic: it coordinates Codex + git and runs whatever `--test-command` you provide, so it can be used on repos in any language.
+
+`VERIFY` is currently optimized for Python/pytest output parsing. For non-pytest commands it uses a more generic log excerpt + path extraction approach, and allowlist expansion signals are conservative.
+
 ## Status
 
 Inspect the runner’s durable state without starting a run:
@@ -128,6 +134,11 @@ If a review returns blocking issues, the runner routes back to `IMPLEMENT` with 
 Common options:
 
 - `--test-command "..."`: command run during `VERIFY` after each phase.
+- `--format-command "..."`: optional format-check command run during `VERIFY` (before lint/tests).
+- `--lint-command "..."`: optional lint command run during `VERIFY` (before tests).
+- `--typecheck-command "..."`: optional typecheck command run during `VERIFY` (before tests).
+- `--verify-profile {none,python}`: enables preset defaults for Python projects (auto-detects `ruff`/`pytest`/`mypy`).
+- `--ensure-ruff {off,warn,install,add-config}`: helper behavior when using ruff-based commands (default: off).
 - `--codex-command "..."`: Codex CLI command used to run the worker (default: `codex exec -`).
 - `--shift-minutes N`: timebox per worker run.
 - `--reset-state`: archive and recreate `.prd_runner/` before starting.
@@ -151,6 +162,7 @@ All state lives in `.prd_runner/` inside the project directory:
 - `run_state.yaml`: current status, active task/phase, last error
 - `task_queue.yaml`: tasks derived from phases
 - `phase_plan.yaml`: planned phases
+- `config.yaml`: optional runner configuration (see below)
 - `artifacts/`: events, tests, plans, reviews
   - `impl_plan_<phase_id>.json`: implementation plan per phase
   - `review_<phase_id>.json`: structured review output
@@ -159,6 +171,22 @@ All state lives in `.prd_runner/` inside the project directory:
 
 The coordinator will refuse to commit if `.prd_runner/` is tracked or not ignored. If the
 repo is clean, it will try to add `.prd_runner/` to `.gitignore` automatically.
+
+## Config
+
+Optional config file: `.prd_runner/config.yaml` (kept out of git by default).
+
+Example:
+
+```yaml
+verify:
+  format_command: "ruff format --check ."
+  lint_command: "ruff check ."
+  typecheck_command: "mypy ."
+  test_command: "pytest -q"
+```
+
+CLI flags override `config.yaml`.
 
 ## Codex Command Notes
 

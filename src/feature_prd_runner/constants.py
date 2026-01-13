@@ -4,6 +4,7 @@ TASK_QUEUE_FILE = "task_queue.yaml"
 PHASE_PLAN_FILE = "phase_plan.yaml"
 ARTIFACTS_DIR = "artifacts"
 RUNS_DIR = "runs"
+CONFIG_FILE = "config.yaml"
 LOCK_FILE = ".lock"
 
 DEFAULT_SHIFT_MINUTES = 45

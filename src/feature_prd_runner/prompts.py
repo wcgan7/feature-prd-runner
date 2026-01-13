@@ -138,14 +138,15 @@ def _build_phase_prompt(
         heartbeat_block = f"  Update heartbeat at least every {heartbeat_seconds} seconds.\n"
 
     banner_block = ""
-    if prompt_mode == "fix_tests":
+    if prompt_mode in {"fix_tests", "fix_verify"}:
         snapshot = last_verification or {}
         cmd = str(snapshot.get("command") or "").strip()
         log_path = str(snapshot.get("log_path") or "").strip()
         log_tail = str(snapshot.get("log_tail") or "").strip()
         exit_code = snapshot.get("exit_code")
+        header = "TESTS ARE FAILING -- FIX THIS FIRST" if prompt_mode == "fix_tests" else "VERIFY IS FAILING -- FIX THIS FIRST"
         banner_block = f"""
-TESTS ARE FAILING -- FIX THIS FIRST
+{header}
 Command: {cmd or "(unknown)"}
 Exit code: {exit_code if exit_code is not None else "(unknown)"}
 Log: {log_path or "(unknown)"}
@@ -153,7 +154,7 @@ Recent output:
 {log_tail or "(no log output captured)"}
 
 Priority for this run:
-1) Fix the failing tests (minimal change).
+1) Fix the failing verification (minimal change).
 2) Only then continue implementing remaining acceptance criteria.
 """
     elif prompt_mode == "address_review":

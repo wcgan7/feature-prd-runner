@@ -103,6 +103,38 @@ def _build_run_parser() -> argparse.ArgumentParser:
         help="Global test command to run after each phase",
     )
     parser.add_argument(
+        "--format-command",
+        type=str,
+        default=None,
+        help="Global format check command to run during VERIFY (before lint/tests)",
+    )
+    parser.add_argument(
+        "--lint-command",
+        type=str,
+        default=None,
+        help="Global lint command to run during VERIFY (before tests)",
+    )
+    parser.add_argument(
+        "--typecheck-command",
+        type=str,
+        default=None,
+        help="Global typecheck command to run during VERIFY (before tests)",
+    )
+    parser.add_argument(
+        "--verify-profile",
+        type=str,
+        choices=["none", "python"],
+        default="none",
+        help="Verification preset (default: none)",
+    )
+    parser.add_argument(
+        "--ensure-ruff",
+        type=str,
+        choices=["off", "warn", "install", "add-config"],
+        default="off",
+        help="Ruff helper behavior for python verify profile (default: off)",
+    )
+    parser.add_argument(
         "--max-iterations",
         type=int,
         default=None,
@@ -983,6 +1015,11 @@ def main(argv: list[str] | None = None) -> None:
         max_attempts=args.max_task_attempts,
         max_auto_resumes=args.max_auto_resumes,
         test_command=args.test_command,
+        format_command=args.format_command,
+        lint_command=args.lint_command,
+        typecheck_command=args.typecheck_command,
+        verify_profile=args.verify_profile,
+        ensure_ruff=args.ensure_ruff,
         custom_prompt=args.custom_prompt,
         stop_on_blocking_issues=args.stop_on_blocking_issues,
         resume_blocked=args.resume_blocked,

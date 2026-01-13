@@ -25,6 +25,7 @@ class TaskStep(str, Enum):
 class PromptMode(str, Enum):
     IMPLEMENT = "implement"
     FIX_TESTS = "fix_tests"
+    FIX_VERIFY = "fix_verify"
     ADDRESS_REVIEW = "address_review"
     EXPAND_ALLOWLIST = "expand_allowlist"
 
