@@ -246,7 +246,7 @@ def reduce_task(task: TaskState, event: Any, *, caps: dict[str, int]) -> TaskSta
 
     if isinstance(event, CommitResult):
         _record_run_id(task, event.run_id)
-        if event.repo_clean or event.pushed:
+        if event.repo_clean or event.pushed or event.committed or getattr(event, "skipped", False):
             task.lifecycle = TaskLifecycle.DONE
             task.last_error = None
             task.last_error_type = None

@@ -316,9 +316,11 @@ class ReviewResult(Event):
 @dataclass
 class CommitResult(Event):
     run_id: str
+    committed: bool
     pushed: bool
     error: Optional[str]
     repo_clean: bool
+    skipped: bool = False
 
     event_type: str = field(init=False, default="commit_result")
 

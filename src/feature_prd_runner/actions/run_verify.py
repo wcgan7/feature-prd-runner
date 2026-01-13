@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Optional
 
@@ -11,14 +12,50 @@ from ..logging_utils import summarize_pytest_failures
 from ..models import VerificationResult
 from ..signals import (
     build_allowed_files,
+    extract_paths_from_log,
     extract_failed_test_files,
     extract_failures_section,
     extract_traceback_repo_paths,
+    filter_repo_file_paths,
     infer_suspect_source_files,
 )
 from ..tasks import _resolve_test_command, _tests_log_path
 from ..utils import _now_iso
 from ..worker import _capture_test_result_snapshot, _run_command
+from ..io_utils import _read_text_window
+
+
+def _is_pytest_command(command: str) -> bool:
+    cmd = (command or "").strip()
+    if not cmd:
+        return False
+
+    # Fast-path common prefixes.
+    if cmd.startswith("pytest"):
+        return True
+    if cmd.startswith("python") and " -m pytest" in cmd:
+        return True
+
+    # Tokenize and look for pytest invocation behind common wrappers
+    # (poetry/uv/pipenv/hatch) or other prefixes.
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        tokens = cmd.split()
+    tokens = [t for t in tokens if t]
+    if not tokens:
+        return False
+
+    if "pytest" in tokens:
+        return True
+
+    # python -m pytest ...
+    if "python" in tokens:
+        for i, tok in enumerate(tokens[:-1]):
+            if tok == "-m" and tokens[i + 1] == "pytest":
+                return True
+
+    return False
 
 
 
@@ -84,16 +121,22 @@ def run_verify_action(
     )
     log_tail = snapshot.get("log_tail", "")
 
-    # Read full log and extract failures section for robust path extraction
-    full_log_text = Path(result["log_path"]).read_text(errors="replace")
-    fail_text = extract_failures_section(full_log_text)
+    excerpt_text, excerpt_truncated = _read_text_window(Path(result["log_path"]), max_chars=120_000)
 
-    # Write failures excerpt to dedicated file
-    fail_path = run_dir / "pytest_failures.txt"
-    fail_path.write_text(fail_text)
+    is_pytest = _is_pytest_command(test_command)
+    if is_pytest:
+        fail_text = extract_failures_section(excerpt_text)
+        excerpt_kind = "pytest_failures"
+        excerpt_path = run_dir / "pytest_failures.txt"
+    else:
+        fail_text = excerpt_text
+        excerpt_kind = "verify_output"
+        excerpt_path = run_dir / "verify_output.txt"
+
+    excerpt_path.write_text(fail_text)
 
     # Part 1: Extract failing test files from stable pytest markers
-    failed_test_files = extract_failed_test_files(fail_text, project_dir)
+    failed_test_files = extract_failed_test_files(fail_text, project_dir) if is_pytest else []
 
     # Part 2: Extract source files from tracebacks (when present)
     trace_files = extract_traceback_repo_paths(fail_text, project_dir)
@@ -106,8 +149,19 @@ def run_verify_action(
     else:
         suspect_source_files = []
 
+    candidate_paths = []
+    if not is_pytest:
+        candidate_paths = filter_repo_file_paths(extract_paths_from_log(fail_text, project_dir), project_dir)
+        candidate_paths = [
+            p
+            for p in candidate_paths
+            if (p.startswith("src/") or p.startswith("tests/")) and p.endswith(".py")
+        ]
+
     # Combine all signals into failing_repo_paths
-    failing_repo_paths = sorted(set(failed_test_files) | set(trace_files) | set(suspect_source_files))
+    failing_repo_paths = sorted(
+        set(failed_test_files) | set(trace_files) | set(suspect_source_files) | set(candidate_paths)
+    )
 
     # Exclude internal/noise directories
     EXCLUDE_PREFIXES = (
@@ -189,12 +243,15 @@ def run_verify_action(
         "failing_paths": list(getattr(event, "failing_paths", []) or []),
         "allowlist_used": allowed_files,
         # Diagnostic breakdown of all signals
+        "excerpt_kind": excerpt_kind,
+        "excerpt_path": str(excerpt_path),
+        "excerpt_truncated": bool(excerpt_truncated),
         "failed_test_files": failed_test_files,
         "trace_files": trace_files,
         "suspect_source_files": suspect_source_files,
+        "candidate_paths": candidate_paths,
         "failing_repo_paths": failing_paths,
         "expansion_paths": expansion_paths,
-        "failures_excerpt_path": str(fail_path),
     }
     _save_data(run_dir / "verify_manifest.json", verify_manifest)
     return event
