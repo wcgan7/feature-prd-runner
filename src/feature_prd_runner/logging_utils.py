@@ -1,7 +1,9 @@
+"""Format and summarize runner events and verification logs."""
+
 import json
 import re
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 
 _FAILED_RE = re.compile(r"^FAILED\s+(\S+)", re.M)
@@ -10,6 +12,15 @@ _FAILURE_HEADER_RE = re.compile(r"^_{5,}\s*(.+?)\s*_{5,}$", re.M)
 
 
 def summarize_pytest_failures(log_text: str, max_failed: int = 5) -> dict[str, object]:
+    """Summarize pytest failures from a raw log.
+
+    Args:
+        log_text: Full pytest output text.
+        max_failed: Maximum number of `FAILED ...` entries to capture.
+
+    Returns:
+        A dictionary with keys `failed`, `headline`, and `first_error`.
+    """
     if not log_text:
         return {"failed": [], "headline": None, "first_error": None}
 
@@ -27,6 +38,15 @@ def summarize_pytest_failures(log_text: str, max_failed: int = 5) -> dict[str, o
 
 
 def summarize_event(event: Any, run_dir: Path | None = None) -> dict[str, Any]:
+    """Render a compact, JSON-friendly summary of an event object.
+
+    Args:
+        event: Event model instance (or None).
+        run_dir: Optional run directory used to attach related artifact paths.
+
+    Returns:
+        A dictionary suitable for logging or serialization.
+    """
     if event is None:
         return {"event": None}
 
@@ -92,6 +112,15 @@ def summarize_event(event: Any, run_dir: Path | None = None) -> dict[str, Any]:
 
 
 def pretty(obj: Any, *, indent: int = 2) -> str:
+    """Serialize an object as JSON for readable logs.
+
+    Args:
+        obj: Object to serialize.
+        indent: Indentation level for JSON output.
+
+    Returns:
+        A JSON string when possible; otherwise `str(obj)`.
+    """
     try:
         return json.dumps(obj, indent=indent, default=str)
     except Exception:

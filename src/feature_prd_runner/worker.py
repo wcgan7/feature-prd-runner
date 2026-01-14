@@ -1,3 +1,5 @@
+"""Run Codex worker subprocesses and enforce heartbeat/timeout behavior."""
+
 from __future__ import annotations
 
 import shlex

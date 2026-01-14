@@ -1,6 +1,12 @@
+"""Test the read-only `doctor` and `dry-run` CLI subcommands."""
+
+from __future__ import annotations
+
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -22,7 +28,8 @@ def _git_porcelain(project_dir: Path) -> str:
     return result.stdout.strip()
 
 
-def test_dry_run_is_read_only(tmp_path, capsys) -> None:
+def test_dry_run_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Ensure `dry-run` performs no repository writes."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -44,7 +51,8 @@ def test_dry_run_is_read_only(tmp_path, capsys) -> None:
     assert "Dry-run guarantees" in out
 
 
-def test_doctor_json(tmp_path, capsys) -> None:
+def test_doctor_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Ensure `doctor --json` emits machine-readable output."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)

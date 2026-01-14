@@ -1,7 +1,14 @@
+"""Test guardrails that avoid clobbering corrupted durable state."""
+
+from __future__ import annotations
+
 import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -15,6 +22,7 @@ from feature_prd_runner.utils import _hash_file
 
 
 def test_corrupted_task_queue_does_not_get_overwritten(tmp_path: Path) -> None:
+    """Ensure corrupted task_queue.yaml is not overwritten by a run."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -40,6 +48,7 @@ def test_corrupted_task_queue_does_not_get_overwritten(tmp_path: Path) -> None:
 
 
 def test_prd_mismatch_blocks_without_reset(tmp_path: Path) -> None:
+    """Ensure a different PRD path blocks without `--reset-state`."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -62,6 +71,7 @@ def test_prd_mismatch_blocks_without_reset(tmp_path: Path) -> None:
 
 
 def test_prd_content_change_blocks_without_reset(tmp_path: Path) -> None:
+    """Ensure changed PRD content blocks without `--reset-state`."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -87,7 +97,8 @@ def test_prd_content_change_blocks_without_reset(tmp_path: Path) -> None:
     assert blocked.get("error_type") == "prd_mismatch"
 
 
-def test_reset_state_allows_new_prd(tmp_path: Path, monkeypatch) -> None:
+def test_reset_state_allows_new_prd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure `--reset-state` allows starting a run with a new PRD."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -99,7 +110,7 @@ def test_reset_state_allows_new_prd(tmp_path: Path, monkeypatch) -> None:
 
     _ensure_state_files(project_dir, prd1)
 
-    def fake_run_worker_action(**kwargs):
+    def fake_run_worker_action(**kwargs: Any) -> Any:
         # Create a minimal valid phase plan to keep the loop safe.
         phase_plan_path = kwargs["phase_plan_path"]
         task_queue_path = kwargs["task_queue_path"]
@@ -126,6 +137,7 @@ def test_reset_state_allows_new_prd(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_require_clean_blocks_dirty_repo(tmp_path: Path) -> None:
+    """Ensure `--require-clean` blocks when the worktree is dirty."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -146,7 +158,8 @@ def test_require_clean_blocks_dirty_repo(tmp_path: Path) -> None:
     assert blocked.get("error_type") == "dirty_worktree"
 
 
-def test_reset_state_failure_blocks(tmp_path: Path, monkeypatch) -> None:
+def test_reset_state_failure_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure reset-state failures surface as a blocked run."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -161,7 +174,7 @@ def test_reset_state_failure_blocks(tmp_path: Path, monkeypatch) -> None:
 
     import feature_prd_runner.state as state_module
 
-    def boom(*args, **kwargs):
+    def boom(*args: object, **kwargs: object) -> None:
         raise OSError("nope")
 
     monkeypatch.setattr(state_module.shutil, "move", boom)
@@ -178,6 +191,7 @@ def test_reset_state_failure_blocks(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_invalid_phase_plan_schema_blocks(tmp_path: Path) -> None:
+    """Ensure invalid phase plan schema blocks the runner."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -210,6 +224,7 @@ def test_invalid_phase_plan_schema_blocks(tmp_path: Path) -> None:
 
 
 def test_invalid_task_queue_schema_blocks(tmp_path: Path) -> None:
+    """Ensure invalid task queue schema blocks the runner."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -250,6 +265,7 @@ def test_invalid_task_queue_schema_blocks(tmp_path: Path) -> None:
 
 
 def test_missing_task_type_is_treated_as_implement_for_validation(tmp_path: Path) -> None:
+    """Ensure missing task types are treated as `implement` for validation."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)

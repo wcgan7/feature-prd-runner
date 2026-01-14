@@ -1,5 +1,8 @@
+"""Reduce `TaskState` by applying emitted events in a finite-state machine."""
+
 from __future__ import annotations
 
+import shlex
 from typing import Any
 
 from .constants import (
@@ -49,7 +52,45 @@ def _record_run_id(task: TaskState, run_id: str) -> None:
     task.last_run_id = run_id
 
 
+def _infer_missing_tool(command: str | None, log_tail: str | None) -> str | None:
+    """Infer a missing tool name from a verification command/log."""
+    cmd = (command or "").strip()
+    if cmd:
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            tokens = cmd.split()
+        tokens = [t for t in tokens if t]
+        if tokens:
+            # python -m <module> ...
+            if tokens[0] == "python" and "-m" in tokens:
+                for i, tok in enumerate(tokens[:-1]):
+                    if tok == "-m":
+                        mod = tokens[i + 1].strip()
+                        if mod:
+                            return mod
+            # direct tool invocation
+            tool = tokens[0].strip()
+            if tool and tool not in {"python"}:
+                return tool
+
+    tail = (log_tail or "").strip().lower()
+    if tail.endswith(" not found"):
+        return tail.split()[0].strip() or None
+    return None
+
+
 def reduce_task(task: TaskState, event: Any, *, caps: dict[str, int]) -> TaskState:
+    """Reduce a task state given an event.
+
+    Args:
+        task: Current task state to update.
+        event: Event instance produced by a worker/verify/review/commit step.
+        caps: Attempt caps used to decide when to block rather than retry.
+
+    Returns:
+        The updated task state (mutated in-place and also returned for convenience).
+    """
     if isinstance(event, ProgressHumanBlockers):
         _record_run_id(task, event.run_id)
         task.human_blocking_issues = list(event.issues)
@@ -181,6 +222,28 @@ def reduce_task(task: TaskState, event: Any, *, caps: dict[str, int]) -> TaskSta
 
         task.last_error_type = event.error_type or "tests_failed"
         task.last_error = "Verification failed"
+        error_type = (event.error_type or "").strip()
+        if error_type in {"tool_missing", "deps_install_failed"} or int(event.exit_code or 0) == 127:
+            detail = (event.log_tail or "").strip() or (
+                "Dependency install failed" if error_type == "deps_install_failed" else "Verification tool not found"
+            )
+            tool = _infer_missing_tool(event.command, event.log_tail) if error_type != "deps_install_failed" else None
+            task.human_blocking_issues = [detail]
+            next_steps: list[str] = []
+            if error_type == "deps_install_failed":
+                if event.command:
+                    next_steps.append(f"Retry dependency install: {event.command}")
+            elif tool:
+                next_steps.append(f"Install missing tool: python -m pip install {tool}")
+            if error_type != "deps_install_failed" and event.command:
+                next_steps.append(f"Re-run verification: {event.command}")
+            next_steps.append(f"Resume runner after fixing: feature-prd-runner resume {task.id} --step verify")
+            task.human_next_steps = next_steps
+            if error_type == "deps_install_failed":
+                _set_waiting(task, "DEPS_INSTALL_FAILED", "deps_install_failed", detail)
+            else:
+                _set_waiting(task, "TOOL_MISSING", "tool_missing", detail)
+            return task
         if event.needs_allowlist_expansion:
             task.plan_expansion_request = list(event.failing_paths)
             task.allowlist_expansion_attempts += 1

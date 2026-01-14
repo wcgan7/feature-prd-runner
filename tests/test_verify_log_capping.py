@@ -1,5 +1,11 @@
+"""Test verify log excerpt capping and summary artifacts."""
+
+from __future__ import annotations
+
 import sys
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -9,7 +15,8 @@ from feature_prd_runner.actions import run_verify
 from feature_prd_runner.io_utils import _load_data
 
 
-def test_verify_uses_bounded_excerpt_for_large_logs(tmp_path: Path, monkeypatch) -> None:
+def test_verify_uses_bounded_excerpt_for_large_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure large logs are truncated into bounded excerpts."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     (project_dir / "tests").mkdir()
@@ -23,8 +30,15 @@ def test_verify_uses_bounded_excerpt_for_large_logs(tmp_path: Path, monkeypatch)
     # Ensure log exceeds the excerpt window threshold (~max_chars*4 bytes).
     huge = ("x" * 300_000) + "\nFAILURES\nFAILED tests/test_a.py::test_x\n" + ("y" * 300_000)
 
-    def fake_run_command(command, project_dir, log_path, timeout_seconds=None):
-        Path(log_path).write_text(huge)
+    def fake_run_command(
+        command: str,
+        project_dir: Path,
+        log_path: Path,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, object]:
+        _ = project_dir
+        _ = timeout_seconds
+        log_path.write_text(huge)
         return {"command": command, "exit_code": 1, "log_path": str(log_path), "timed_out": False}
 
     monkeypatch.setattr(run_verify, "_run_command", fake_run_command)
@@ -53,7 +67,8 @@ def test_verify_uses_bounded_excerpt_for_large_logs(tmp_path: Path, monkeypatch)
     assert excerpt_path.exists()
 
 
-def test_verify_detects_pytest_behind_wrappers(tmp_path: Path, monkeypatch) -> None:
+def test_verify_detects_pytest_behind_wrappers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure pytest detection works behind common wrappers."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     (project_dir / "tests").mkdir()
@@ -66,8 +81,15 @@ def test_verify_detects_pytest_behind_wrappers(tmp_path: Path, monkeypatch) -> N
 
     output = "FAILURES\nFAILED tests/test_a.py::test_x\n"
 
-    def fake_run_command(command, project_dir, log_path, timeout_seconds=None):
-        Path(log_path).write_text(output)
+    def fake_run_command(
+        command: str,
+        project_dir: Path,
+        log_path: Path,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, object]:
+        _ = project_dir
+        _ = timeout_seconds
+        log_path.write_text(output)
         return {"command": command, "exit_code": 1, "log_path": str(log_path), "timed_out": False}
 
     monkeypatch.setattr(run_verify, "_run_command", fake_run_command)

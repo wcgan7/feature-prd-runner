@@ -1,7 +1,13 @@
+"""Test the `list` and `resume` CLI subcommands."""
+
+from __future__ import annotations
+
+import os
 import subprocess
 import sys
-import os
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -13,7 +19,8 @@ from feature_prd_runner.state import _ensure_state_files
 from feature_prd_runner.utils import _now_iso
 
 
-def test_list_shows_tasks_and_phases(tmp_path, capsys) -> None:
+def test_list_shows_tasks_and_phases(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Ensure `list` prints tasks and phases."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -50,7 +57,8 @@ def test_list_shows_tasks_and_phases(tmp_path, capsys) -> None:
     assert "phase-1" in out
 
 
-def test_resume_marks_task_ready(tmp_path) -> None:
+def test_resume_marks_task_ready(tmp_path: Path) -> None:
+    """Ensure `resume` marks the specified task as ready."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -81,7 +89,8 @@ def test_resume_marks_task_ready(tmp_path) -> None:
     assert task["status"] == "implement"
 
 
-def test_resume_refuses_when_run_active_without_force(tmp_path, capsys) -> None:
+def test_resume_refuses_when_run_active_without_force(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Ensure `resume` refuses when a run is active without `--force`."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -114,7 +123,8 @@ def test_resume_refuses_when_run_active_without_force(tmp_path, capsys) -> None:
     assert "active" in out.lower()
 
 
-def test_resume_does_not_overwrite_corrupted_task_queue(tmp_path, capsys) -> None:
+def test_resume_does_not_overwrite_corrupted_task_queue(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Ensure `resume` does not overwrite corrupted durable state."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -135,7 +145,8 @@ def test_resume_does_not_overwrite_corrupted_task_queue(tmp_path, capsys) -> Non
     assert "Unable to read task_queue.yaml" in capsys.readouterr().out
 
 
-def test_retry_clears_errors_and_marks_ready(tmp_path) -> None:
+def test_retry_clears_errors_and_marks_ready(tmp_path: Path) -> None:
+    """Ensure `retry` clears error fields and resumes the task."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -180,7 +191,8 @@ def test_retry_clears_errors_and_marks_ready(tmp_path) -> None:
     assert task["prompt_mode"] == "fix_tests"
 
 
-def test_rerun_step_sets_step_and_clears_prompt_mode(tmp_path) -> None:
+def test_rerun_step_sets_step_and_clears_prompt_mode(tmp_path: Path) -> None:
+    """Ensure `rerun-step` sets the step and clears prompt mode."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -212,7 +224,8 @@ def test_rerun_step_sets_step_and_clears_prompt_mode(tmp_path) -> None:
     assert task["prompt_mode"] is None
 
 
-def test_skip_step_advances_step(tmp_path) -> None:
+def test_skip_step_advances_step(tmp_path: Path) -> None:
+    """Ensure `skip-step` advances to the next step."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -243,7 +256,8 @@ def test_skip_step_advances_step(tmp_path) -> None:
     assert task["status"] == "review"
 
 
-def test_skip_step_requires_force_on_mismatch(tmp_path, capsys) -> None:
+def test_skip_step_requires_force_on_mismatch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Ensure `skip-step` requires `--force` on PRD mismatch."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -266,7 +280,8 @@ def test_skip_step_requires_force_on_mismatch(tmp_path, capsys) -> None:
     assert "refusing to skip" in out.lower()
 
 
-def test_skip_step_refuses_non_control_plane_step(tmp_path, capsys) -> None:
+def test_skip_step_refuses_non_control_plane_step(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Ensure `skip-step` refuses to skip non control-plane steps without force."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)

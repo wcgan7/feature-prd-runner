@@ -1,3 +1,5 @@
+"""Extract file path signals from logs to support allowlist expansion decisions."""
+
 from __future__ import annotations
 
 import ast
@@ -14,6 +16,14 @@ _PATH_TOKEN_RE = re.compile(r"([A-Za-z0-9_./\\-]+\.[A-Za-z0-9_]+)")
 
 
 def build_allowed_files(plan_data: dict[str, Any]) -> list[str]:
+    """Build the allowlist of files the worker may change for a phase.
+
+    Args:
+        plan_data: Implementation plan payload containing `files_to_change` and `new_files`.
+
+    Returns:
+        A list of repo-relative file path patterns allowed for the phase.
+    """
     files: list[str] = []
     for key in ("files_to_change", "new_files"):
         value = plan_data.get(key)
@@ -28,6 +38,15 @@ def build_allowed_files(plan_data: dict[str, Any]) -> list[str]:
 
 
 def extract_paths_from_log(log_text: str, project_dir: Path) -> list[str]:
+    """Extract existing repo file paths referenced in a log text.
+
+    Args:
+        log_text: Raw log output text.
+        project_dir: Repository root directory.
+
+    Returns:
+        A list of unique repo-relative paths that exist on disk.
+    """
     if not log_text:
         return []
 
@@ -72,6 +91,16 @@ def needs_allowlist_expansion(
     allowed_files: list[str],
     project_dir: Path,
 ) -> bool:
+    """Decide whether a failure indicates the allowlist should be expanded.
+
+    Args:
+        failing_paths: Repo-relative paths implicated by the failure.
+        allowed_files: Current allowlist patterns from the implementation plan.
+        project_dir: Repository root directory.
+
+    Returns:
+        True if any failing path is outside the allowlist; otherwise False.
+    """
     if not failing_paths or not allowed_files:
         return False
     for path in failing_paths:
@@ -81,6 +110,15 @@ def needs_allowlist_expansion(
 
 
 def filter_repo_file_paths(paths: list[str], project_dir: Path) -> list[str]:
+    """Filter a list of strings down to repo-relative file paths.
+
+    Args:
+        paths: Candidate path strings (absolute or repo-relative).
+        project_dir: Repository root directory.
+
+    Returns:
+        Sorted repo-relative paths that exist and are files under `project_dir`.
+    """
     root = project_dir.resolve()
     out: set[str] = set()
 
@@ -118,11 +156,10 @@ _LOC_RE = re.compile(r"(?m)^(tests/[^\s:]+\.py):\d+:\s")
 
 
 def extract_failed_test_files(text: str, project_dir: Path) -> list[str]:
-    """
-    Extract failing test file paths from pytest output using stable markers.
+    """Extract failing test file paths from pytest output.
 
     Parses:
-    - FAILED nodeids like `FAILED tests/foo/test_bar.py::test_func`
+    - `FAILED` nodeids like `FAILED tests/foo/test_bar.py::test_func`
     - Location lines like `tests/foo.py:123: AssertionError`
     """
     root = project_dir.resolve()
@@ -204,10 +241,11 @@ _MYPY_PATH_RE = re.compile(r"(?m)^(?P<path>(?:[A-Za-z]:)?[^:\n]+):\d+:")
 
 
 def extract_ruff_repo_paths(text: str, project_dir: Path) -> list[str]:
-    """
-    Extract repo file paths from ruff output like:
-    - path/to/file.py:12:3: F401 ...
-    - path/to/file.py:12: error ...
+    """Extract repo file paths from ruff output.
+
+    Examples:
+    - `path/to/file.py:12:3: F401 ...`
+    - `path/to/file.py:12: error ...`
     """
     root = project_dir.resolve()
     out: set[str] = set()
@@ -227,9 +265,9 @@ def extract_ruff_repo_paths(text: str, project_dir: Path) -> list[str]:
 
 
 def extract_mypy_repo_paths(text: str, project_dir: Path) -> list[str]:
-    """
-    Extract repo file paths from mypy output like:
-    - path/to/file.py:12: error: ...
+    """Extract repo file paths from mypy output.
+
+    Example: `path/to/file.py:12: error: ...`
     """
     root = project_dir.resolve()
     out: set[str] = set()
@@ -252,11 +290,10 @@ _MONKEYPATCH_RE = re.compile(r"monkeypatch\.setattr\s*\(\s*([a-zA-Z_][a-zA-Z0-9_
 
 
 def resolve_test_import_aliases_to_paths(test_file: str, project_dir: Path) -> dict[str, str]:
-    """
-    Parse a test file with AST and resolve import aliases to repo-relative file paths.
+    """Resolve import aliases in a test file to repo-relative file paths.
 
-    Returns mapping: alias_name -> repo-relative python file path (if resolvable).
-    This helps identify source files that may need changes when tracebacks don't show them.
+    Returns a mapping of `alias_name -> repo-relative python file path` (when resolvable). This is used to
+    infer likely source files when failures don't include full tracebacks.
     """
     root = project_dir.resolve()
     test_path = (root / test_file).resolve()
@@ -305,11 +342,7 @@ def resolve_test_import_aliases_to_paths(test_file: str, project_dir: Path) -> d
 
 
 def extract_monkeypatch_targets(test_file: str, project_dir: Path) -> set[str]:
-    """
-    Extract alias names used as first argument to monkeypatch.setattr() in a test file.
-
-    These aliases are likely pointing to modules that need to be modified.
-    """
+    """Extract alias names used as the first argument to `monkeypatch.setattr()` in a test file."""
     root = project_dir.resolve()
     test_path = (root / test_file).resolve()
     if not test_path.is_file():
@@ -327,15 +360,12 @@ def infer_suspect_source_files(
     failed_test_files: list[str],
     project_dir: Path,
 ) -> list[str]:
-    """
-    Infer likely source files that may need changes based on failing test file imports.
+    """Infer likely source files that may need changes based on failing test imports.
 
     Strategy:
-    1. For each failing test file, resolve its import aliases to repo paths
-    2. Filter to only "suspect" aliases:
-       - Names ending with _module
-       - Names used in monkeypatch.setattr()
-    3. Return the unique set of resolved source file paths
+    1. Resolve import aliases to repo paths.
+    2. Keep aliases ending with `_module` or used in `monkeypatch.setattr()`.
+    3. Return the unique set of resolved source file paths.
     """
     root = project_dir.resolve()
     suspects: set[str] = set()

@@ -1,6 +1,9 @@
+"""Run Codex worker actions for planning, implementation, and review with allowlist enforcement."""
+
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -51,7 +54,6 @@ from .load_plan import load_plan
 from .load_review import load_review
 from .validate_plan import validate_plan
 from .validate_review import validate_review
-import shutil
 
 
 def run_resume_prompt_action(
@@ -67,7 +69,23 @@ def run_resume_prompt_action(
     shift_minutes: int,
     on_spawn: Optional[Callable[[int], None]] = None,
 ) -> ResumePromptResult | ProgressHumanBlockers | WorkerFailed:
-    """Run a standalone resume prompt and return success/failure result."""
+    """Run a standalone resume prompt action.
+
+    Args:
+        user_prompt: Human-provided instructions to be executed by the worker.
+        project_dir: Repository root directory.
+        run_dir: Per-run output directory.
+        run_id: Current run identifier.
+        codex_command: Command template used to run Codex.
+        progress_path: Path to the progress file written by the worker.
+        heartbeat_seconds: Heartbeat interval expected from the worker.
+        heartbeat_grace_seconds: Allowed heartbeat staleness before terminating.
+        shift_minutes: Timebox for the worker run.
+        on_spawn: Optional callback invoked with the worker PID.
+
+    Returns:
+        A `ResumePromptResult` on success, or a `ProgressHumanBlockers`/`WorkerFailed` event on failure.
+    """
     prompt = _build_resume_prompt(
         user_prompt=user_prompt,
         progress_path=progress_path,
@@ -144,7 +162,6 @@ def _copy_artifact_to_run_dir(artifact_path: Path, run_dir: Path) -> None:
             pass  # Non-critical; silently ignore copy failures
 
 
-
 def _classify_worker_failure(
     *,
     run_result: dict[str, Any],
@@ -193,6 +210,34 @@ def run_worker_action(
     on_spawn: Optional[Callable[[int], None]] = None,
     simple_review: bool = False,
 ) -> Any:
+    """Run a worker action for the given task step.
+
+    Args:
+        step: Task step being executed (plan, plan-impl, implement, review).
+        task: Task payload read from the durable task queue.
+        phase: Optional phase metadata for the task.
+        prd_path: Path to the PRD file.
+        project_dir: Repository root directory.
+        artifacts_dir: Directory for durable artifacts (plans, reviews, logs).
+        phase_plan_path: Path to the phase plan YAML file.
+        task_queue_path: Path to the task queue YAML file.
+        run_dir: Per-run directory used to store manifests and logs.
+        run_id: Current run identifier.
+        codex_command: Command template used to run Codex.
+        user_prompt: Optional extra prompt content to inject.
+        progress_path: Progress file path used for worker heartbeat and results.
+        events_path: Events ndjson path for logging.
+        heartbeat_seconds: Heartbeat interval expected from the worker.
+        heartbeat_grace_seconds: Allowed heartbeat staleness before terminating.
+        shift_minutes: Timebox for the worker run.
+        test_command: Optional test command used for plan validation context.
+        on_spawn: Optional callback invoked with the worker PID.
+        simple_review: Whether to use the simplified review schema/prompt.
+
+    Returns:
+        An event model describing the result (e.g., `WorkerSucceeded`, `WorkerFailed`,
+        `AllowlistViolation`, `ReviewResult`).
+    """
     pre_run_changed = _snapshot_repo_changes(project_dir)
     repo_dirty = bool(pre_run_changed)
 

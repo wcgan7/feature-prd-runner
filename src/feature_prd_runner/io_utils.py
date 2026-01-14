@@ -1,9 +1,12 @@
+"""Read/write durable state files (JSON/YAML) and provide cross-platform file locking."""
+
 from __future__ import annotations
 
 import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Optional
 
 try:
@@ -21,7 +24,14 @@ def _require_yaml() -> None:
 
 
 class FileLock:
-    """Best-effort cross-platform file lock."""
+    """Provide a best-effort cross-platform file lock.
+
+    This lock is advisory on platforms where that is the norm. It is intended
+    to prevent concurrent runner processes from clobbering durable state files.
+
+    Args:
+        lock_path: Path to the lock file used as the lock target.
+    """
 
     def __init__(self, lock_path: Path):
         self.lock_path = lock_path
@@ -40,10 +50,18 @@ class FileLock:
                 self.handle.seek(0)
                 self.handle.truncate(self.lock_bytes)
                 self.handle.flush()
-                msvcrt.locking(self.handle.fileno(), msvcrt.LK_LOCK, self.lock_bytes)
+                locking = getattr(msvcrt, "locking", None)
+                lk_lock = getattr(msvcrt, "LK_LOCK", None)
+                if callable(locking) and lk_lock is not None:
+                    locking(self.handle.fileno(), lk_lock, self.lock_bytes)
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         if not self.handle:
             return
         try:
@@ -53,7 +71,10 @@ class FileLock:
             if os.name == "nt":
                 import msvcrt
                 self.handle.seek(0)
-                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, self.lock_bytes)
+                locking = getattr(msvcrt, "locking", None)
+                lk_unlock = getattr(msvcrt, "LK_UNLCK", None)
+                if callable(locking) and lk_unlock is not None:
+                    locking(self.handle.fileno(), lk_unlock, self.lock_bytes)
         self.handle.close()
         self.handle = None
 
@@ -91,11 +112,10 @@ def _load_data_with_error(
     path: Path,
     default: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None]:
-    """
-    Load JSON/YAML and return (data, error_message).
+    """Load JSON/YAML and return (data, error_message).
 
-    Unlike _load_data(), this reports parse/IO failures so callers can avoid
-    overwriting corrupted durable state files.
+    Unlike `_load_data()`, this reports parse/IO failures so callers can avoid overwriting corrupted
+    durable state files.
     """
     if not path.exists():
         return default, None
@@ -167,9 +187,7 @@ def _read_log_tail(path: Path, max_chars: int = 4000) -> str:
 
 
 def _read_text_tail(path: Path, *, max_chars: int = 4000, encoding: str = "utf-8") -> str:
-    """
-    Efficiently read the last ~max_chars of a text file without loading the whole file.
-    """
+    """Efficiently read the last ~`max_chars` characters of a text file."""
     if max_chars <= 0:
         return ""
     if not path.exists():
@@ -198,8 +216,7 @@ def _read_text_window(
     tail_chars: int = 80_000,
     encoding: str = "utf-8",
 ) -> tuple[str, bool]:
-    """
-    Read a bounded excerpt of a potentially large text file.
+    """Read a bounded excerpt of a potentially large text file.
 
     Returns (text, truncated). If the file is large, returns a head+tail window.
     """

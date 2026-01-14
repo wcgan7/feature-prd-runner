@@ -1,3 +1,5 @@
+"""Define task queue helpers for planning, persistence, and selection."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -80,6 +82,7 @@ def _infer_lifecycle_step(task: dict[str, Any], status: str) -> tuple[str, str]:
     if status in {TASK_STATUS_IMPLEMENTING, TASK_STATUS_DOING, "in_progress"}:
         return TaskLifecycle.READY.value, TaskStep.IMPLEMENT.value
     return TaskLifecycle.READY.value, TaskStep.PLAN_IMPL.value
+
 
 def _build_plan_task() -> dict[str, Any]:
     return {
@@ -337,7 +340,11 @@ def _deps_satisfied(task: dict[str, Any], tasks_by_id: dict[str, dict[str, Any]]
 
 
 def _select_next_task(tasks: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    tasks_by_id = {task.get("id"): task for task in tasks if task.get("id")}
+    tasks_by_id: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        task_id = task.get("id")
+        if isinstance(task_id, str) and task_id.strip():
+            tasks_by_id[task_id] = task
     sorted_tasks = sorted(
         enumerate(tasks),
         key=lambda item: (item[1].get("priority", 0), item[0]),
@@ -403,7 +410,11 @@ def _maybe_auto_resume_blocked(
 
 
 def _blocked_dependency_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    tasks_by_id = {task.get("id"): task for task in tasks if task.get("id")}
+    tasks_by_id: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        task_id = task.get("id")
+        if isinstance(task_id, str) and task_id.strip():
+            tasks_by_id[task_id] = task
     blocked: dict[str, dict[str, Any]] = {}
     for task in tasks:
         for dep_id in task.get("deps", []) or []:
@@ -475,10 +486,12 @@ def _resolve_test_command(
     task: dict[str, Any],
     default_test_command: Optional[str],
 ) -> Optional[str]:
-    if phase and phase.get("test_command"):
-        return phase.get("test_command")
+    if phase:
+        phase_command = phase.get("test_command")
+        if isinstance(phase_command, str) and phase_command.strip():
+            return phase_command
     task_command = task.get("test_command")
-    if task_command:
+    if isinstance(task_command, str) and task_command.strip():
         return task_command
     return default_test_command
 

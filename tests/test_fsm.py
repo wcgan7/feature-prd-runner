@@ -1,7 +1,14 @@
+"""Test task state transitions and orchestration behaviors."""
+
+from __future__ import annotations
+
 import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -15,7 +22,8 @@ from feature_prd_runner.state import _ensure_state_files
 from feature_prd_runner.utils import _now_iso
 
 
-def test_missing_phase_blocks_without_branch(tmp_path, monkeypatch):
+def test_missing_phase_blocks_without_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure a missing phase blocks the task without checking out a branch."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -44,7 +52,7 @@ def test_missing_phase_blocks_without_branch(tmp_path, monkeypatch):
     _save_data(paths["task_queue"], queue)
     _save_data(paths["phase_plan"], {"updated_at": _now_iso(), "phases": []})
 
-    def _fail_if_called(*args, **kwargs):
+    def _fail_if_called(*args: object, **kwargs: object) -> None:
         raise AssertionError("_ensure_branch should not be called when phase is missing")
 
     monkeypatch.setattr(orchestrator, "_ensure_branch", _fail_if_called)
@@ -62,7 +70,8 @@ def test_missing_phase_blocks_without_branch(tmp_path, monkeypatch):
     assert task["block_reason"] == "PLAN_MISSING"
 
 
-def test_allowlist_violation_writes_manifest(tmp_path, monkeypatch):
+def test_allowlist_violation_writes_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure allowlist violations write a manifest with disallowed files."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     prd_path = project_dir / "prd.md"
@@ -76,7 +85,7 @@ def test_allowlist_violation_writes_manifest(tmp_path, monkeypatch):
     progress_path.write_text(json.dumps({"run_id": "run-1"}))
     events_path = tmp_path / "events.ndjson"
 
-    def fake_run_codex_worker(**kwargs):
+    def fake_run_codex_worker(**kwargs: Any) -> dict[str, Any]:
         stdout_path = run_dir / "stdout.log"
         stderr_path = run_dir / "stderr.log"
         stdout_path.write_text("")
@@ -95,9 +104,9 @@ def test_allowlist_violation_writes_manifest(tmp_path, monkeypatch):
             "last_heartbeat": None,
         }
 
-    snapshots = {"count": 0}
+    snapshots: dict[str, int] = {"count": 0}
 
-    def fake_snapshot_repo_changes(_project_dir):
+    def fake_snapshot_repo_changes(_project_dir: Path) -> list[str]:
         snapshots["count"] += 1
         if snapshots["count"] == 1:
             return []
@@ -141,7 +150,8 @@ def test_allowlist_violation_writes_manifest(tmp_path, monkeypatch):
     assert "disallowed.py" in manifest.get("disallowed_files", [])
 
 
-def test_verify_runs_before_next_phase_plan(tmp_path, monkeypatch):
+def test_verify_runs_before_next_phase_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure verify tasks run before planning the next phase."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     subprocess.run(["git", "init"], cwd=project_dir, check=True)
@@ -191,9 +201,9 @@ def test_verify_runs_before_next_phase_plan(tmp_path, monkeypatch):
     }
     _save_data(paths["task_queue"], queue)
 
-    calls = {"verify": 0, "worker": 0}
+    calls: dict[str, int] = {"verify": 0, "worker": 0}
 
-    def fake_verify_action(**kwargs):
+    def fake_verify_action(**kwargs: Any) -> VerificationResult:
         calls["verify"] += 1
         return VerificationResult(
             run_id=kwargs["run_id"],
@@ -205,7 +215,7 @@ def test_verify_runs_before_next_phase_plan(tmp_path, monkeypatch):
             captured_at=_now_iso(),
         )
 
-    def fake_worker_action(**kwargs):
+    def fake_worker_action(**kwargs: Any) -> None:
         calls["worker"] += 1
         raise AssertionError("run_worker_action should not be called when verify is next")
 
@@ -226,3 +236,137 @@ def test_verify_runs_before_next_phase_plan(tmp_path, monkeypatch):
     updated_queue = _load_data(paths["task_queue"], {})
     updated_tasks = {task["id"]: task for task in updated_queue["tasks"]}
     assert updated_tasks["phase-1"]["step"] == "review"
+
+
+def test_tool_missing_blocks_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure missing tool errors block the task for human intervention."""
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=project_dir, check=True)
+
+    prd_path = project_dir / "prd.md"
+    prd_path.write_text("Spec\n")
+
+    paths = _ensure_state_files(project_dir, prd_path)
+
+    _save_data(
+        paths["phase_plan"],
+        {
+            "updated_at": _now_iso(),
+            "phases": [{"id": "phase-1", "name": "Phase 1", "status": "todo", "description": ""}],
+        },
+    )
+
+    queue = {
+        "updated_at": _now_iso(),
+        "tasks": [
+            {
+                "id": "phase-1",
+                "type": "implement",
+                "phase_id": "phase-1",
+                "status": "verify",
+                "lifecycle": "ready",
+                "step": "verify",
+                "priority": 1,
+                "deps": [],
+                "description": "verify tools",
+            }
+        ],
+    }
+    _save_data(paths["task_queue"], queue)
+
+    def fake_verify_action(**kwargs: Any) -> VerificationResult:
+        return VerificationResult(
+            run_id=kwargs["run_id"],
+            passed=False,
+            command="ruff check .",
+            exit_code=127,
+            log_path=None,
+            log_tail="ruff not found",
+            captured_at=_now_iso(),
+            failing_paths=[],
+            needs_allowlist_expansion=False,
+            error_type="tool_missing",
+        )
+
+    monkeypatch.setattr(orchestrator, "run_verify_action", fake_verify_action)
+    monkeypatch.setattr(orchestrator, "_ensure_branch", lambda *args, **kwargs: None)
+
+    orchestrator.run_feature_prd(
+        project_dir=project_dir,
+        prd_path=prd_path,
+        max_iterations=1,
+    )
+
+    updated_queue = _load_data(paths["task_queue"], {})
+    task = updated_queue["tasks"][0]
+    assert task["lifecycle"] == "waiting_human"
+    assert task["status"] == "blocked"
+    assert task["block_reason"] == "TOOL_MISSING"
+
+
+def test_deps_install_failed_blocks_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure dependency install failures block the task for human intervention."""
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=project_dir, check=True)
+
+    prd_path = project_dir / "prd.md"
+    prd_path.write_text("Spec\n")
+
+    paths = _ensure_state_files(project_dir, prd_path)
+
+    _save_data(
+        paths["phase_plan"],
+        {
+            "updated_at": _now_iso(),
+            "phases": [{"id": "phase-1", "name": "Phase 1", "status": "todo", "description": ""}],
+        },
+    )
+
+    queue = {
+        "updated_at": _now_iso(),
+        "tasks": [
+            {
+                "id": "phase-1",
+                "type": "implement",
+                "phase_id": "phase-1",
+                "status": "verify",
+                "lifecycle": "ready",
+                "step": "verify",
+                "priority": 1,
+                "deps": [],
+                "description": "verify deps",
+            }
+        ],
+    }
+    _save_data(paths["task_queue"], queue)
+
+    def fake_verify_action(**kwargs: Any) -> VerificationResult:
+        return VerificationResult(
+            run_id=kwargs["run_id"],
+            passed=False,
+            command='python -m pip install -e ".[test]"',
+            exit_code=1,
+            log_path=None,
+            log_tail="pip install failed",
+            captured_at=_now_iso(),
+            failing_paths=[],
+            needs_allowlist_expansion=False,
+            error_type="deps_install_failed",
+        )
+
+    monkeypatch.setattr(orchestrator, "run_verify_action", fake_verify_action)
+    monkeypatch.setattr(orchestrator, "_ensure_branch", lambda *args, **kwargs: None)
+
+    orchestrator.run_feature_prd(
+        project_dir=project_dir,
+        prd_path=prd_path,
+        max_iterations=1,
+    )
+
+    updated_queue = _load_data(paths["task_queue"], {})
+    task = updated_queue["tasks"][0]
+    assert task["lifecycle"] == "waiting_human"
+    assert task["status"] == "blocked"
+    assert task["block_reason"] == "DEPS_INSTALL_FAILED"

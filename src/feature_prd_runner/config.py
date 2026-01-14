@@ -1,3 +1,5 @@
+"""Load optional runner configuration from `.prd_runner/config.yaml`."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,10 +10,13 @@ from .io_utils import _load_data_with_error
 
 
 def load_runner_config(project_dir: Path) -> tuple[dict[str, Any], str | None]:
-    """
-    Load optional runner config from `.prd_runner/config.yaml`.
+    """Load the optional runner config file.
 
-    Returns (config, error). If missing, returns ({}, None).
+    Args:
+        project_dir: Repository root directory.
+
+    Returns:
+        A tuple of `(config, error_message)`. If the file is missing, returns `({}, None)`.
     """
     project_dir = project_dir.resolve()
     path = project_dir / STATE_DIR_NAME / CONFIG_FILE
@@ -33,10 +38,13 @@ def _get_nested(config: dict[str, Any], *keys: str) -> Any:
 
 
 def get_verify_config(config: dict[str, Any]) -> dict[str, Any]:
-    """
-    Return verify config block: keys may include format_command, lint_command,
-    typecheck_command, test_command, ensure_ruff.
+    """Extract the verify configuration block from the runner config.
+
+    Args:
+        config: Runner configuration dictionary.
+
+    Returns:
+        The `verify` config mapping, or an empty dict if not present.
     """
     raw = _get_nested(config, "verify")
     return raw if isinstance(raw, dict) else {}
-

@@ -1,3 +1,5 @@
+"""Build the text prompts passed to the Codex worker for each runner step."""
+
 from __future__ import annotations
 
 from pathlib import Path
