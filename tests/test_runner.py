@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-Feature PRD Runner Tests
-========================
-"""
+"""Test prompt building and progress parsing helpers in the runner."""
 
 import json
 import sys
@@ -16,6 +13,7 @@ from feature_prd_runner import runner
 
 
 def test_phase_prompt_includes_readme_and_resume() -> None:
+    """Ensure phase prompts include README and special-instructions sections."""
     prompt = runner._build_phase_prompt(
         prd_path=Path("/tmp/prd.md"),
         phase={"id": "phase-1", "description": "Do things"},
@@ -31,6 +29,7 @@ def test_phase_prompt_includes_readme_and_resume() -> None:
 
 
 def test_review_prompt_mentions_requirements() -> None:
+    """Ensure review prompts include PRD requirements context."""
     prompt = runner._build_review_prompt(
         phase={"id": "phase-1", "acceptance_criteria": ["AC1"]},
         review_path=Path("/tmp/review.json"),
@@ -57,6 +56,7 @@ def test_review_prompt_mentions_requirements() -> None:
 
 
 def test_plan_prompt_includes_resume_prompt() -> None:
+    """Ensure plan prompts include special instructions from the user."""
     prompt = runner._build_plan_prompt(
         prd_path=Path("/tmp/prd.md"),
         phase_plan_path=Path("/tmp/phase_plan.yaml"),
@@ -71,6 +71,7 @@ def test_plan_prompt_includes_resume_prompt() -> None:
 
 
 def test_read_progress_blocking_issues(tmp_path: Path) -> None:
+    """Ensure progress parsing extracts human-blocking issues and next steps."""
     progress_path = tmp_path / "progress.json"
     progress_path.write_text(
         json.dumps(

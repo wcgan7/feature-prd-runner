@@ -1,3 +1,5 @@
+"""Manage `.prd_runner/` durable state files and detect stale/incomplete runs."""
+
 from __future__ import annotations
 
 import shutil
@@ -82,7 +84,6 @@ def _finalize_run_state(
                 "current_task_id": None,
                 "current_phase_id": None,
                 "run_id": None,
-                "branch": None,
                 "worker_pid": None,
                 "coordinator_pid": None,
                 "coordinator_started_at": None,
@@ -143,9 +144,7 @@ def _active_run_is_stale(
 
 
 def _reset_state_dir(project_dir: Path) -> Path:
-    """
-    Archive existing .prd_runner state directory (if present) and return the new path.
-    """
+    """Archive an existing `.prd_runner` state directory (if present) and return the new path."""
     state_dir = project_dir / STATE_DIR_NAME
     if not state_dir.exists():
         return state_dir

@@ -1,3 +1,5 @@
+"""Define runner defaults, state file names, and shared constant values."""
+
 STATE_DIR_NAME = ".prd_runner"
 RUN_STATE_FILE = "run_state.yaml"
 TASK_QUEUE_FILE = "task_queue.yaml"

@@ -1,3 +1,5 @@
+"""Validate runner artifacts (phase plans, task queues, implementation plans, and reviews)."""
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -228,6 +230,14 @@ def _validate_simple_review_data(
 
 
 def validate_phase_plan_schema(plan_data: dict[str, Any]) -> list[str]:
+    """Validate the basic schema for `phase_plan.yaml`.
+
+    Args:
+        plan_data: Parsed phase plan payload.
+
+    Returns:
+        A list of human-readable issue strings. An empty list means valid.
+    """
     issues: list[str] = []
     phases = plan_data.get("phases")
     if phases is None:
@@ -264,7 +274,7 @@ def validate_phase_plan_schema(plan_data: dict[str, Any]) -> list[str]:
         if acceptance is not None and not isinstance(acceptance, list):
             issues.append(f"phase_plan.yaml: phases[{idx}].acceptance_criteria must be a list of strings when provided")
 
-    counts = defaultdict(int)
+    counts: defaultdict[str, int] = defaultdict(int)
     for pid in ids:
         counts[pid] += 1
     duplicates = [pid for pid, c in counts.items() if c > 1]
@@ -288,6 +298,15 @@ def validate_phase_plan_schema(plan_data: dict[str, Any]) -> list[str]:
 
 
 def validate_task_queue_schema(queue_data: dict[str, Any], phase_ids: set[str]) -> list[str]:
+    """Validate the basic schema for `task_queue.yaml`.
+
+    Args:
+        queue_data: Parsed task queue payload.
+        phase_ids: Set of known phase ids used to validate task references.
+
+    Returns:
+        A list of human-readable issue strings. An empty list means valid.
+    """
     issues: list[str] = []
     tasks = queue_data.get("tasks")
     if tasks is None:
@@ -340,7 +359,7 @@ def validate_task_queue_schema(queue_data: dict[str, Any], phase_ids: set[str]) 
                     f"task_queue.yaml: tasks[{idx}] references unknown phase_id {phase_id!r}"
                 )
 
-    counts = defaultdict(int)
+    counts: defaultdict[str, int] = defaultdict(int)
     for tid in ids:
         counts[tid] += 1
     duplicates = [tid for tid, c in counts.items() if c > 1]

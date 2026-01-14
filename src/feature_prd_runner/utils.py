@@ -1,3 +1,5 @@
+"""Provide utility helpers for hashing, parsing, coercion, and validation."""
+
 from __future__ import annotations
 
 import hashlib
@@ -113,14 +115,25 @@ def _pid_is_running(pid_value: Any) -> bool:
         import ctypes.wintypes
 
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = ctypes.windll.kernel32.OpenProcess(
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            return False
+        kernel32 = getattr(windll, "kernel32", None)
+        if kernel32 is None:
+            return False
+        open_process = getattr(kernel32, "OpenProcess", None)
+        close_handle = getattr(kernel32, "CloseHandle", None)
+        if open_process is None or close_handle is None:
+            return False
+
+        handle = open_process(
             PROCESS_QUERY_LIMITED_INFORMATION,
             0,
             ctypes.wintypes.DWORD(pid),
         )
         if not handle:
             return False
-        ctypes.windll.kernel32.CloseHandle(handle)
+        close_handle(handle)
         return True
     except Exception:
         # If we can't determine, treat as NOT running to avoid deadlocks.

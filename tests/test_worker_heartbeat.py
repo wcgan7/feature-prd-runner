@@ -1,3 +1,5 @@
+"""Test worker heartbeat detection and timeout behavior."""
+
 import json
 import sys
 from pathlib import Path
@@ -11,6 +13,7 @@ from feature_prd_runner.worker import _run_codex_worker
 
 
 def test_worker_uses_output_as_heartbeat(tmp_path: Path) -> None:
+    """Ensure stdout/stderr activity counts as liveness when heartbeats lag."""
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
 
@@ -43,4 +46,3 @@ def test_worker_uses_output_as_heartbeat(tmp_path: Path) -> None:
 
     assert result["exit_code"] == 0
     assert result["no_heartbeat"] is False
-

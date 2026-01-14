@@ -1,3 +1,5 @@
+"""Provide small git helpers used by the runner."""
+
 from __future__ import annotations
 
 import fnmatch
@@ -232,9 +234,7 @@ def _validate_changes_for_mode(
     introduced_changes: list[str],
     allowed_files: Optional[list[str]] = None,
 ) -> tuple[bool, str, list[str]]:
-    """
-    Returns (ok, error_message, disallowed_paths).
-    """
+    """Return (ok, error_message, disallowed_paths)."""
     # PLAN / PLAN_IMPL / REVIEW: no repo changes outside .prd_runner (and optional .gitignore addition)
     if mode in {"plan", "plan_impl", "review"}:
         non_runner = _filter_non_prd_runner_changes(introduced_changes)

@@ -1,11 +1,15 @@
+"""Define durable task state and structured event models emitted by the runner."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 
 class TaskLifecycle(str, Enum):
+    """Represent the high-level lifecycle state of a task."""
+
     READY = "ready"
     RUNNING = "running"
     WAITING_HUMAN = "waiting_human"
@@ -14,6 +18,8 @@ class TaskLifecycle(str, Enum):
 
 
 class TaskStep(str, Enum):
+    """Enumerate the runner step currently being executed for a task."""
+
     RESUME_PROMPT = "resume_prompt"
     PLAN_IMPL = "plan_impl"
     IMPLEMENT = "implement"
@@ -23,6 +29,8 @@ class TaskStep(str, Enum):
 
 
 class PromptMode(str, Enum):
+    """Describe the prompt intent used for worker runs."""
+
     IMPLEMENT = "implement"
     FIX_TESTS = "fix_tests"
     FIX_VERIFY = "fix_verify"
@@ -32,6 +40,8 @@ class PromptMode(str, Enum):
 
 @dataclass
 class TaskState:
+    """Store durable per-task state used to resume and route runner execution."""
+
     id: str
     type: str = "implement"
     phase_id: Optional[str] = None
@@ -83,6 +93,17 @@ class TaskState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TaskState":
+        """Create a `TaskState` from a persisted dictionary.
+
+        Args:
+            data: Raw task state payload from durable storage.
+
+        Returns:
+            A `TaskState` instance with unknown keys preserved in `extra`.
+
+        Raises:
+            ValueError: If numeric fields cannot be coerced to integers.
+        """
         extra = dict(data)
 
         def _pop(key: str, default: Any = None) -> Any:
@@ -147,6 +168,11 @@ class TaskState:
         )
 
     def legacy_status(self) -> str:
+        """Return a legacy `status` string for backwards-compatible consumers.
+
+        Returns:
+            A legacy status string (e.g., `done`, `blocked`, `implementing`).
+        """
         if self.lifecycle == TaskLifecycle.DONE:
             return "done"
         if self.lifecycle == TaskLifecycle.WAITING_HUMAN:
@@ -155,9 +181,14 @@ class TaskState:
             return "cancelled"
         if self.step == TaskStep.IMPLEMENT:
             return "implementing"
-        return self.step.value
+        return str(self.step.value)
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the task state as a plain dictionary for persistence.
+
+        Returns:
+            A dictionary suitable for writing to `task_queue.yaml`.
+        """
         data = dict(self.extra)
         data.update(
             {
@@ -208,9 +239,16 @@ class TaskState:
 
 @dataclass
 class Event:
+    """Base class for structured events emitted by the runner."""
+
     event_type: str = field(init=False, default="event")
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the event as a dictionary, converting enums to values.
+
+        Returns:
+            A JSON-friendly dictionary representation of the event.
+        """
         def _serialize(value: Any) -> Any:
             if isinstance(value, Enum):
                 return value.value
@@ -220,13 +258,15 @@ class Event:
                 return {key: _serialize(val) for key, val in value.items()}
             return value
 
-        data = _serialize(asdict(self))
+        data = cast(dict[str, Any], _serialize(asdict(self)))
         data["event_type"] = self.event_type
         return data
 
 
 @dataclass
 class WorkerSucceeded(Event):
+    """Represent a successful worker run for a specific step."""
+
     step: TaskStep
     run_id: str
     changed_files: list[str] = field(default_factory=list)
@@ -242,6 +282,8 @@ class WorkerSucceeded(Event):
 
 @dataclass
 class WorkerFailed(Event):
+    """Represent a failed worker run for a specific step."""
+
     step: TaskStep
     run_id: str
     error_type: str
@@ -257,6 +299,8 @@ class WorkerFailed(Event):
 
 @dataclass
 class ProgressHumanBlockers(Event):
+    """Capture human-blocking issues reported by the worker."""
+
     run_id: str
     issues: list[str]
     next_steps: list[str]
@@ -266,6 +310,8 @@ class ProgressHumanBlockers(Event):
 
 @dataclass
 class AllowlistViolation(Event):
+    """Report that the worker changed files outside the allowed allowlist."""
+
     run_id: str
     step: TaskStep
     disallowed_paths: list[str]
@@ -277,6 +323,8 @@ class AllowlistViolation(Event):
 
 @dataclass
 class NoIntroducedChanges(Event):
+    """Report that the worker introduced no changes for a step."""
+
     run_id: str
     step: TaskStep
     repo_dirty: bool
@@ -287,6 +335,8 @@ class NoIntroducedChanges(Event):
 
 @dataclass
 class VerificationResult(Event):
+    """Capture the result of running VERIFY-stage commands."""
+
     run_id: str
     passed: bool
     command: Optional[str]
@@ -303,6 +353,8 @@ class VerificationResult(Event):
 
 @dataclass
 class ReviewResult(Event):
+    """Capture the result of validating a review output payload."""
+
     run_id: str
     valid: bool
     blocking_severities_present: bool
@@ -316,6 +368,8 @@ class ReviewResult(Event):
 
 @dataclass
 class CommitResult(Event):
+    """Capture the result of COMMIT-stage git operations."""
+
     run_id: str
     committed: bool
     pushed: bool
@@ -328,6 +382,8 @@ class CommitResult(Event):
 
 @dataclass
 class ResumePromptResult(Event):
+    """Capture the result of a standalone resume prompt action."""
+
     run_id: str
     succeeded: bool
     error_detail: Optional[str] = None

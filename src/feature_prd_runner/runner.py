@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""
-Feature PRD Runner (FSM)
-========================
+"""Provide the CLI entrypoint and subcommands for Feature PRD Runner.
 
-Coordinator entrypoint for planning, implementing, verifying, reviewing,
-and committing changes using a step-based FSM.
+Coordinates planning, implementing, verifying, reviewing, and committing changes using a step-based FSM.
 """
 
 from __future__ import annotations
@@ -13,6 +10,7 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -133,6 +131,34 @@ def _build_run_parser() -> argparse.ArgumentParser:
         choices=["off", "warn", "install", "add-config"],
         default="off",
         help="Ruff helper behavior for python verify profile (default: off)",
+    )
+    parser.add_argument(
+        "--ensure-deps",
+        type=str,
+        choices=["off", "install"],
+        default="off",
+        help=(
+            "Dependency helper behavior during VERIFY (default: off). "
+            "When enabled, runs an install command before verification."
+        ),
+    )
+    parser.add_argument(
+        "--ensure-deps-command",
+        type=str,
+        default=None,
+        help=(
+            "Command run when --ensure-deps install is enabled. "
+            'Default: python -m pip install -e ".[test]" (fallback to python -m pip install -e .)'
+        ),
+    )
+    parser.add_argument(
+        "--new-branch",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help=(
+            "Create/switch to a new git branch at the start of the run, then keep using it for all phases "
+            "(default: True)"
+        ),
     )
     parser.add_argument(
         "--max-iterations",
@@ -578,7 +604,9 @@ def _status_command(project_dir: Path, *, as_json: bool = False) -> int:
     return 2 if errors else 0
 
 
-def _load_state_for_control_plane(project_dir: Path) -> tuple[dict, dict, dict, list[str]]:
+def _load_state_for_control_plane(
+    project_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[str]]:
     state_dir = project_dir / STATE_DIR_NAME
     run_state_path = state_dir / "run_state.yaml"
     task_queue_path = state_dir / "task_queue.yaml"
@@ -776,7 +804,7 @@ def _resume_command(
     return 0
 
 
-def _append_task_context(task: dict, note: str) -> None:
+def _append_task_context(task: dict[str, Any], note: str) -> None:
     context = task.get("context", [])
     if not isinstance(context, list):
         context = [str(context)]
@@ -791,7 +819,7 @@ _CONTROL_PLANE_STEP_INDEX = {name: idx for idx, name in enumerate(_CONTROL_PLANE
 
 
 def _control_plane_run_active_guard(
-    run_state: dict,
+    run_state: dict[str, Any],
     runs_dir: Path,
     *,
     force: bool,
@@ -1178,7 +1206,7 @@ def _dry_run_command(project_dir: Path, prd_path: Path | None, *, as_json: bool 
     runs_dir = state_dir / "runs"
     gitignore_path = project_dir / ".gitignore"
 
-    result: dict[str, object] = {
+    result: dict[str, Any] = {
         "project_dir": str(project_dir),
         "state_dir": str(state_dir),
         "dry_run_guarantees": {
@@ -1224,7 +1252,9 @@ def _dry_run_command(project_dir: Path, prd_path: Path | None, *, as_json: bool 
     phase_ids = {str(p.get("id")).strip() for p in phases if isinstance(p, dict) and str(p.get("id") or "").strip()}
     schema_issues = validate_phase_plan_schema(plan) + validate_task_queue_schema(queue, phase_ids=phase_ids)
     if schema_issues:
-        result["errors"] = list(result.get("errors") or []) + schema_issues
+        existing = result.get("errors")
+        existing_errors = existing if isinstance(existing, list) else []
+        result["errors"] = [str(item) for item in existing_errors] + schema_issues
 
     # Best-effort: indicate whether a real run would modify .gitignore to ignore .prd_runner.
     if _git_is_repo(project_dir):
@@ -1244,7 +1274,9 @@ def _dry_run_command(project_dir: Path, prd_path: Path | None, *, as_json: bool 
                 has_entry = False
             if not has_entry:
                 result["would_write_repo_files"] = True
-                result["warnings"] = list(result.get("warnings") or []) + [
+                existing = result.get("warnings")
+                existing_warnings = existing if isinstance(existing, list) else []
+                result["warnings"] = [str(item) for item in existing_warnings] + [
                     "Would add .prd_runner/ to .gitignore (repo appears clean)"
                 ]
 
@@ -1258,11 +1290,15 @@ def _dry_run_command(project_dir: Path, prd_path: Path | None, *, as_json: bool 
             except Exception:
                 stored_resolved = None
             if stored_resolved and stored_resolved != prd_path:
-                result["errors"] = list(result.get("errors") or []) + [
+                existing = result.get("errors")
+                existing_errors = existing if isinstance(existing, list) else []
+                result["errors"] = [str(item) for item in existing_errors] + [
                     f"PRD mismatch: stored={stored_resolved} requested={prd_path}"
                 ]
         if stored_prd_hash and current_hash and str(stored_prd_hash).strip() != current_hash:
-            result["errors"] = list(result.get("errors") or []) + [
+            existing = result.get("errors")
+            existing_errors = existing if isinstance(existing, list) else []
+            result["errors"] = [str(item) for item in existing_errors] + [
                 "PRD content hash mismatch (would block without --reset-state)"
             ]
 
@@ -1319,12 +1355,16 @@ def _dry_run_command(project_dir: Path, prd_path: Path | None, *, as_json: bool 
     if as_json:
         import json
         sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        return 2 if (result.get("errors") or []) else 0
+        errors_value = result.get("errors")
+        errors_list = errors_value if isinstance(errors_value, list) else []
+        return 2 if errors_list else 0
 
     sys.stdout.write(f"Project: {project_dir}\n")
     sys.stdout.write(f"State:   {state_dir}\n")
-    errs = result.get("errors") or []
-    warns = result.get("warnings") or []
+    errors_value = result.get("errors")
+    warnings_value = result.get("warnings")
+    errs = errors_value if isinstance(errors_value, list) else []
+    warns = warnings_value if isinstance(warnings_value, list) else []
     if errs:
         sys.stdout.write("Errors:\n")
         for e in errs:
@@ -1450,6 +1490,15 @@ def _doctor_command(project_dir: Path, prd_path: Path | None, *, check_codex: bo
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run the `feature-prd-runner` CLI.
+
+    Args:
+        argv: Optional argument list (excluding the executable name). When omitted,
+            uses `sys.argv[1:]`.
+
+    Raises:
+        SystemExit: Raised to return a process exit code for CLI subcommands.
+    """
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv:
         if argv[0] == "status":
@@ -1542,6 +1591,9 @@ def main(argv: list[str] | None = None) -> None:
         typecheck_command=args.typecheck_command,
         verify_profile=args.verify_profile,
         ensure_ruff=args.ensure_ruff,
+        ensure_deps=args.ensure_deps,
+        ensure_deps_command=args.ensure_deps_command,
+        new_branch=args.new_branch,
         custom_prompt=args.custom_prompt,
         stop_on_blocking_issues=args.stop_on_blocking_issues,
         resume_blocked=args.resume_blocked,

@@ -1,8 +1,10 @@
+"""Execute VERIFY-stage commands (format, lint, typecheck, tests) and capture results."""
+
 from __future__ import annotations
 
 import shlex
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -23,7 +25,7 @@ from ..signals import (
     infer_suspect_source_files,
 )
 from ..tasks import _format_log_path, _lint_log_path, _resolve_test_command, _tests_log_path, _typecheck_log_path
-from ..utils import _now_iso
+from ..utils import _now_iso, _sanitize_phase_id
 from ..worker import _capture_test_result_snapshot, _run_command
 from ..io_utils import _read_text_window
 
@@ -60,25 +62,52 @@ def _is_pytest_command(command: str) -> bool:
 
     return False
 
-
-
 def run_verify_action(
     *,
     project_dir: Path,
     artifacts_dir: Path,
     run_dir: Path,
-    phase: Optional[dict],
-    task: dict,
+    phase: dict[str, Any] | None,
+    task: dict[str, Any],
     run_id: str,
-    plan_data: dict,
+    plan_data: dict[str, Any],
     default_test_command: Optional[str],
     default_format_command: Optional[str] = None,
     default_lint_command: Optional[str] = None,
     default_typecheck_command: Optional[str] = None,
     verify_profile: str = "none",
     ensure_ruff: str = "off",
+    ensure_deps: str = "off",
+    ensure_deps_command: Optional[str] = None,
     timeout_seconds: int,
 ) -> VerificationResult:
+    """Run verification stages for a phase and persist verification artifacts.
+
+    The VERIFY stage can run up to four commands in order:
+    format check, lint, typecheck, and tests. The first failing stage short-circuits
+    the remainder.
+
+    Args:
+        project_dir: Repository root directory.
+        artifacts_dir: Directory where verification logs are written.
+        run_dir: Per-run directory used to store excerpts/manifests.
+        phase: Optional phase metadata.
+        task: Current task payload.
+        run_id: Current run identifier.
+        plan_data: Parsed implementation plan used to determine allowed files.
+        default_test_command: Default test command when not provided by phase/task/config.
+        default_format_command: Default format check command.
+        default_lint_command: Default lint command.
+        default_typecheck_command: Default typecheck command.
+        verify_profile: Optional profile name that can auto-detect common tools.
+        ensure_ruff: Ruff helper mode (warn/install/add-config/off).
+        ensure_deps: Dependency helper mode (install/off).
+        ensure_deps_command: Optional dependency install command override.
+        timeout_seconds: Timeout in seconds for each stage.
+
+    Returns:
+        A `VerificationResult` event describing the outcome.
+    """
     phase_id = str(phase.get("id") if phase else task.get("phase_id") or task.get("id"))
     allowed_files = build_allowed_files(plan_data)
 
@@ -88,11 +117,15 @@ def run_verify_action(
     cfg_format_command = verify_cfg.get("format_command") if isinstance(verify_cfg.get("format_command"), str) else None
     cfg_lint_command = verify_cfg.get("lint_command") if isinstance(verify_cfg.get("lint_command"), str) else None
     cfg_typecheck_command = verify_cfg.get("typecheck_command") if isinstance(verify_cfg.get("typecheck_command"), str) else None
+    cfg_ensure_deps_command = (
+        verify_cfg.get("ensure_deps_command") if isinstance(verify_cfg.get("ensure_deps_command"), str) else None
+    )
 
     test_command = _resolve_test_command(phase, task, default_test_command or cfg_test_command)
     format_command = default_format_command or cfg_format_command
     lint_command = default_lint_command or cfg_lint_command
     typecheck_command = default_typecheck_command or cfg_typecheck_command
+    deps_command = ensure_deps_command or cfg_ensure_deps_command
 
     warnings: list[str] = []
     if config_err:
@@ -103,6 +136,9 @@ def run_verify_action(
         test_command,
         phase_id,
     )
+
+    stages: list[dict[str, Any]] = []
+    failing_stage: dict[str, Any] | None = None
 
     def _tool_exists(name: str) -> bool:
         from shutil import which
@@ -119,7 +155,7 @@ def run_verify_action(
             cfg_path.write_text('line-length = 100\n')
         return f"{cmd} --config {cfg_path}"
 
-    def _run_stage(stage: str, command: str, log_path: Path) -> dict:
+    def _run_stage(stage: str, command: str, log_path: Path) -> dict[str, Any]:
         result = _run_command(command, project_dir, log_path, timeout_seconds=timeout_seconds)
         snapshot = _capture_test_result_snapshot(
             command=command,
@@ -141,6 +177,71 @@ def run_verify_action(
             "captured_at": snapshot.get("captured_at", _now_iso()),
         }
 
+    def _save_and_return_failure(
+        *,
+        stage: dict[str, Any],
+        error_type: str,
+        log_tail: str,
+    ) -> VerificationResult:
+        _save_data(
+            run_dir / "verify_manifest.json",
+            {
+                "run_id": run_id,
+                "task_id": str(task.get("id")),
+                "phase_id": str(task.get("phase_id") or task.get("id") or ""),
+                "step": "verify",
+                "passed": False,
+                "error_type": error_type,
+                "needs_allowlist_expansion": False,
+                "failing_paths": [],
+                "allowlist_used": allowed_files,
+                "verify_profile": verify_profile,
+                "ensure_ruff": ensure_ruff,
+                "ensure_deps": ensure_deps,
+                "ensure_deps_command": deps_command,
+                "warnings": warnings,
+                "config_error": config_err,
+                "stages": stages,
+                "failing_stage": stage,
+            },
+        )
+        return VerificationResult(
+            run_id=run_id,
+            passed=False,
+            command=str(stage.get("command") or ""),
+            exit_code=int(stage.get("exit_code") or 1),
+            log_path=str(stage.get("log_path") or "") if stage.get("log_path") else None,
+            log_tail=str(log_tail or ""),
+            captured_at=str(stage.get("captured_at") or _now_iso()),
+            failing_paths=[],
+            needs_allowlist_expansion=False,
+            error_type=error_type,
+        )
+
+    # Optional dependency install helper stage (opt-in).
+    if ensure_deps == "install" and not failing_stage:
+        install_cmd = (deps_command or "").strip()
+        if not install_cmd:
+            install_cmd = 'python -m pip install -e ".[test]"'
+        ensure_log = artifacts_dir / f"ensure_deps_{_sanitize_phase_id(phase_id)}.log"
+        res = _run_stage("ensure_deps", install_cmd, ensure_log)
+        stages.append(res)
+        if res["exit_code"] != 0 or res["timed_out"]:
+            # Fallback when default extra isn't present.
+            if (deps_command or "").strip() == "" and ".[test]" in install_cmd:
+                fallback_cmd = "python -m pip install -e ."
+                fallback_log = artifacts_dir / f"ensure_deps_fallback_{_sanitize_phase_id(phase_id)}.log"
+                res2 = _run_stage("ensure_deps_fallback", fallback_cmd, fallback_log)
+                stages.append(res2)
+                if res2["exit_code"] != 0 or res2["timed_out"]:
+                    tail = str(res2.get("log_tail") or "").strip()
+                    detail = tail or f"Dependency install failed (see {res2.get('log_path')})"
+                    return _save_and_return_failure(stage=res2, error_type="deps_install_failed", log_tail=detail)
+            else:
+                tail = str(res.get("log_tail") or "").strip()
+                detail = tail or f"Dependency install failed (see {res.get('log_path')})"
+                return _save_and_return_failure(stage=res, error_type="deps_install_failed", log_tail=detail)
+
     # Apply python profile defaults (opt-in).
     if verify_profile == "python":
         if not lint_command and _tool_exists("ruff"):
@@ -160,6 +261,9 @@ def run_verify_action(
         isinstance(cmd, str) and cmd.strip().startswith("ruff")
         for cmd in [format_command, lint_command]
     )
+    ruff_install_attempted = False
+    ruff_install_failed = False
+    ruff_install_log_path: str | None = None
     if ruff_needed and not _tool_exists("ruff"):
         if ensure_ruff == "warn":
             warnings.append("ruff not found; ruff-based format/lint will be skipped")
@@ -169,27 +273,35 @@ def run_verify_action(
                 lint_command = None
         elif ensure_ruff == "install":
             # Best-effort install into current environment (may require network).
-            install = _run_stage("ensure_ruff", "python -m pip install ruff", _lint_log_path(artifacts_dir, phase_id))
-            if install["exit_code"] != 0:
+            ruff_install_attempted = True
+            ensure_log = artifacts_dir / f"ensure_ruff_{_sanitize_phase_id(phase_id)}.log"
+            install = _run_stage("ensure_ruff", "python -m pip install ruff", ensure_log)
+            ruff_install_log_path = str(install.get("log_path") or "")
+            stages.append(install)
+            if int(install.get("exit_code") or 0) != 0:
+                ruff_install_failed = True
                 warnings.append("ruff install failed; ruff-based format/lint will fail")
             # re-check
             if not _tool_exists("ruff"):
                 warnings.append("ruff still not available after install attempt")
         # add-config does not install; it only affects config when ruff exists.
 
-    stages: list[dict] = []
-    failing_stage: dict | None = None
-
     if isinstance(format_command, str) and format_command.strip():
         cmd = _maybe_add_ruff_config(format_command.strip())
         if cmd.startswith("ruff") and not _tool_exists("ruff"):
+            tail = "ruff not found"
+            if ruff_install_attempted:
+                if ruff_install_failed and ruff_install_log_path:
+                    tail = f"ruff not found (auto-install failed; see {ruff_install_log_path})"
+                else:
+                    tail = "ruff not found (auto-install attempted)"
             failing_stage = {
                 "stage": "format",
                 "command": cmd,
                 "exit_code": 127,
                 "timed_out": False,
                 "log_path": None,
-                "log_tail": "ruff not found",
+                "log_tail": tail,
                 "excerpt_path": None,
                 "excerpt_truncated": False,
                 "captured_at": _now_iso(),
@@ -203,13 +315,19 @@ def run_verify_action(
     if not failing_stage and isinstance(lint_command, str) and lint_command.strip():
         cmd = _maybe_add_ruff_config(lint_command.strip())
         if cmd.startswith("ruff") and not _tool_exists("ruff"):
+            tail = "ruff not found"
+            if ruff_install_attempted:
+                if ruff_install_failed and ruff_install_log_path:
+                    tail = f"ruff not found (auto-install failed; see {ruff_install_log_path})"
+                else:
+                    tail = "ruff not found (auto-install attempted)"
             failing_stage = {
                 "stage": "lint",
                 "command": cmd,
                 "exit_code": 127,
                 "timed_out": False,
                 "log_path": None,
-                "log_tail": "ruff not found",
+                "log_tail": tail,
                 "excerpt_path": None,
                 "excerpt_truncated": False,
                 "captured_at": _now_iso(),
@@ -284,6 +402,8 @@ def run_verify_action(
                 "passed": True,
                 "warnings": warnings,
                 "config_error": config_err,
+                "ensure_deps": ensure_deps,
+                "ensure_deps_command": deps_command,
                 "stages": [],
             },
         )
@@ -350,8 +470,8 @@ def run_verify_action(
         command=str(stage_for_event.get("command") or "") if stage_for_event else None,
         exit_code=int(stage_for_event.get("exit_code") or (0 if passed else 1)) if stage_for_event else 0,
         log_path=str(stage_for_event.get("log_path") or "") if stage_for_event else None,
-        log_tail=str(stage_for_event.get("log_tail") or ""),
-        captured_at=str(stage_for_event.get("captured_at") or _now_iso()),
+        log_tail=str(stage_for_event.get("log_tail") or "") if stage_for_event else "",
+        captured_at=str(stage_for_event.get("captured_at") or _now_iso()) if stage_for_event else _now_iso(),
         failing_paths=expansion_paths,
         needs_allowlist_expansion=bool(needs_expansion),
         error_type=error_type,
@@ -371,6 +491,8 @@ def run_verify_action(
             "allowlist_used": allowed_files,
             "verify_profile": verify_profile,
             "ensure_ruff": ensure_ruff,
+            "ensure_deps": ensure_deps,
+            "ensure_deps_command": deps_command,
             "warnings": warnings,
             "config_error": config_err,
             "stages": stages,

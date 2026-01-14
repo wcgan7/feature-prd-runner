@@ -52,6 +52,16 @@ If you prefer module invocation:
 python -m feature_prd_runner.runner --project-dir . --prd-file ./docs/feature_prd.md
 ```
 
+If you prefer calling the Python API:
+
+```python
+from pathlib import Path
+
+from feature_prd_runner.orchestrator import run_feature_prd
+
+run_feature_prd(project_dir=Path("."), prd_path=Path("./docs/feature_prd.md"))
+```
+
 ## Usage
 
 The runner is a small FSM with these steps:
@@ -147,6 +157,9 @@ Common options:
 - `--typecheck-command "..."`: optional typecheck command run during `VERIFY` (before tests).
 - `--verify-profile {none,python}`: enables preset defaults for Python projects (auto-detects `ruff`/`pytest`/`mypy`).
 - `--ensure-ruff {off,warn,install,add-config}`: helper behavior when using ruff-based commands (default: off).
+- `--ensure-deps {off,install}`: optional helper to run an install step before verification (default: off).
+- `--ensure-deps-command "..."`: install command used by `--ensure-deps install` (defaults to `python -m pip install -e ".[test]"` with fallback to `python -m pip install -e .`).
+- `--new-branch` / `--no-new-branch`: create/switch to a new git branch once at the start of the run (default: True). If `--no-new-branch`, you must already be on a named branch (not detached HEAD).
 - `--codex-command "..."`: Codex CLI command used to run the worker (default: `codex exec -`).
 - `--shift-minutes N`: timebox per worker run.
 - `--reset-state`: archive and recreate `.prd_runner/` before starting.

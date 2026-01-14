@@ -1,3 +1,5 @@
+"""Implement the main coordination loop for plan/implement/verify/review/commit."""
+
 from __future__ import annotations
 
 import os
@@ -6,7 +8,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -41,6 +43,7 @@ from .fsm import reduce_task
 from .git_utils import (
     _ensure_branch,
     _ensure_gitignore,
+    _git_current_branch,
     _git_has_changes,
     _git_is_repo,
     _gitignore_change_is_prd_runner_only,
@@ -95,6 +98,18 @@ from .utils import _hash_file, _now_iso
 from .git_utils import _git_changed_files
 from .constants import IGNORED_REVIEW_PATH_PREFIXES
 from .validation import validate_phase_plan_schema, validate_task_queue_schema
+
+
+def _sanitize_branch_fragment(value: str) -> str:
+    value = "".join(ch if (ch.isalnum() or ch in {"-", "_", "."}) else "-" for ch in (value or "").strip())
+    value = value.strip("-").strip(".")
+    return value or "run"
+
+
+def _default_run_branch(prd_path: Path) -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stem = _sanitize_branch_fragment(prd_path.stem)
+    return f"feature/{stem}-{ts}"
 
 
 def _write_blocked_report(
@@ -157,6 +172,9 @@ def run_feature_prd(
     typecheck_command: Optional[str] = None,
     verify_profile: str = "none",
     ensure_ruff: str = "off",
+    ensure_deps: str = "off",
+    ensure_deps_command: Optional[str] = None,
+    new_branch: bool = True,
     custom_prompt: Optional[str] = None,
     stop_on_blocking_issues: bool = DEFAULT_STOP_ON_BLOCKING_ISSUES,
     resume_blocked: bool = True,
@@ -166,6 +184,42 @@ def run_feature_prd(
     commit_enabled: bool = True,
     push_enabled: bool = True,
 ) -> None:
+    """Run the Feature PRD Runner coordination loop.
+
+    This function is the core entrypoint used by the CLI. It:
+    - Initializes durable state under `.prd_runner/`
+    - Plans phases/tasks from the PRD (when needed)
+    - Executes each task step using the Codex worker
+    - Runs verification and review, then optionally commits and pushes
+
+    Args:
+        project_dir: Target project directory (git repository root).
+        prd_path: Path to the feature PRD file.
+        codex_command: Codex CLI command template used to run the worker.
+        max_iterations: Optional hard limit on coordination loop iterations.
+        shift_minutes: Timebox per worker run.
+        heartbeat_seconds: Expected worker heartbeat interval.
+        heartbeat_grace_seconds: Allowed heartbeat staleness before termination.
+        max_attempts: Maximum attempts per task before blocking.
+        max_auto_resumes: Maximum automatic resume attempts for blocked tasks.
+        test_command: Default test command to run during verification.
+        format_command: Default format check command to run during verification.
+        lint_command: Default lint command to run during verification.
+        typecheck_command: Default typecheck command to run during verification.
+        verify_profile: Optional verification profile preset.
+        ensure_ruff: Ruff helper behavior for Python verification (off/warn/install/add-config).
+        ensure_deps: Dependency helper behavior during verification (off/install).
+        ensure_deps_command: Optional command used when `ensure_deps` is enabled.
+        new_branch: Whether to create/switch to a new run branch at startup.
+        custom_prompt: Optional standalone instructions to run before the normal loop.
+        stop_on_blocking_issues: Whether to stop immediately on blocking issues.
+        resume_blocked: Whether to auto-resume the most recent blocked task at startup.
+        simple_review: Whether to use the simplified review schema/prompt.
+        reset_state: Whether to archive and recreate `.prd_runner/` before starting.
+        require_clean: Whether to require a clean git worktree (outside `.prd_runner/`).
+        commit_enabled: Whether to perform `git commit` during the COMMIT step.
+        push_enabled: Whether to perform `git push` during the COMMIT step.
+    """
     _require_yaml()
     project_dir = project_dir.resolve()
     prd_path = prd_path.resolve()
@@ -512,7 +566,7 @@ def run_feature_prd(
         task_id: str,
         phase_id: Optional[str],
         branch: Optional[str],
-        task: dict,
+        task: dict[str, Any],
         plan_path: Optional[Path],
     ) -> None:
         logger.info(
@@ -567,10 +621,10 @@ def run_feature_prd(
             if event_step == TaskStep.IMPLEMENT:
                 manifest_path = run_dir / "manifest.json"
                 if manifest_path.exists():
-                    manifest = _load_data(manifest_path, {})
-                    intro = manifest.get("introduced_changes") or []
+                    manifest_data = _load_data(manifest_path, {})
+                    intro = manifest_data.get("introduced_changes") or []
                     logger.info("Introduced changes: {} files (sample={})", len(intro), intro[:8])
-                    disallowed = manifest.get("disallowed_files") or []
+                    disallowed = manifest_data.get("disallowed_files") or []
                     if disallowed:
                         logger.warning("Disallowed changes: {}", disallowed)
 
@@ -635,16 +689,16 @@ def run_feature_prd(
             _finalize_run_state(paths, lock_path, status="idle", last_error="Reached max iterations")
             break
 
-        blocked_tasks_snapshot = None
+        blocked_tasks_snapshot: list[dict[str, Any]] | None = None
         manually_resumed = False
-        next_task = None
-        run_id = None
-        phase = None
-        phase_id = None
-        task_id = None
-        task_type = None
-        task_step = None
-        branch = None
+        next_task: dict[str, Any] | None = None
+        run_id: str | None = None
+        phase: dict[str, Any] | None = None
+        phase_id: str | None = None
+        task_id: str | None = None
+        task_type: str | None = None
+        task_step: str | None = None
+        branch: str | None = None
 
         with FileLock(lock_path):
             run_state, run_state_err = _load_data_with_error(paths["run_state"], {})
@@ -683,6 +737,10 @@ def run_feature_prd(
             phases = _normalize_phases(plan)
             queue["tasks"] = tasks
             plan["phases"] = phases
+            branch = str(run_state.get("branch") or "").strip() or None
+            if not new_branch:
+                current = _git_current_branch(project_dir) or ""
+                branch = current if current and current != "HEAD" else None
 
             phase_schema_issues = validate_phase_plan_schema(plan)
             phase_ids = {
@@ -726,7 +784,6 @@ def run_feature_prd(
                         "current_task_id": None,
                         "current_phase_id": None,
                         "run_id": None,
-                        "branch": None,
                         "last_error": "Previous run marked stale; resuming",
                         "updated_at": _now_iso(),
                         "coordinator_pid": None,
@@ -765,7 +822,6 @@ def run_feature_prd(
                             "current_task_id": None,
                             "current_phase_id": None,
                             "run_id": None,
-                            "branch": None,
                             "last_error": None,
                             "updated_at": _now_iso(),
                             "coordinator_pid": None,
@@ -786,7 +842,6 @@ def run_feature_prd(
                             "status": "blocked",
                             "current_task_id": None,
                             "current_phase_id": None,
-                            "branch": None,
                             "last_error": _summarize_blocking_tasks(blocked_tasks),
                             "updated_at": _now_iso(),
                         }
@@ -808,7 +863,6 @@ def run_feature_prd(
                             "current_task_id": None,
                             "current_phase_id": None,
                             "run_id": None,
-                            "branch": None,
                             "updated_at": _now_iso(),
                             "coordinator_pid": None,
                             "worker_pid": None,
@@ -885,7 +939,6 @@ def run_feature_prd(
                                 "current_task_id": None,
                                 "current_phase_id": None,
                                 "run_id": None,
-                                "branch": None,
                                 "last_error": "Phase not found for task",
                                 "updated_at": _now_iso(),
                                 "coordinator_pid": None,
@@ -897,49 +950,107 @@ def run_feature_prd(
                         blocked_tasks_snapshot = [dict(next_task)]
 
                     if phase and not blocked_tasks_snapshot:
-                        branch = phase.get("branch") or next_task.get("branch") or f"feature/{phase_id or task_id}"
-                        next_task["branch"] = branch
-                        try:
-                            _ensure_branch(project_dir, branch)
-                            run_state["branch"] = branch
-                            run_state["updated_at"] = _now_iso()
-                            _save_data(paths["run_state"], run_state)
-                        except subprocess.CalledProcessError as exc:
-                            msg = f"Failed to checkout branch {branch}: {exc}"
-                            next_task["lifecycle"] = TaskLifecycle.WAITING_HUMAN.value
-                            next_task["block_reason"] = "GIT_CHECKOUT_FAILED"
-                            next_task["last_error"] = msg
-                            next_task["last_error_type"] = "git_checkout_failed"
-                            next_task["status"] = TASK_STATUS_BLOCKED
-                            _record_blocked_intent(
-                                next_task,
-                                task_status=task_step,
-                                task_type=task_type,
-                                phase_id=phase_id or next_task.get("id"),
-                                branch=branch,
-                                test_command=next_task.get("test_command"),
-                                run_id=None,
-                                step=task_step,
-                                lifecycle=next_task["lifecycle"],
-                                prompt_mode=next_task.get("prompt_mode"),
+                        existing_raw = str(run_state.get("branch") or "").strip()
+                        # If --no-new-branch, never force branch switching; ignore any remembered run branch.
+                        existing = existing_raw if new_branch else ""
+                        desired_branch: str | None = None
+                        if existing:
+                            desired_branch = existing
+                        elif new_branch:
+                            desired_branch = (
+                                phase.get("branch")
+                                or next_task.get("branch")
+                                or _default_run_branch(prd_path)
                             )
-                            _save_queue(paths["task_queue"], queue, tasks)
-                            run_state.update(
-                                {
-                                    "status": "blocked",
-                                    "current_task_id": None,
-                                    "current_phase_id": None,
-                                    "run_id": None,
-                                    "branch": None,
-                                    "last_error": msg,
-                                    "updated_at": _now_iso(),
-                                    "coordinator_pid": None,
-                                    "worker_pid": None,
-                                    "coordinator_started_at": None,
-                                }
-                            )
-                            _save_data(paths["run_state"], run_state)
-                            blocked_tasks_snapshot = [dict(next_task)]
+                        else:
+                            current_branch = _git_current_branch(project_dir) or ""
+                            if not current_branch or current_branch == "HEAD":
+                                msg = (
+                                    "Cannot determine current git branch (detached HEAD?). "
+                                    "Either checkout a branch or re-run with --new-branch."
+                                )
+                                next_task["lifecycle"] = TaskLifecycle.WAITING_HUMAN.value
+                                next_task["block_reason"] = "GIT_BRANCH_REQUIRED"
+                                next_task["last_error"] = msg
+                                next_task["last_error_type"] = "git_branch_required"
+                                next_task["status"] = TASK_STATUS_BLOCKED
+                                _record_blocked_intent(
+                                    next_task,
+                                    task_status=task_step,
+                                    task_type=task_type,
+                                    phase_id=phase_id or next_task.get("id"),
+                                    branch=None,
+                                    test_command=next_task.get("test_command"),
+                                    run_id=None,
+                                    step=task_step,
+                                    lifecycle=next_task["lifecycle"],
+                                    prompt_mode=next_task.get("prompt_mode"),
+                                )
+                                _save_queue(paths["task_queue"], queue, tasks)
+                                run_state.update(
+                                    {
+                                        "status": "blocked",
+                                        "current_task_id": None,
+                                        "current_phase_id": None,
+                                        "run_id": None,
+                                        "last_error": msg,
+                                        "updated_at": _now_iso(),
+                                        "coordinator_pid": None,
+                                        "worker_pid": None,
+                                        "coordinator_started_at": None,
+                                    }
+                                )
+                                _save_data(paths["run_state"], run_state)
+                                blocked_tasks_snapshot = [dict(next_task)]
+                            else:
+                                desired_branch = current_branch
+
+                        if not blocked_tasks_snapshot and desired_branch:
+                            branch = desired_branch
+                            next_task["branch"] = branch
+                            try:
+                                # Only switch/create a branch when opting into new_branch, or when resuming an existing
+                                # run branch that may not currently be checked out.
+                                if new_branch:
+                                    _ensure_branch(project_dir, branch)
+                                    run_state["branch"] = branch
+                                    run_state["updated_at"] = _now_iso()
+                                    _save_data(paths["run_state"], run_state)
+                            except subprocess.CalledProcessError as exc:
+                                msg = f"Failed to checkout branch {branch}: {exc}"
+                                next_task["lifecycle"] = TaskLifecycle.WAITING_HUMAN.value
+                                next_task["block_reason"] = "GIT_CHECKOUT_FAILED"
+                                next_task["last_error"] = msg
+                                next_task["last_error_type"] = "git_checkout_failed"
+                                next_task["status"] = TASK_STATUS_BLOCKED
+                                _record_blocked_intent(
+                                    next_task,
+                                    task_status=task_step,
+                                    task_type=task_type,
+                                    phase_id=phase_id or next_task.get("id"),
+                                    branch=branch,
+                                    test_command=next_task.get("test_command"),
+                                    run_id=None,
+                                    step=task_step,
+                                    lifecycle=next_task["lifecycle"],
+                                    prompt_mode=next_task.get("prompt_mode"),
+                                )
+                                _save_queue(paths["task_queue"], queue, tasks)
+                                run_state.update(
+                                    {
+                                        "status": "blocked",
+                                        "current_task_id": None,
+                                        "current_phase_id": None,
+                                        "run_id": None,
+                                        "last_error": msg,
+                                        "updated_at": _now_iso(),
+                                        "coordinator_pid": None,
+                                        "worker_pid": None,
+                                        "coordinator_started_at": None,
+                                    }
+                                )
+                                _save_data(paths["run_state"], run_state)
+                                blocked_tasks_snapshot = [dict(next_task)]
 
                 if not blocked_tasks_snapshot and task_type != "plan" and _git_has_changes(project_dir):
                     dirty_note = (
@@ -977,6 +1088,15 @@ def run_feature_prd(
         if blocked_tasks_snapshot:
             _report_blocking_tasks(blocked_tasks_snapshot, paths, stopping=stop_on_blocking_issues)
             _finalize_run_state(paths, lock_path, status="blocked")
+            return
+
+        if next_task is None or run_id is None or task_id is None or task_type is None or task_step is None:
+            _finalize_run_state(
+                paths,
+                lock_path,
+                status="blocked",
+                last_error="Internal error: missing run context",
+            )
             return
 
         iteration += 1
@@ -1124,6 +1244,8 @@ def run_feature_prd(
                 default_typecheck_command=typecheck_command,
                 verify_profile=verify_profile,
                 ensure_ruff=ensure_ruff,
+                ensure_deps=ensure_deps,
+                ensure_deps_command=ensure_deps_command,
                 timeout_seconds=shift_minutes * 60,
             )
 

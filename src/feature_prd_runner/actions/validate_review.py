@@ -1,3 +1,5 @@
+"""Validate structured review payloads produced by the worker."""
+
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -15,6 +17,20 @@ def validate_review(
     prd_has_content: bool = True,
     simple_review: bool = False,
 ) -> tuple[bool, str]:
+    """Validate a review output payload for a phase.
+
+    Args:
+        review_data: Parsed review payload produced by the worker.
+        phase: Phase metadata the review is expected to match.
+        changed_files: Optional list of files changed in the phase.
+        prd_markers: Optional PRD marker tokens extracted from the PRD text.
+        prd_truncated: Whether the PRD text used for validation was truncated.
+        prd_has_content: Whether PRD text content was available.
+        simple_review: Whether to validate against the simplified review schema.
+
+    Returns:
+        A tuple of `(is_valid, error_message)` where `error_message` is empty when valid.
+    """
     if simple_review:
         return _validate_simple_review_data(review_data)
     return _validate_review_data(
