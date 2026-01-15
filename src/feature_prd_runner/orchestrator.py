@@ -166,6 +166,7 @@ def run_feature_prd(
     heartbeat_grace_seconds: int = DEFAULT_HEARTBEAT_GRACE_SECONDS,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     max_auto_resumes: int = DEFAULT_MAX_AUTO_RESUMES,
+    max_review_attempts: int = MAX_REVIEW_ATTEMPTS,
     test_command: Optional[str] = None,
     format_command: Optional[str] = None,
     lint_command: Optional[str] = None,
@@ -202,6 +203,7 @@ def run_feature_prd(
         heartbeat_grace_seconds: Allowed heartbeat staleness before termination.
         max_attempts: Maximum attempts per task before blocking.
         max_auto_resumes: Maximum automatic resume attempts for blocked tasks.
+        max_review_attempts: Maximum review failure/reimplementation attempts.
         test_command: Default test command to run during verification.
         format_command: Default format check command to run during verification.
         lint_command: Default lint command to run during verification.
@@ -257,6 +259,7 @@ def run_feature_prd(
     logger.info("Heartbeat: {}s (grace {}s)", heartbeat_seconds, heartbeat_grace_seconds)
     logger.info("Max attempts per task: {}", max_attempts)
     logger.info("Max auto-resumes: {}", max_auto_resumes)
+    logger.info("Max review attempts: {}", max_review_attempts)
     logger.info("Stop on blocking issues: {}", stop_on_blocking_issues)
     if test_command:
         logger.info("Test command: {}", test_command)
@@ -1370,8 +1373,8 @@ def run_feature_prd(
                         "plan_attempts": MAX_IMPL_PLAN_ATTEMPTS,
                         "no_progress_attempts": MAX_NO_PROGRESS_ATTEMPTS,
                         "test_fail_attempts": MAX_TEST_FAIL_ATTEMPTS,
-                        "review_gen_attempts": MAX_REVIEW_ATTEMPTS,
-                        "review_fix_attempts": MAX_REVIEW_ATTEMPTS,
+                        "review_gen_attempts": max_review_attempts,
+                        "review_fix_attempts": max_review_attempts,
                         "allowlist_expansion_attempts": MAX_ALLOWLIST_EXPANSION_ATTEMPTS,
                     }
                     task_state = reduce_task(task_state, event, caps=caps)

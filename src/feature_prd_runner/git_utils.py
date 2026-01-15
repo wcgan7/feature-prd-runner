@@ -422,11 +422,21 @@ def _git_commit(project_dir: Path, message: str) -> None:
         if not _git_is_ignored(project_dir, ".prd_runner"):
             raise RuntimeError(".prd_runner is not ignored; add it to .gitignore before committing")
     # Ensure reset-state backups are also kept out of git.
+    # Create a temporary probe file to test wildcard pattern matching.
     backup_probe = f"{STATE_DIR_NAME}.bak-ignore-probe"
-    if not _git_is_ignored(project_dir, backup_probe):
-        _ensure_gitignore(project_dir)
+    probe_path = project_dir / backup_probe
+    probe_created = False
+    try:
+        if not probe_path.exists():
+            probe_path.touch()
+            probe_created = True
         if not _git_is_ignored(project_dir, backup_probe):
-            raise RuntimeError(f"{STATE_DIR_NAME}.bak-* is not ignored; add it to .gitignore before committing")
+            _ensure_gitignore(project_dir)
+            if not _git_is_ignored(project_dir, backup_probe):
+                raise RuntimeError(f"{STATE_DIR_NAME}.bak-* is not ignored; add it to .gitignore before committing")
+    finally:
+        if probe_created and probe_path.exists():
+            probe_path.unlink()
     subprocess.run(["git", "add", "-A", "--", "."], cwd=project_dir, check=True)
     subprocess.run(["git", "commit", "-m", message], cwd=project_dir, check=True)
 

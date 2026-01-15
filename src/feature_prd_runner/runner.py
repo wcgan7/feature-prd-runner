@@ -22,6 +22,7 @@ from .constants import (
     DEFAULT_SHIFT_MINUTES,
     DEFAULT_STOP_ON_BLOCKING_ISSUES,
     LOCK_FILE,
+    MAX_REVIEW_ATTEMPTS,
     STATE_DIR_NAME,
 )
 from .orchestrator import run_feature_prd
@@ -198,6 +199,12 @@ def _build_run_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MAX_AUTO_RESUMES,
         help=f"Max auto-resumes for transient failures (default: {DEFAULT_MAX_AUTO_RESUMES})",
+    )
+    parser.add_argument(
+        "--max-review-attempts",
+        type=int,
+        default=MAX_REVIEW_ATTEMPTS,
+        help=f"Max review failure/reimplementation attempts (default: {MAX_REVIEW_ATTEMPTS})",
     )
     parser.add_argument(
         "--stop-on-blocking-issues",
@@ -1585,6 +1592,7 @@ def main(argv: list[str] | None = None) -> None:
         heartbeat_grace_seconds=args.heartbeat_grace_seconds,
         max_attempts=args.max_task_attempts,
         max_auto_resumes=args.max_auto_resumes,
+        max_review_attempts=args.max_review_attempts,
         test_command=args.test_command,
         format_command=args.format_command,
         lint_command=args.lint_command,
