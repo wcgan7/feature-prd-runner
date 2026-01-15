@@ -28,6 +28,7 @@ from .constants import (
 from .orchestrator import run_feature_prd
 from .prompts import _build_phase_prompt, _build_plan_prompt, _build_review_prompt
 from .io_utils import FileLock, _load_data, _load_data_with_error, _save_data
+from .custom_execution import execute_custom_prompt
 from .tasks import (
     _blocking_tasks,
     _find_task,
@@ -230,6 +231,11 @@ def _build_run_parser() -> argparse.ArgumentParser:
             "The agent must complete the instructions successfully; if blocked, "
             "requires human intervention before continuing."
         ),
+    )
+    parser.add_argument(
+        "--override-agents",
+        action="store_true",
+        help="Enable superadmin mode for custom-prompt (bypass AGENTS.md rules)",
     )
     parser.add_argument(
         "--log-level",
@@ -505,6 +511,118 @@ def _build_skip_step_parser() -> argparse.ArgumentParser:
         help="Print machine-readable JSON result",
     )
     return parser
+
+
+def _build_exec_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - execute a custom prompt or ad-hoc task",
+    )
+    parser.add_argument(
+        "prompt",
+        type=str,
+        help="Custom prompt/instructions to execute",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--codex-command",
+        type=str,
+        default="codex exec -",
+        help="Codex CLI command (default: codex exec -)",
+    )
+    parser.add_argument(
+        "--override-agents",
+        action="store_true",
+        help="Enable superadmin mode - bypass AGENTS.md rules",
+    )
+    parser.add_argument(
+        "--then-continue",
+        action="store_true",
+        help="Continue to normal implementation cycle after completion",
+    )
+    parser.add_argument(
+        "--context-task",
+        type=str,
+        help="Task ID for context (limits scope to task files)",
+    )
+    parser.add_argument(
+        "--context-files",
+        type=str,
+        help="Comma-separated list of files to focus on",
+    )
+    parser.add_argument(
+        "--shift-minutes",
+        type=int,
+        default=DEFAULT_SHIFT_MINUTES,
+        help=f"Timebox for execution in minutes (default: {DEFAULT_SHIFT_MINUTES})",
+    )
+    parser.add_argument(
+        "--heartbeat-seconds",
+        type=int,
+        default=DEFAULT_HEARTBEAT_SECONDS,
+        help=f"Heartbeat interval in seconds (default: {DEFAULT_HEARTBEAT_SECONDS})",
+    )
+    parser.add_argument(
+        "--heartbeat-grace-seconds",
+        type=int,
+        default=DEFAULT_HEARTBEAT_GRACE_SECONDS,
+        help=f"Heartbeat grace period in seconds (default: {DEFAULT_HEARTBEAT_GRACE_SECONDS})",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["debug", "info", "warning", "error"],
+        default="info",
+        help="Logging verbosity (default: info)",
+    )
+    return parser
+
+
+def _exec_command(
+    project_dir: Path,
+    prompt: str,
+    codex_command: str,
+    override_agents: bool,
+    then_continue: bool,
+    context_task: Optional[str],
+    context_files: Optional[str],
+    shift_minutes: int,
+    heartbeat_seconds: int,
+    heartbeat_grace_seconds: int,
+) -> int:
+    """Execute a custom prompt."""
+    project_dir = project_dir.resolve()
+
+    # Build context dict
+    context: dict[str, Any] = {}
+    if context_task:
+        context["task_id"] = context_task
+    if context_files:
+        context["files"] = [f.strip() for f in context_files.split(",")]
+
+    # Execute
+    success, error = execute_custom_prompt(
+        user_prompt=prompt,
+        project_dir=project_dir,
+        codex_command=codex_command,
+        heartbeat_seconds=heartbeat_seconds,
+        heartbeat_grace_seconds=heartbeat_grace_seconds,
+        shift_minutes=shift_minutes,
+        override_agents=override_agents,
+        context=context if context else None,
+        then_continue=then_continue,
+    )
+
+    if success:
+        logger.info("✓ Custom prompt executed successfully")
+        return 0
+    else:
+        logger.error("✗ Custom prompt failed: {}", error or "Unknown error")
+        return 1
 
 
 def _status_command(project_dir: Path, *, as_json: bool = False) -> int:
@@ -1578,6 +1696,23 @@ def main(argv: list[str] | None = None) -> None:
                     as_json=bool(args.json),
                 )
             )
+        if argv[0] == "exec":
+            args = _build_exec_parser().parse_args(argv[1:])
+            _configure_logging(args.log_level)
+            raise SystemExit(
+                _exec_command(
+                    args.project_dir,
+                    args.prompt,
+                    args.codex_command,
+                    bool(args.override_agents),
+                    bool(args.then_continue),
+                    args.context_task,
+                    args.context_files,
+                    args.shift_minutes,
+                    args.heartbeat_seconds,
+                    args.heartbeat_grace_seconds,
+                )
+            )
 
     parser = _build_run_parser()
     args = parser.parse_args(argv)
@@ -1603,6 +1738,7 @@ def main(argv: list[str] | None = None) -> None:
         ensure_deps_command=args.ensure_deps_command,
         new_branch=args.new_branch,
         custom_prompt=args.custom_prompt,
+        override_agents=bool(args.override_agents),
         stop_on_blocking_issues=args.stop_on_blocking_issues,
         resume_blocked=args.resume_blocked,
         simple_review=args.simple_review,

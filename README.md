@@ -219,18 +219,48 @@ CLI flags override `config.yaml`.
 
 Available placeholders: `{prompt_file}`, `{project_dir}`, `{run_dir}`, `{prompt}`.
 
-## Standalone “Custom Prompt”
+## Custom Prompts & Ad-Hoc Tasks
+
+### The `exec` Command
+
+Execute ad-hoc custom prompts outside the normal workflow:
+
+```bash
+# Basic usage
+feature-prd-runner exec "Update all copyright headers to 2026"
+
+# With superadmin mode (bypass AGENTS.md rules)
+feature-prd-runner exec "Emergency fix: patch security vulnerability" --override-agents
+
+# With context
+feature-prd-runner exec "Add logging" --context-files "src/auth.py,src/api.py"
+```
+
+**Superadmin mode** (`--override-agents`) allows you to bypass AGENTS.md rules when you need full control:
+- Skip file allowlists
+- Bypass documentation/testing requirements
+- Emergency hotfixes
+- Administrative changes
+
+See [docs/CUSTOM_EXECUTION.md](docs/CUSTOM_EXECUTION.md) for full documentation.
+
+### Custom Prompt Before Run
 
 Use `--custom-prompt` to run one standalone worker prompt before the main loop. This is
-useful for “setup” steps like updating dependencies, regenerating locks, or resolving a
+useful for "setup" steps like updating dependencies, regenerating locks, or resolving a
 known failure before continuing phased implementation.
 
 ```bash
-feature-prd-runner --project-dir . --prd-file ./docs/feature_prd.md \
+feature-prd-runner run --prd-file ./docs/feature_prd.md \
   --custom-prompt "Regenerate lockfiles and ensure tests pass"
+
+# With superadmin mode
+feature-prd-runner run --prd-file ./docs/feature_prd.md \
+  --custom-prompt "Update dependencies" \
+  --override-agents
 ```
 
-If the worker reports `human_blocking_issues` in the run’s `progress.json`, the runner
+If the worker reports `human_blocking_issues` in the run's `progress.json`, the runner
 stops and surfaces the issues and suggested next steps.
 
 ## Troubleshooting

@@ -15,6 +15,7 @@ from loguru import logger
 from .actions.run_commit import run_commit_action
 from .actions.run_verify import run_verify_action
 from .actions.run_worker import run_resume_prompt_action, run_worker_action
+from .custom_execution import execute_custom_prompt
 from .constants import (
     DEFAULT_HEARTBEAT_GRACE_SECONDS,
     DEFAULT_HEARTBEAT_SECONDS,
@@ -177,6 +178,7 @@ def run_feature_prd(
     ensure_deps_command: Optional[str] = None,
     new_branch: bool = True,
     custom_prompt: Optional[str] = None,
+    override_agents: bool = False,
     stop_on_blocking_issues: bool = DEFAULT_STOP_ON_BLOCKING_ISSUES,
     resume_blocked: bool = True,
     simple_review: bool = False,
@@ -214,6 +216,7 @@ def run_feature_prd(
         ensure_deps_command: Optional command used when `ensure_deps` is enabled.
         new_branch: Whether to create/switch to a new run branch at startup.
         custom_prompt: Optional standalone instructions to run before the normal loop.
+        override_agents: Enable superadmin mode for custom_prompt (bypass AGENTS.md rules).
         stop_on_blocking_issues: Whether to stop immediately on blocking issues.
         resume_blocked: Whether to auto-resume the most recent blocked task at startup.
         simple_review: Whether to use the simplified review schema/prompt.
