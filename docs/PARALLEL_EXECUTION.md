@@ -467,21 +467,76 @@ feature-prd-runner run --prd-file feature.md
 feature-prd-runner run --prd-file feature.md --parallel
 ```
 
-## Limitations & Future Work
+## Implementation Status
+
+### What's Working Now
+
+✅ **Dependency Resolution**: Fully implemented with topological sort and circular dependency detection
+
+✅ **Execution Plan Visualization**: Shows how phases would be parallelized with `plan-parallel` command
+
+✅ **Thread Pool Infrastructure**: Complete `ParallelExecutor` class with worker pool management
+
+✅ **Progress Tracking**: Real-time status updates for parallel phases
+
+✅ **CLI Integration**: `--parallel` and `--max-workers` flags integrated into run command
+
+✅ **Phase Grouping**: Automatic grouping of tasks by phase_id
+
+✅ **Batch Analysis**: Creates execution batches based on dependencies
+
+### Current Status
+
+🔶 **Parallel Execution**: Infrastructure is complete but not yet fully integrated with the task execution loop.
+
+When you run with `--parallel`:
+- The system analyzes phase dependencies
+- Creates an optimal execution plan
+- Logs the parallel execution plan
+- **Then falls back to sequential execution**
+
+This provides:
+- Visibility into parallelization opportunities
+- Validation that dependencies are correct
+- Foundation for full parallel execution
+
+### Why Sequential for Now?
+
+The orchestrator's task execution loop is complex with:
+- File-based state management and locking
+- Multi-step task lifecycle (plan_impl → implement → verify → review → commit)
+- Git operations and branch management
+- Progress tracking and heartbeat monitoring
+- Error handling and auto-resume logic
+
+Fully parallelizing this requires:
+1. Extracting task execution into thread-safe functions
+2. Managing concurrent git operations safely
+3. Coordinating state updates across parallel phases
+4. Handling failures in one phase while others continue
+
+This work is planned for a future release.
+
+### Limitations & Future Work
 
 ### Current Limitations
 
-1. **Task-level Parallelism Only**: Currently analyzes dependencies but executes sequentially. Full parallel execution planned for future release.
+1. **Sequential Execution**: Currently analyzes dependencies but executes phases sequentially. Full parallel execution planned for next release.
 
 2. **No Dynamic Dependency Resolution**: Dependencies must be specified upfront in phase plan.
 
 3. **No Resource Management**: Does not automatically limit CPU/memory usage per phase.
 
-4. **No Phase Checkpointing**: If a batch fails, must restart from beginning of batch.
+4. **No Phase Checkpointing**: If a phase fails, must restart from beginning.
 
-### Planned Enhancements
+5. **Git Operations**: Concurrent git operations need careful coordination.
 
-- **Full Parallel Execution**: Actually run phases in parallel (currently experimental)
+### Planned Enhancements (Next Release)
+
+- **Full Parallel Execution**: Actually run phases in parallel using thread pool
+- **Thread-Safe Task Execution**: Refactor task loop for concurrent execution
+- **Concurrent Git Safety**: Coordinate git operations across parallel phases
+- **State Synchronization**: Safe concurrent updates to task_queue and progress files
 - **Dynamic Resource Allocation**: Adjust worker count based on system resources
 - **Phase Checkpointing**: Resume from failed phase within batch
 - **Real-time Progress UI**: Web dashboard showing parallel execution status

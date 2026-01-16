@@ -17,6 +17,12 @@ from .actions.run_verify import run_verify_action
 from .actions.run_worker import run_resume_prompt_action, run_worker_action
 from .custom_execution import execute_custom_prompt
 from .approval_gates import ApprovalGateManager, create_default_gates_config
+from .parallel_integration import (
+    should_use_parallel_execution,
+    log_parallel_execution_intent,
+    extract_phase_dependencies,
+    group_tasks_by_phase,
+)
 from .constants import (
     DEFAULT_HEARTBEAT_GRACE_SECONDS,
     DEFAULT_HEARTBEAT_SECONDS,
@@ -784,6 +790,40 @@ def run_feature_prd(
             if not new_branch:
                 current = _git_current_branch(project_dir) or ""
                 branch = current if current and current != "HEAD" else None
+
+            # Check for parallel execution opportunities
+            if parallel and iteration == 1:  # Only log on first iteration
+                if should_use_parallel_execution(parallel, tasks, phases):
+                    # Group tasks by phase
+                    phase_tasks = group_tasks_by_phase(tasks)
+                    # Extract phases with dependencies
+                    parallel_phases = extract_phase_dependencies(phases, phase_tasks)
+
+                    if parallel_phases:
+                        logger.info("Parallel execution mode enabled - analyzing dependencies")
+                        log_parallel_execution_intent(parallel_phases, max_workers)
+                        logger.warning(
+                            "Note: Full parallel execution is not yet implemented. "
+                            "Phases will be executed sequentially but the execution plan "
+                            "shows how they could be parallelized in future versions."
+                        )
+
+                        # TODO: Full parallel execution integration
+                        # To implement actual parallel execution:
+                        # 1. Extract task execution logic into thread-safe functions
+                        # 2. Create a PhaseExecutor that wraps full task lifecycle
+                        # 3. Use ParallelExecutor.execute_parallel() with PhaseExecutor
+                        # 4. Handle concurrent state updates with proper locking
+                        # 5. Coordinate git operations safely across threads
+                        # 6. Aggregate results and update task states
+                        # 7. Handle partial failures (some phases succeed, others fail)
+                        #
+                        # See parallel_integration.py for infrastructure placeholders
+                else:
+                    logger.info(
+                        "Parallel execution requested but not viable for current task set. "
+                        "Falling back to sequential execution."
+                    )
 
             phase_schema_issues = validate_phase_plan_schema(plan)
             phase_ids = {
