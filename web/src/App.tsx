@@ -4,6 +4,7 @@ import RunDashboard from './components/RunDashboard'
 import PhaseTimeline from './components/PhaseTimeline'
 import LiveLog from './components/LiveLog'
 import MetricsPanel from './components/MetricsPanel'
+import MetricsChart from './components/MetricsChart'
 
 interface ProjectStatus {
   project_dir: string
@@ -90,6 +91,8 @@ function App() {
             <MetricsPanel status={status} />
           </div>
         </div>
+
+        <MetricsChart />
 
         {status?.run_id && (
           <LiveLog runId={status.run_id} />

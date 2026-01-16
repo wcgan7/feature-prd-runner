@@ -439,18 +439,26 @@ def create_app(
             project_dir: Project directory path.
 
         Returns:
-            Aggregated metrics.
+            Aggregated metrics with real calculations from events, git, and state files.
         """
+        from .metrics import calculate_metrics
+
         proj_dir = _get_project_dir(project_dir)
-        paths = _get_paths(proj_dir)
 
-        # TODO: Implement actual metrics calculation
-        # This would aggregate data from:
-        # - Event log (events.jsonl)
-        # - Run directories
-        # - Task queue
+        # Calculate real metrics from available data
+        metrics = calculate_metrics(proj_dir)
 
-        return RunMetrics()
+        return RunMetrics(
+            tokens_used=metrics.tokens_used,
+            api_calls=metrics.api_calls,
+            estimated_cost_usd=metrics.estimated_cost_usd,
+            wall_time_seconds=metrics.wall_time_seconds,
+            phases_completed=metrics.phases_completed,
+            phases_total=metrics.phases_total,
+            files_changed=metrics.files_changed,
+            lines_added=metrics.lines_added,
+            lines_removed=metrics.lines_removed,
+        )
 
     @app.websocket("/ws/runs/{run_id}")
     async def websocket_run_updates(
