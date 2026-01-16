@@ -20,6 +20,7 @@ from .models import (
     ApprovalAction,
     ApprovalGateInfo,
     AuthStatus,
+    ChatMessage,
     ControlAction,
     ControlResponse,
     LoginRequest,
@@ -30,6 +31,7 @@ from .models import (
     RunDetail,
     RunInfo,
     RunMetrics,
+    SendMessageRequest,
     TaskInfo,
 )
 from .websocket import manager, watch_logs, watch_run_progress
@@ -775,6 +777,164 @@ def create_app(
             return ControlResponse(
                 success=False,
                 message=f"Error processing approval: {e}",
+                data={},
+            )
+
+    @app.get("/api/messages")
+    async def get_messages(
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+        run_id: Optional[str] = Query(None, description="Run ID"),
+    ) -> list[ChatMessage]:
+        """Get chat messages between human and worker.
+
+        Args:
+            project_dir: Project directory path.
+            run_id: Optional run ID (auto-detect if not specified).
+
+        Returns:
+            List of chat messages.
+        """
+        proj_dir = _get_project_dir(project_dir)
+        paths = _get_paths(proj_dir)
+
+        # Auto-detect run_id if not specified
+        if not run_id:
+            run_state_path = paths["run_state"]
+            if run_state_path.exists():
+                run_state = _load_data(run_state_path, {})
+                run_id = run_state.get("run_id")
+
+        if not run_id:
+            return []
+
+        # Find progress.json for this run
+        runs_dir = paths["runs"]
+        progress_path = None
+        for run_dir in runs_dir.glob(f"{run_id}*"):
+            candidate = run_dir / "progress.json"
+            if candidate.exists():
+                progress_path = candidate
+                break
+
+        if not progress_path or not progress_path.exists():
+            return []
+
+        try:
+            progress_data = _load_data(progress_path, {})
+            messages = []
+
+            # Get messages from human
+            for msg in progress_data.get("messages_from_human", []):
+                messages.append(
+                    ChatMessage(
+                        id=msg.get("id", ""),
+                        type=msg.get("type", ""),
+                        content=msg.get("content", ""),
+                        timestamp=msg.get("timestamp", ""),
+                        from_human=True,
+                        metadata=msg.get("metadata", {}),
+                    )
+                )
+
+            # Get messages to human (from worker)
+            for msg in progress_data.get("messages_to_human", []):
+                messages.append(
+                    ChatMessage(
+                        id=msg.get("id", ""),
+                        type=msg.get("type", ""),
+                        content=msg.get("content", ""),
+                        timestamp=msg.get("timestamp", ""),
+                        from_human=False,
+                        metadata=msg.get("metadata", {}),
+                    )
+                )
+
+            # Sort by timestamp
+            messages.sort(key=lambda m: m.timestamp)
+
+            return messages
+        except Exception as e:
+            logger.error("Failed to read messages: {}", e)
+            return []
+
+    @app.post("/api/messages")
+    async def send_message(
+        request: SendMessageRequest,
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+        run_id: Optional[str] = Query(None, description="Run ID"),
+    ) -> ControlResponse:
+        """Send a message to the worker.
+
+        Args:
+            request: Message content and metadata.
+            project_dir: Project directory path.
+            run_id: Optional run ID (auto-detect if not specified).
+
+        Returns:
+            Response indicating success or failure.
+        """
+        from ..messaging import Message, MessageBus
+
+        proj_dir = _get_project_dir(project_dir)
+        paths = _get_paths(proj_dir)
+
+        # Auto-detect run_id if not specified
+        if not run_id:
+            run_state_path = paths["run_state"]
+            if run_state_path.exists():
+                run_state = _load_data(run_state_path, {})
+                run_id = run_state.get("run_id")
+
+        if not run_id:
+            return ControlResponse(
+                success=False,
+                message="No active run found",
+                data={},
+            )
+
+        # Find progress.json for this run
+        runs_dir = paths["runs"]
+        progress_path = None
+        for run_dir in runs_dir.glob(f"{run_id}*"):
+            candidate = run_dir / "progress.json"
+            if candidate.exists():
+                progress_path = candidate
+                break
+
+        if not progress_path:
+            return ControlResponse(
+                success=False,
+                message=f"No progress.json found for run {run_id}",
+                data={},
+            )
+
+        try:
+            import time
+
+            # Create and send message
+            msg = Message(
+                id=f"{request.type}-{int(time.time() * 1000)}",
+                type=request.type,
+                content=request.content,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                metadata=request.metadata,
+            )
+
+            bus = MessageBus(progress_path)
+            bus.send_to_worker(msg)
+
+            logger.info("Message sent to worker: type={} content={}", msg.type, msg.content[:100])
+
+            return ControlResponse(
+                success=True,
+                message="Message sent to worker",
+                data={"message_id": msg.id, "type": msg.type},
+            )
+        except Exception as e:
+            logger.error("Failed to send message: {}", e)
+            return ControlResponse(
+                success=False,
+                message=f"Error sending message: {e}",
                 data={},
             )
 

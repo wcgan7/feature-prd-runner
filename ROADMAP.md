@@ -22,11 +22,25 @@ This document tracks planned enhancements to make the Feature PRD Runner more ve
 
 ## High Priority Features
 
-### 🔴 1. Active Human-in-the-Loop Controls
+### 🟡 1. Active Human-in-the-Loop Controls
 
-**Status**: 🔴 Not Started
+**Status**: 🟡 In Progress (80% Core Complete)
 **Priority**: P0 (Critical)
 **Impact**: Versatility ⭐⭐⭐⭐⭐ | Usefulness ⭐⭐⭐⭐⭐ | Robustness ⭐⭐⭐⭐
+
+**Implementation Status**:
+- ✅ Approval gates system with all gate types
+- ✅ Message bus for bidirectional communication
+- ✅ CLI commands: steer, approve, reject, view-changes
+- ✅ Web UI approval gates with visual cards
+- ✅ Configuration system with timeouts and context display
+- ✅ Desktop notifications for approval gates (optional, via plyer)
+- ✅ Live collaboration chat in web UI
+- ✅ Real-time messaging between human and worker
+- ❌ Change review & approval UI (file-by-file)
+- ❌ Breakpoints & inspection
+- ❌ Inline editing & corrections
+- ❌ Multi-user collaboration
 
 **Problem**: Current system is too autonomous and hands-off. Hard to steer direction, provide mid-execution guidance, or review/approve changes before they proceed. Once a run starts, you're mostly a passenger until it blocks or completes.
 

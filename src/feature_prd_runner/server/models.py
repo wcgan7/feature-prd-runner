@@ -189,3 +189,22 @@ class WebSocketMessage(BaseModel):
     type: str  # status_update, log_entry, phase_complete, error
     timestamp: str
     data: dict[str, Any]
+
+
+class ChatMessage(BaseModel):
+    """Chat message between human and worker."""
+
+    id: str
+    type: str  # guidance, clarification_request, clarification_response
+    content: str
+    timestamp: str
+    from_human: bool
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SendMessageRequest(BaseModel):
+    """Request to send a message to the worker."""
+
+    content: str
+    type: str = "guidance"  # guidance, clarification_request
+    metadata: dict[str, Any] = Field(default_factory=dict)

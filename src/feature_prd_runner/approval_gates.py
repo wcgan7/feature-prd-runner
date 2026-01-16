@@ -21,6 +21,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from .messaging import ApprovalRequest, ApprovalResponse, MessageBus
+from .notifications import NotificationManager
 
 
 class GateType(str, Enum):
@@ -54,14 +55,20 @@ class GateConfig:
 class ApprovalGateManager:
     """Manage approval gates in the workflow."""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(
+        self,
+        config: dict[str, Any],
+        notification_manager: Optional[NotificationManager] = None,
+    ):
         """Initialize approval gate manager.
 
         Args:
             config: Configuration dict with gate settings.
+            notification_manager: Optional notification manager for desktop notifications.
         """
         self.config = config
         self.console = Console()
+        self.notification_manager = notification_manager
 
     def is_gate_enabled(self, gate_type: GateType) -> bool:
         """Check if a gate is enabled.
@@ -133,6 +140,14 @@ class ApprovalGateManager:
         # Display approval prompt to user
         self._display_approval_prompt(gate_type, gate_config, context)
 
+        # Send desktop notification if available
+        if self.notification_manager:
+            self.notification_manager.notify_approval_required(
+                gate_type=gate_type.value,
+                message=gate_config.message or f"Approve {gate_type.value}?",
+                task_id=context.get("task_id"),
+            )
+
         # Create approval request
         request_id = str(uuid.uuid4())
         request = ApprovalRequest(
@@ -147,6 +162,14 @@ class ApprovalGateManager:
         # Use message bus to request approval
         bus = MessageBus(progress_path)
         response = bus.request_approval(request)
+
+        # Send timeout notification if needed
+        if not response.approved and response.feedback == "Auto-approved due to timeout":
+            if self.notification_manager:
+                self.notification_manager.notify_approval_timeout(
+                    gate_type=gate_type.value,
+                    task_id=context.get("task_id"),
+                )
 
         if response.approved:
             self.console.print("[green]✓ Approved - Continuing...[/green]")

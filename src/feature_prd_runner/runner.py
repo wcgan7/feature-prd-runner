@@ -887,6 +887,106 @@ def _steer_command(project_dir: Path, run_id: Optional[str], message: Optional[s
     return 0
 
 
+def _build_view_changes_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - view current code changes (git diff)",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--task-id",
+        type=str,
+        help="Show changes for specific task (uses task branch if available)",
+    )
+    parser.add_argument(
+        "--staged",
+        action="store_true",
+        help="Show staged changes only",
+    )
+    parser.add_argument(
+        "--context",
+        type=int,
+        default=3,
+        help="Number of context lines (default: 3)",
+    )
+    return parser
+
+
+def _view_changes_command(
+    project_dir: Path,
+    task_id: Optional[str],
+    staged: bool,
+    context: int,
+) -> int:
+    """View current code changes (git diff)."""
+    import subprocess
+
+    project_dir = project_dir.resolve()
+
+    # Check if in a git repository
+    try:
+        subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=project_dir,
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError:
+        sys.stdout.write("Not in a git repository\n")
+        return 1
+
+    # Build git diff command
+    cmd = ["git", "diff"]
+
+    if staged:
+        cmd.append("--staged")
+
+    cmd.append(f"--unified={context}")
+
+    # If task_id specified, try to find task branch
+    if task_id:
+        state_dir = project_dir / STATE_DIR_NAME
+        if state_dir.exists():
+            task_queue_path = state_dir / "task_queue.yaml"
+            tasks = _load_data(task_queue_path, {})
+
+            task_data = None
+            for t in tasks.get("tasks", []):
+                if t.get("id") == task_id:
+                    task_data = t
+                    break
+
+            if task_data and task_data.get("branch"):
+                branch = task_data["branch"]
+                # Show diff from main to task branch
+                cmd = ["git", "diff", f"main...{branch}", f"--unified={context}"]
+                sys.stdout.write(f"Showing changes on branch: {branch}\n\n")
+
+    # Run git diff
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=project_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+        else:
+            sys.stdout.write("No changes to display\n")
+
+        return 0
+    except Exception as e:
+        sys.stdout.write(f"Error running git diff: {e}\n")
+        return 1
+
+
 def _build_explain_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Feature PRD Runner - explain why a task is blocked",
@@ -2441,6 +2541,16 @@ def main(argv: list[str] | None = None) -> None:
                     args.project_dir,
                     args.run_id,
                     args.message,
+                )
+            )
+        if argv[0] == "view-changes":
+            args = _build_view_changes_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _view_changes_command(
+                    args.project_dir,
+                    args.task_id,
+                    args.staged,
+                    args.context,
                 )
             )
         if argv[0] == "explain":

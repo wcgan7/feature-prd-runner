@@ -10,6 +10,7 @@ import DependencyGraph from './components/DependencyGraph'
 import ProjectSelector from './components/ProjectSelector'
 import Login from './components/Login'
 import ApprovalGate from './components/ApprovalGate'
+import Chat from './components/Chat'
 
 interface ProjectStatus {
   project_dir: string
@@ -279,6 +280,8 @@ function App() {
           <LiveLog runId={status.run_id} />
         )}
       </div>
+
+      <Chat runId={status?.run_id} projectDir={currentProject || undefined} />
     </div>
   )
 }
