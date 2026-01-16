@@ -32,6 +32,7 @@ from .custom_execution import execute_custom_prompt
 from .messaging import ApprovalResponse, MessageBus, Message
 from .approval_gates import ApprovalGateManager
 from .debug import ErrorAnalyzer
+from .parallel import ParallelExecutor
 from .tasks import (
     _blocking_tasks,
     _find_task,
@@ -280,6 +281,17 @@ def _build_run_parser() -> argparse.ArgumentParser:
         "--interactive",
         action="store_true",
         help="Enable interactive mode with step-by-step approval gates (default: False)",
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Enable parallel execution of independent phases (default: False)",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=3,
+        help="Maximum number of parallel workers (default: 3)",
     )
     return parser
 
@@ -977,6 +989,77 @@ def _build_logs_parser() -> argparse.ArgumentParser:
         help="Specific run ID (auto-detect if not specified)",
     )
     return parser
+
+
+def _build_plan_parallel_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - visualize parallel execution plan",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--prd-file",
+        type=Path,
+        help="PRD file (required for fresh plan)",
+    )
+    parser.add_argument(
+        "--tree",
+        action="store_true",
+        help="Show dependency tree instead of execution plan",
+    )
+    return parser
+
+
+def _plan_parallel_command(
+    project_dir: Path,
+    prd_file: Optional[Path],
+    tree: bool,
+) -> int:
+    """Visualize parallel execution plan."""
+    project_dir = project_dir.resolve()
+    state_dir = project_dir / STATE_DIR_NAME
+
+    # Load phases from phase_plan.yaml
+    phase_plan_path = state_dir / "phase_plan.yaml"
+
+    if not phase_plan_path.exists():
+        if not prd_file:
+            sys.stdout.write("No phase plan found and no PRD file specified.\n")
+            sys.stdout.write("Either run the planner first or specify --prd-file.\n")
+            return 1
+        sys.stdout.write("Phase plan not found. This would require running the planner.\n")
+        sys.stdout.write("For now, please run the planner first:\n")
+        sys.stdout.write(f"  feature-prd-runner run --prd-file {prd_file}\n")
+        return 1
+
+    phase_plan = _load_data(phase_plan_path, {})
+    phases = phase_plan.get("phases", [])
+
+    if not phases:
+        sys.stdout.write("No phases found in phase plan.\n")
+        return 1
+
+    executor = ParallelExecutor()
+
+    if tree:
+        # Show dependency tree
+        output = executor.visualize_as_tree(phases)
+        sys.stdout.write(output)
+    else:
+        # Show execution plan
+        try:
+            plan = executor.resolve_execution_order(phases)
+            output = executor.visualize_execution_plan(phases, plan)
+            sys.stdout.write(output)
+        except ValueError as e:
+            sys.stdout.write(f"Error creating execution plan: {e}\n")
+            return 1
+
+    return 0
 
 
 def _explain_command(project_dir: Path, task_id: str) -> int:
@@ -2316,6 +2399,15 @@ def main(argv: list[str] | None = None) -> None:
                     args.run_id,
                 )
             )
+        if argv[0] == "plan-parallel":
+            args = _build_plan_parallel_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _plan_parallel_command(
+                    args.project_dir,
+                    args.prd_file,
+                    bool(args.tree),
+                )
+            )
 
     parser = _build_run_parser()
     args = parser.parse_args(argv)
@@ -2350,6 +2442,8 @@ def main(argv: list[str] | None = None) -> None:
         commit_enabled=args.commit,
         push_enabled=args.push,
         interactive=bool(args.interactive),
+        parallel=bool(args.parallel),
+        max_workers=args.max_workers,
     )
 
 

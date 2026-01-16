@@ -399,6 +399,72 @@ See [docs/DEBUGGING.md](docs/DEBUGGING.md) for full documentation on:
 - Programmatic access
 - Best practices
 
+## Parallel Phase Execution
+
+Execute independent phases concurrently to reduce total execution time:
+
+### Enable Parallel Execution
+
+```bash
+# Run with parallel execution (experimental)
+feature-prd-runner run --prd-file feature.md --parallel
+
+# Limit concurrent workers
+feature-prd-runner run --prd-file feature.md --parallel --max-workers 2
+```
+
+### Visualize Execution Plan
+
+```bash
+# Show execution batches
+feature-prd-runner plan-parallel
+
+# Show dependency tree
+feature-prd-runner plan-parallel --tree
+```
+
+### How It Works
+
+Phases can specify dependencies in `phase_plan.yaml`:
+
+```yaml
+phases:
+  - id: database-schema
+    deps: []  # No dependencies
+
+  - id: frontend-components
+    deps: []  # Independent
+
+  - id: api-endpoints
+    deps: ["database-schema"]  # Depends on database
+
+  - id: integration
+    deps: ["api-endpoints", "frontend-components"]  # Depends on both
+```
+
+The parallel executor:
+- Detects circular dependencies
+- Uses topological sort to create execution batches
+- Executes independent phases in parallel
+- Tracks progress for all running phases
+
+**Example execution**:
+```
+Batch 1 (parallel): database-schema, frontend-components
+Batch 2: api-endpoints (waits for database-schema)
+Batch 3: integration (waits for both)
+```
+
+**Note**: Parallel execution is currently experimental. Phases are analyzed for dependencies but executed sequentially. Full parallel execution will be implemented in a future release.
+
+See [docs/PARALLEL_EXECUTION.md](docs/PARALLEL_EXECUTION.md) for:
+- Dependency resolution details
+- Configuration options
+- Examples and best practices
+- Progress tracking
+- Error handling
+- Troubleshooting
+
 ## Troubleshooting
 
 - `Codex command must include {prompt_file}, {prompt}, or '-'`: update `--codex-command` to accept input.

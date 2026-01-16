@@ -188,6 +188,8 @@ def run_feature_prd(
     commit_enabled: bool = True,
     push_enabled: bool = True,
     interactive: bool = False,
+    parallel: bool = False,
+    max_workers: int = 3,
 ) -> None:
     """Run the Feature PRD Runner coordination loop.
 
@@ -227,6 +229,8 @@ def run_feature_prd(
         commit_enabled: Whether to perform `git commit` during the COMMIT step.
         push_enabled: Whether to perform `git push` during the COMMIT step.
         interactive: Whether to enable step-by-step approval gates for human-in-the-loop control.
+        parallel: Whether to enable parallel execution of independent phases.
+        max_workers: Maximum number of parallel workers (only used if parallel=True).
     """
     _require_yaml()
     project_dir = project_dir.resolve()
@@ -283,6 +287,13 @@ def run_feature_prd(
     logger.info("Require clean worktree: {}", require_clean)
     logger.info("Commit enabled: {}", commit_enabled)
     logger.info("Push enabled: {}", push_enabled)
+    if parallel:
+        logger.info("Parallel execution enabled with {} workers", max_workers)
+        logger.warning(
+            "Note: Parallel execution is currently experimental. "
+            "Phases will be analyzed for dependencies but executed sequentially. "
+            "Full parallel execution will be implemented in a future version."
+        )
 
     if (require_clean or commit_enabled or push_enabled) and not _git_is_repo(project_dir):
         msg = "Project directory is not a git repository"
