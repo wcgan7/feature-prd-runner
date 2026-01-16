@@ -29,6 +29,8 @@ from .orchestrator import run_feature_prd
 from .prompts import _build_phase_prompt, _build_plan_prompt, _build_review_prompt
 from .io_utils import FileLock, _load_data, _load_data_with_error, _save_data
 from .custom_execution import execute_custom_prompt
+from .messaging import ApprovalResponse, MessageBus, Message
+from .approval_gates import ApprovalGateManager
 from .tasks import (
     _blocking_tasks,
     _find_task,
@@ -272,6 +274,11 @@ def _build_run_parser() -> argparse.ArgumentParser:
         default=True,
         action=argparse.BooleanOptionalAction,
         help="Enable git push during commit step (default: True)",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Enable interactive mode with step-by-step approval gates (default: False)",
     )
     return parser
 
@@ -623,6 +630,248 @@ def _exec_command(
     else:
         logger.error("✗ Custom prompt failed: {}", error or "Unknown error")
         return 1
+
+
+def _build_approve_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - approve a pending approval request",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        help="Run ID (auto-detect if not specified)",
+    )
+    parser.add_argument(
+        "--feedback",
+        type=str,
+        help="Optional feedback message",
+    )
+    return parser
+
+
+def _build_reject_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - reject a pending approval request",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        help="Run ID (auto-detect if not specified)",
+    )
+    parser.add_argument(
+        "--reason",
+        type=str,
+        required=True,
+        help="Reason for rejection",
+    )
+    return parser
+
+
+def _build_steer_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - send steering messages to running worker",
+    )
+    parser.add_argument(
+        "message",
+        type=str,
+        nargs="?",
+        help="Steering message to send (interactive mode if not specified)",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        help="Run ID (auto-detect if not specified)",
+    )
+    return parser
+
+
+def _approve_command(project_dir: Path, run_id: Optional[str], feedback: Optional[str]) -> int:
+    """Approve a pending approval request."""
+    project_dir = project_dir.resolve()
+    state_dir = project_dir / STATE_DIR_NAME
+
+    if not state_dir.exists():
+        sys.stdout.write("No .prd_runner state directory found\n")
+        return 1
+
+    # Auto-detect run_id if not specified
+    if not run_id:
+        run_state_path = state_dir / "run_state.yaml"
+        run_state = _load_data(run_state_path, {})
+        run_id = run_state.get("run_id")
+
+    if not run_id:
+        sys.stdout.write("No active run found\n")
+        return 1
+
+    # Find progress.json for this run
+    runs_dir = state_dir / "runs"
+    progress_path = None
+    for run_dir in runs_dir.glob(f"{run_id}*"):
+        candidate = run_dir / "progress.json"
+        if candidate.exists():
+            progress_path = candidate
+            break
+
+    if not progress_path:
+        sys.stdout.write(f"No progress.json found for run {run_id}\n")
+        return 1
+
+    # Get pending approval
+    bus = MessageBus(progress_path)
+    pending = bus.get_pending_approval()
+
+    if not pending:
+        sys.stdout.write("No pending approval request\n")
+        return 1
+
+    # Respond with approval
+    from datetime import datetime, timezone
+
+    response = ApprovalResponse(
+        request_id=pending.id,
+        approved=True,
+        feedback=feedback,
+        responded_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    bus.respond_to_approval(response)
+    sys.stdout.write(f"✓ Approved: {pending.message}\n")
+    if feedback:
+        sys.stdout.write(f"  Feedback: {feedback}\n")
+
+    return 0
+
+
+def _reject_command(project_dir: Path, run_id: Optional[str], reason: str) -> int:
+    """Reject a pending approval request."""
+    project_dir = project_dir.resolve()
+    state_dir = project_dir / STATE_DIR_NAME
+
+    if not state_dir.exists():
+        sys.stdout.write("No .prd_runner state directory found\n")
+        return 1
+
+    # Auto-detect run_id if not specified
+    if not run_id:
+        run_state_path = state_dir / "run_state.yaml"
+        run_state = _load_data(run_state_path, {})
+        run_id = run_state.get("run_id")
+
+    if not run_id:
+        sys.stdout.write("No active run found\n")
+        return 1
+
+    # Find progress.json for this run
+    runs_dir = state_dir / "runs"
+    progress_path = None
+    for run_dir in runs_dir.glob(f"{run_id}*"):
+        candidate = run_dir / "progress.json"
+        if candidate.exists():
+            progress_path = candidate
+            break
+
+    if not progress_path:
+        sys.stdout.write(f"No progress.json found for run {run_id}\n")
+        return 1
+
+    # Get pending approval
+    bus = MessageBus(progress_path)
+    pending = bus.get_pending_approval()
+
+    if not pending:
+        sys.stdout.write("No pending approval request\n")
+        return 1
+
+    # Respond with rejection
+    from datetime import datetime, timezone
+
+    response = ApprovalResponse(
+        request_id=pending.id,
+        approved=False,
+        feedback=reason,
+        responded_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    bus.respond_to_approval(response)
+    sys.stdout.write(f"✗ Rejected: {pending.message}\n")
+    sys.stdout.write(f"  Reason: {reason}\n")
+
+    return 0
+
+
+def _steer_command(project_dir: Path, run_id: Optional[str], message: Optional[str]) -> int:
+    """Send steering message to running worker."""
+    project_dir = project_dir.resolve()
+    state_dir = project_dir / STATE_DIR_NAME
+
+    if not state_dir.exists():
+        sys.stdout.write("No .prd_runner state directory found\n")
+        return 1
+
+    # Auto-detect run_id if not specified
+    if not run_id:
+        run_state_path = state_dir / "run_state.yaml"
+        run_state = _load_data(run_state_path, {})
+        run_id = run_state.get("run_id")
+
+    if not run_id:
+        sys.stdout.write("No active run found\n")
+        return 1
+
+    # Find progress.json for this run
+    runs_dir = state_dir / "runs"
+    progress_path = None
+    for run_dir in runs_dir.glob(f"{run_id}*"):
+        candidate = run_dir / "progress.json"
+        if candidate.exists():
+            progress_path = candidate
+            break
+
+    if not progress_path:
+        sys.stdout.write(f"No progress.json found for run {run_id}\n")
+        return 1
+
+    bus = MessageBus(progress_path)
+
+    # Interactive mode if no message specified
+    if not message:
+        sys.stdout.write("=== Interactive Steering Mode ===\n")
+        sys.stdout.write("Enter messages to send to the worker (Ctrl+C to exit)\n\n")
+
+        try:
+            while True:
+                msg = input("> ")
+                if msg.strip():
+                    bus.send_guidance(msg.strip())
+                    sys.stdout.write("✓ Message sent to worker\n")
+        except KeyboardInterrupt:
+            sys.stdout.write("\nExiting steering mode\n")
+            return 0
+    else:
+        # Send single message
+        bus.send_guidance(message)
+        sys.stdout.write(f"✓ Message sent to worker: {message}\n")
+
+    return 0
 
 
 def _status_command(project_dir: Path, *, as_json: bool = False) -> int:
@@ -1713,6 +1962,33 @@ def main(argv: list[str] | None = None) -> None:
                     args.heartbeat_grace_seconds,
                 )
             )
+        if argv[0] == "approve":
+            args = _build_approve_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _approve_command(
+                    args.project_dir,
+                    args.run_id,
+                    args.feedback,
+                )
+            )
+        if argv[0] == "reject":
+            args = _build_reject_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _reject_command(
+                    args.project_dir,
+                    args.run_id,
+                    args.reason,
+                )
+            )
+        if argv[0] == "steer":
+            args = _build_steer_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _steer_command(
+                    args.project_dir,
+                    args.run_id,
+                    args.message,
+                )
+            )
 
     parser = _build_run_parser()
     args = parser.parse_args(argv)
@@ -1746,6 +2022,7 @@ def main(argv: list[str] | None = None) -> None:
         require_clean=args.require_clean,
         commit_enabled=args.commit,
         push_enabled=args.push,
+        interactive=bool(args.interactive),
     )
 
 

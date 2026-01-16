@@ -263,6 +263,72 @@ feature-prd-runner run --prd-file ./docs/feature_prd.md \
 If the worker reports `human_blocking_issues` in the run's `progress.json`, the runner
 stops and surfaces the issues and suggested next steps.
 
+## Human-in-the-Loop Control
+
+The runner supports active human involvement through steering, approval gates, and bidirectional communication.
+
+### Interactive Mode
+
+Enable step-by-step approval gates at key checkpoints:
+
+```bash
+feature-prd-runner run --prd-file feature.md --interactive
+```
+
+This pauses execution before implement, after implement, and before commit for human approval.
+
+### Steering Commands
+
+**Send guidance to running workers:**
+
+```bash
+# Single message
+feature-prd-runner steer "Focus on error handling"
+
+# Interactive mode
+feature-prd-runner steer
+> Add more logging
+> Check edge cases
+```
+
+**Approve/reject pending approval gates:**
+
+```bash
+feature-prd-runner approve
+feature-prd-runner approve --feedback "Looks good"
+feature-prd-runner reject --reason "Need more tests first"
+```
+
+### Configuration
+
+Configure approval gates in `.prd_runner/config.yaml`:
+
+```yaml
+approval_gates:
+  enabled: true
+  gates:
+    before_implement:
+      enabled: true
+      show_plan: true
+      timeout: 300
+    after_implement:
+      enabled: true
+      show_diff: true
+      timeout: 300
+    before_commit:
+      enabled: true
+      show_diff: true
+      show_tests: true
+      required: true  # Cannot skip
+```
+
+See [docs/HUMAN_IN_THE_LOOP.md](docs/HUMAN_IN_THE_LOOP.md) for comprehensive documentation on:
+- Steering running workers
+- Approval gate configuration
+- Message bus architecture
+- Interactive mode details
+- Advanced usage patterns
+
 ## Troubleshooting
 
 - `Codex command must include {prompt_file}, {prompt}, or '-'`: update `--codex-command` to accept input.

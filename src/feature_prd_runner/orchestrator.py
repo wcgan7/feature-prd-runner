@@ -16,6 +16,7 @@ from .actions.run_commit import run_commit_action
 from .actions.run_verify import run_verify_action
 from .actions.run_worker import run_resume_prompt_action, run_worker_action
 from .custom_execution import execute_custom_prompt
+from .approval_gates import ApprovalGateManager, create_default_gates_config
 from .constants import (
     DEFAULT_HEARTBEAT_GRACE_SECONDS,
     DEFAULT_HEARTBEAT_SECONDS,
@@ -186,6 +187,7 @@ def run_feature_prd(
     require_clean: bool = True,
     commit_enabled: bool = True,
     push_enabled: bool = True,
+    interactive: bool = False,
 ) -> None:
     """Run the Feature PRD Runner coordination loop.
 
@@ -224,6 +226,7 @@ def run_feature_prd(
         require_clean: Whether to require a clean git worktree (outside `.prd_runner/`).
         commit_enabled: Whether to perform `git commit` during the COMMIT step.
         push_enabled: Whether to perform `git push` during the COMMIT step.
+        interactive: Whether to enable step-by-step approval gates for human-in-the-loop control.
     """
     _require_yaml()
     project_dir = project_dir.resolve()
@@ -459,6 +462,29 @@ def run_feature_prd(
 
     # Safe to update ignore rules now that we know state is usable.
     _ensure_gitignore(project_dir, only_if_clean=True)
+
+    # Initialize approval gates if interactive mode enabled
+    approval_manager: Optional[ApprovalGateManager] = None
+    if interactive:
+        gate_config = create_default_gates_config()
+        # Enable key gates for interactive mode
+        gate_config["approval_gates"]["enabled"] = True
+        gate_config["approval_gates"]["gates"]["before_implement"]["enabled"] = True
+        gate_config["approval_gates"]["gates"]["after_implement"]["enabled"] = True
+        gate_config["approval_gates"]["gates"]["before_commit"]["enabled"] = True
+        approval_manager = ApprovalGateManager(gate_config)
+        logger.info("Interactive mode enabled - approval gates active")
+        logger.info("Use 'feature-prd-runner approve/reject/steer' commands to control execution")
+
+    # NOTE: Approval gate integration points for future enhancement:
+    # - Before PLAN_IMPL: approval_manager.request_approval(GateType.BEFORE_PLAN_IMPL, ...)
+    # - Before IMPLEMENT: approval_manager.request_approval(GateType.BEFORE_IMPLEMENT, ...)
+    # - After IMPLEMENT: approval_manager.request_approval(GateType.AFTER_IMPLEMENT, ...)
+    # - Before VERIFY: approval_manager.request_approval(GateType.BEFORE_VERIFY, ...)
+    # - After VERIFY: approval_manager.request_approval(GateType.AFTER_VERIFY, ...)
+    # - Before REVIEW: approval_manager.request_approval(GateType.BEFORE_REVIEW, ...)
+    # - After review issues: approval_manager.request_approval(GateType.AFTER_REVIEW_ISSUES, ...)
+    # - Before COMMIT: approval_manager.request_approval(GateType.BEFORE_COMMIT, ...)
 
     # Handle custom_prompt as a standalone step before the main loop
     if custom_prompt:
