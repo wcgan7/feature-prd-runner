@@ -162,40 +162,29 @@ def should_use_parallel_execution(
 
 
 def create_phase_executor_fn(
-    phase_id: str,
-    phase_data: dict[str, Any],
-    context: PhaseExecutionContext,
-) -> PhaseResult:
-    """Create an executor function for a single phase.
-
-    This function would execute all tasks for a phase sequentially,
-    but multiple phases can run in parallel.
+    phase_executor: Any,  # PhaseExecutor instance
+) -> callable:
+    """Create an executor function for the ParallelExecutor.
 
     Args:
-        phase_id: Phase identifier.
-        phase_data: Phase configuration.
-        context: Execution context.
+        phase_executor: PhaseExecutor instance.
 
     Returns:
-        PhaseResult with success/failure info.
+        Function that executes a phase.
     """
-    # TODO: This is a placeholder for the actual phase execution logic
-    # In a full implementation, this would:
-    # 1. Execute all tasks for the phase (plan_impl -> implement -> verify -> review)
-    # 2. Update task states in task_queue
-    # 3. Handle errors and blocking conditions
-    # 4. Return PhaseResult
+    def executor_fn(phase_id: str, phase_data: dict[str, Any]) -> PhaseResult:
+        """Execute a single phase.
 
-    logger.info("Phase {} execution placeholder - would execute {} tasks", phase_id, len(phase_data.get("tasks", [])))
+        Args:
+            phase_id: Phase identifier.
+            phase_data: Phase configuration with tasks.
 
-    # For now, just return success
-    # Real implementation would integrate with the existing task execution logic
-    return PhaseResult(
-        phase_id=phase_id,
-        success=True,
-        error=None,
-        duration_seconds=0.0,
-    )
+        Returns:
+            PhaseResult with execution status.
+        """
+        return phase_executor.execute_phase(phase_id, phase_data)
+
+    return executor_fn
 
 
 def log_parallel_execution_intent(
@@ -231,15 +220,14 @@ def log_parallel_execution_intent(
         logger.error("Failed to create parallel execution plan: {}", e)
 
 
-# NOTE: Full integration with orchestrator would require:
-# 1. Extracting the task execution logic into a reusable function
-# 2. Making it thread-safe (already uses FileLock in many places)
-# 3. Creating a wrapper that executes all tasks for a phase
-# 4. Using ParallelExecutor to run phases concurrently
-# 5. Collecting results and updating task states
-# 6. Handling failures and dependencies properly
+# NOTE: Parallel execution is now fully integrated!
 #
-# This is a complex integration that would require significant refactoring
-# of the orchestrator's main loop. The current implementation provides
-# the infrastructure and visualization, with full parallel execution
-# to be implemented in a future iteration.
+# ✅ Task execution logic extracted into PhaseExecutor
+# ✅ Thread-safe with FileLock and GitCoordinator
+# ✅ PhaseExecutor wraps all tasks for a phase
+# ✅ ParallelExecutor runs phases concurrently
+# ✅ Results collected and task states updated
+# ✅ Failures and dependencies handled properly
+#
+# See phase_executor.py for task execution and orchestrator.py
+# for the integration point (around line 805).

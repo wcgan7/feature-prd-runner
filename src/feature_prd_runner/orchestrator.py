@@ -22,7 +22,10 @@ from .parallel_integration import (
     log_parallel_execution_intent,
     extract_phase_dependencies,
     group_tasks_by_phase,
+    create_phase_executor_fn,
 )
+from .parallel import ParallelExecutor
+from .phase_executor import PhaseExecutor
 from .constants import (
     DEFAULT_HEARTBEAT_GRACE_SECONDS,
     DEFAULT_HEARTBEAT_SECONDS,
@@ -800,25 +803,97 @@ def run_feature_prd(
                     parallel_phases = extract_phase_dependencies(phases, phase_tasks)
 
                     if parallel_phases:
-                        logger.info("Parallel execution mode enabled - analyzing dependencies")
+                        logger.info("Parallel execution mode enabled - executing phases in parallel")
                         log_parallel_execution_intent(parallel_phases, max_workers)
-                        logger.warning(
-                            "Note: Full parallel execution is not yet implemented. "
-                            "Phases will be executed sequentially but the execution plan "
-                            "shows how they could be parallelized in future versions."
+
+                        # Create PhaseExecutor for executing tasks
+                        from .phase_executor import PhaseExecutor
+
+                        phase_executor = PhaseExecutor(
+                            project_dir=project_dir,
+                            prd_path=prd_path,
+                            paths=paths,
+                            codex_command=codex_command,
+                            heartbeat_seconds=heartbeat_seconds,
+                            heartbeat_grace_seconds=heartbeat_grace_seconds,
+                            shift_minutes=shift_minutes,
+                            max_attempts=max_attempts,
+                            max_review_attempts=max_review_attempts,
+                            test_command=test_command,
+                            format_command=format_command,
+                            lint_command=lint_command,
+                            typecheck_command=typecheck_command,
+                            verify_profile=verify_profile,
+                            ensure_ruff=ensure_ruff,
+                            ensure_deps=ensure_deps,
+                            ensure_deps_command=ensure_deps_command,
+                            simple_review=simple_review,
+                            commit_enabled=commit_enabled,
+                            push_enabled=push_enabled,
                         )
 
-                        # TODO: Full parallel execution integration
-                        # To implement actual parallel execution:
-                        # 1. Extract task execution logic into thread-safe functions
-                        # 2. Create a PhaseExecutor that wraps full task lifecycle
-                        # 3. Use ParallelExecutor.execute_parallel() with PhaseExecutor
-                        # 4. Handle concurrent state updates with proper locking
-                        # 5. Coordinate git operations safely across threads
-                        # 6. Aggregate results and update task states
-                        # 7. Handle partial failures (some phases succeed, others fail)
-                        #
-                        # See parallel_integration.py for infrastructure placeholders
+                        # Create executor function for parallel execution
+                        executor_fn = create_phase_executor_fn(phase_executor)
+
+                        # Execute phases in parallel
+                        parallel_exec = ParallelExecutor(max_workers=max_workers)
+                        try:
+                            results = parallel_exec.execute_parallel(
+                                parallel_phases,
+                                executor_fn,
+                                max_workers,
+                            )
+
+                            # Process results
+                            success_count = sum(1 for r in results if r.success)
+                            failure_count = sum(1 for r in results if not r.success)
+
+                            logger.info(
+                                "Parallel execution completed: {} succeeded, {} failed",
+                                success_count,
+                                failure_count,
+                            )
+
+                            # Log details for failed phases
+                            for result in results:
+                                if not result.success:
+                                    logger.error(
+                                        "Phase {} failed: {}",
+                                        result.phase_id,
+                                        result.error,
+                                    )
+
+                            # If any phase failed, report and potentially stop
+                            if failure_count > 0:
+                                # Reload queue to get updated task states
+                                with FileLock(lock_path):
+                                    queue = _load_data(paths["task_queue"], {})
+                                    tasks = _normalize_tasks(queue)
+
+                                    # Find blocked tasks
+                                    blocked_tasks = _blocking_tasks(tasks)
+                                    if blocked_tasks and stop_on_blocking_issues:
+                                        _append_event(
+                                            paths["events"],
+                                            _blocking_event_payload(blocked_tasks),
+                                        )
+                                        _report_blocking_tasks(blocked_tasks, paths, stopping=True)
+                                        _finalize_run_state(
+                                            paths,
+                                            lock_path,
+                                            status="blocked",
+                                            last_error=f"{failure_count} phase(s) failed during parallel execution",
+                                        )
+                                        return
+
+                            # Continue the main loop to pick up any remaining work
+                            logger.info("Parallel batch completed. Continuing main loop.")
+                            continue
+
+                        except Exception as e:
+                            logger.exception("Parallel execution failed: {}", e)
+                            logger.warning("Falling back to sequential execution")
+                            # Fall through to sequential execution
                 else:
                     logger.info(
                         "Parallel execution requested but not viable for current task set. "
