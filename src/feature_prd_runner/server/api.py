@@ -23,6 +23,8 @@ from .models import (
     ChatMessage,
     ControlAction,
     ControlResponse,
+    FileChange,
+    FileReviewRequest,
     LoginRequest,
     LoginResponse,
     PhaseInfo,
@@ -935,6 +937,208 @@ def create_app(
             return ControlResponse(
                 success=False,
                 message=f"Error sending message: {e}",
+                data={},
+            )
+
+    @app.get("/api/file-changes")
+    async def get_file_changes(
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+        task_id: Optional[str] = Query(None, description="Task ID"),
+    ) -> list[FileChange]:
+        """Get file changes for review.
+
+        Args:
+            project_dir: Project directory path.
+            task_id: Optional task ID (uses current working tree if not specified).
+
+        Returns:
+            List of file changes with diffs.
+        """
+        import subprocess
+
+        proj_dir = _get_project_dir(project_dir)
+
+        # Check if in a git repository
+        try:
+            subprocess.run(
+                ["git", "rev-parse", "--git-dir"],
+                cwd=proj_dir,
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError:
+            return []
+
+        files = []
+
+        try:
+            # Get list of changed files
+            if task_id:
+                # Try to find task branch
+                state_dir = proj_dir / ".prd_runner"
+                if state_dir.exists():
+                    task_queue_path = state_dir / "task_queue.yaml"
+                    tasks = _load_data(task_queue_path, {})
+
+                    branch = None
+                    for t in tasks.get("tasks", []):
+                        if t.get("id") == task_id:
+                            branch = t.get("branch")
+                            break
+
+                    if branch:
+                        # Get diff from main to branch
+                        result = subprocess.run(
+                            ["git", "diff", f"main...{branch}", "--numstat"],
+                            cwd=proj_dir,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                    else:
+                        result = subprocess.run(
+                            ["git", "diff", "--numstat"],
+                            cwd=proj_dir,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                else:
+                    result = subprocess.run(
+                        ["git", "diff", "--numstat"],
+                        cwd=proj_dir,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+            else:
+                # Current working tree changes
+                result = subprocess.run(
+                    ["git", "diff", "--numstat"],
+                    cwd=proj_dir,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            if result.stdout:
+                for line in result.stdout.strip().split("\n"):
+                    parts = line.split("\t")
+                    if len(parts) >= 3:
+                        additions = parts[0]
+                        deletions = parts[1]
+                        file_path = parts[2]
+
+                        # Get diff for this file
+                        if task_id and branch:
+                            diff_result = subprocess.run(
+                                ["git", "diff", f"main...{branch}", "--", file_path],
+                                cwd=proj_dir,
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                            )
+                        else:
+                            diff_result = subprocess.run(
+                                ["git", "diff", "--", file_path],
+                                cwd=proj_dir,
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                            )
+
+                        # Determine status
+                        try:
+                            add_count = int(additions) if additions != "-" else 0
+                            del_count = int(deletions) if deletions != "-" else 0
+                        except ValueError:
+                            add_count = 0
+                            del_count = 0
+
+                        if add_count > 0 and del_count == 0:
+                            status = "added"
+                        elif add_count == 0 and del_count > 0:
+                            status = "deleted"
+                        else:
+                            status = "modified"
+
+                        files.append(
+                            FileChange(
+                                file_path=file_path,
+                                status=status,
+                                additions=add_count,
+                                deletions=del_count,
+                                diff=diff_result.stdout,
+                                approved=None,
+                                comments=[],
+                            )
+                        )
+
+        except Exception as e:
+            logger.error("Failed to get file changes: {}", e)
+
+        return files
+
+    @app.post("/api/file-review")
+    async def submit_file_review(
+        review: FileReviewRequest,
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+    ) -> ControlResponse:
+        """Submit file review (approve/reject).
+
+        Args:
+            review: File review action.
+            project_dir: Project directory path.
+
+        Returns:
+            Response indicating success or failure.
+        """
+        proj_dir = _get_project_dir(project_dir)
+        paths = _get_paths(proj_dir)
+
+        # Store review in file_reviews.json
+        reviews_path = paths["state_dir"] / "file_reviews.json"
+
+        try:
+            if reviews_path.exists():
+                reviews_data = _load_data(reviews_path, {})
+            else:
+                reviews_data = {"reviews": []}
+
+            # Add or update review
+            review_dict = {
+                "file_path": review.file_path,
+                "approved": review.approved,
+                "comment": review.comment,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+
+            # Remove existing review for this file
+            reviews_data["reviews"] = [
+                r for r in reviews_data.get("reviews", []) if r.get("file_path") != review.file_path
+            ]
+
+            reviews_data["reviews"].append(review_dict)
+
+            _save_data(reviews_path, reviews_data)
+
+            logger.info(
+                "File review submitted: file={} approved={}",
+                review.file_path,
+                review.approved,
+            )
+
+            return ControlResponse(
+                success=True,
+                message=f"File {'approved' if review.approved else 'rejected'}",
+                data=review_dict,
+            )
+
+        except Exception as e:
+            logger.error("Failed to submit file review: {}", e)
+            return ControlResponse(
+                success=False,
+                message=f"Error submitting review: {e}",
                 data={},
             )
 

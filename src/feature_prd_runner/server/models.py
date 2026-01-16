@@ -208,3 +208,23 @@ class SendMessageRequest(BaseModel):
     content: str
     type: str = "guidance"  # guidance, clarification_request
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FileChange(BaseModel):
+    """File change with diff."""
+
+    file_path: str
+    status: str  # added, modified, deleted
+    additions: int
+    deletions: int
+    diff: str
+    approved: Optional[bool] = None
+    comments: list[str] = Field(default_factory=list)
+
+
+class FileReviewRequest(BaseModel):
+    """Request to approve/reject a file."""
+
+    file_path: str
+    approved: bool
+    comment: Optional[str] = None
