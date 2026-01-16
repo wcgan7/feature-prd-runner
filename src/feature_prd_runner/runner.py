@@ -887,6 +887,381 @@ def _steer_command(project_dir: Path, run_id: Optional[str], message: Optional[s
     return 0
 
 
+def _build_correct_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - send correction to running worker",
+    )
+    parser.add_argument(
+        "task_id",
+        type=str,
+        help="Task ID to correct",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        help="Run ID (auto-detect if not specified)",
+    )
+    parser.add_argument(
+        "--file",
+        type=str,
+        help="File path to correct",
+    )
+    parser.add_argument(
+        "--issue",
+        type=str,
+        required=True,
+        help="Description of the issue",
+    )
+    parser.add_argument(
+        "--fix",
+        type=str,
+        help="Suggested fix or correction",
+    )
+    return parser
+
+
+def _correct_command(
+    task_id: str,
+    project_dir: Path,
+    run_id: Optional[str],
+    file_path: Optional[str],
+    issue: str,
+    fix: Optional[str],
+) -> int:
+    """Send correction to running worker."""
+    project_dir = project_dir.resolve()
+    state_dir = project_dir / STATE_DIR_NAME
+
+    if not state_dir.exists():
+        sys.stdout.write("No .prd_runner state directory found\n")
+        return 1
+
+    # Auto-detect run_id if not specified
+    if not run_id:
+        run_state_path = state_dir / "run_state.yaml"
+        run_state = _load_data(run_state_path, {})
+        run_id = run_state.get("run_id")
+
+    if not run_id:
+        sys.stdout.write("No active run found\n")
+        return 1
+
+    # Find progress.json for this run
+    runs_dir = state_dir / "runs"
+    progress_path = None
+    for run_dir in runs_dir.glob(f"{run_id}*"):
+        candidate = run_dir / "progress.json"
+        if candidate.exists():
+            progress_path = candidate
+            break
+
+    if not progress_path:
+        sys.stdout.write(f"No progress.json found for run {run_id}\n")
+        return 1
+
+    bus = MessageBus(progress_path)
+
+    # Create correction message
+    correction = {
+        "task_id": task_id,
+        "issue": issue,
+    }
+    if file_path:
+        correction["file"] = file_path
+    if fix:
+        correction["suggested_fix"] = fix
+
+    from datetime import datetime, timezone
+
+    msg = Message(
+        id=f"correction-{int(datetime.now(timezone.utc).timestamp() * 1000)}",
+        type="correction",
+        content=issue,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        metadata=correction,
+    )
+
+    bus.send_to_worker(msg)
+    sys.stdout.write(f"✓ Correction sent for task {task_id}\n")
+    if file_path:
+        sys.stdout.write(f"  File: {file_path}\n")
+    sys.stdout.write(f"  Issue: {issue}\n")
+    if fix:
+        sys.stdout.write(f"  Suggested fix: {fix}\n")
+
+    return 0
+
+
+def _build_require_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - add requirement to running worker",
+    )
+    parser.add_argument(
+        "requirement",
+        type=str,
+        help="Requirement to add",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        help="Run ID (auto-detect if not specified)",
+    )
+    parser.add_argument(
+        "--task-id",
+        type=str,
+        help="Task ID to apply requirement to",
+    )
+    parser.add_argument(
+        "--priority",
+        type=str,
+        choices=["high", "medium", "low"],
+        default="medium",
+        help="Priority of requirement (default: medium)",
+    )
+    return parser
+
+
+def _require_command(
+    requirement: str,
+    project_dir: Path,
+    run_id: Optional[str],
+    task_id: Optional[str],
+    priority: str,
+) -> int:
+    """Add requirement to running worker."""
+    project_dir = project_dir.resolve()
+    state_dir = project_dir / STATE_DIR_NAME
+
+    if not state_dir.exists():
+        sys.stdout.write("No .prd_runner state directory found\n")
+        return 1
+
+    # Auto-detect run_id if not specified
+    if not run_id:
+        run_state_path = state_dir / "run_state.yaml"
+        run_state = _load_data(run_state_path, {})
+        run_id = run_state.get("run_id")
+
+    if not run_id:
+        sys.stdout.write("No active run found\n")
+        return 1
+
+    # Find progress.json for this run
+    runs_dir = state_dir / "runs"
+    progress_path = None
+    for run_dir in runs_dir.glob(f"{run_id}*"):
+        candidate = run_dir / "progress.json"
+        if candidate.exists():
+            progress_path = candidate
+            break
+
+    if not progress_path:
+        sys.stdout.write(f"No progress.json found for run {run_id}\n")
+        return 1
+
+    bus = MessageBus(progress_path)
+
+    # Create requirement message
+    req_metadata = {"priority": priority}
+    if task_id:
+        req_metadata["task_id"] = task_id
+
+    from datetime import datetime, timezone
+
+    msg = Message(
+        id=f"requirement-{int(datetime.now(timezone.utc).timestamp() * 1000)}",
+        type="requirement",
+        content=requirement,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        metadata=req_metadata,
+    )
+
+    bus.send_to_worker(msg)
+    sys.stdout.write(f"✓ Requirement added: {requirement}\n")
+    if task_id:
+        sys.stdout.write(f"  Applied to task: {task_id}\n")
+    sys.stdout.write(f"  Priority: {priority}\n")
+
+    return 0
+
+
+def _build_breakpoint_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - manage breakpoints",
+    )
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+
+    # breakpoint set
+    set_parser = subparsers.add_parser("set", help="Set a breakpoint")
+    set_parser.add_argument(
+        "--before",
+        type=str,
+        help="Break before this step (plan_impl, implement, verify, review, commit)",
+    )
+    set_parser.add_argument(
+        "--after",
+        type=str,
+        help="Break after this step",
+    )
+    set_parser.add_argument(
+        "--task-id",
+        type=str,
+        help="Apply to specific task only",
+    )
+    set_parser.add_argument(
+        "--condition",
+        type=str,
+        help="Conditional expression (e.g., 'files_changed > 10')",
+    )
+    set_parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+
+    # breakpoint list
+    list_parser = subparsers.add_parser("list", help="List breakpoints")
+    list_parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+
+    # breakpoint remove
+    remove_parser = subparsers.add_parser("remove", help="Remove a breakpoint")
+    remove_parser.add_argument(
+        "breakpoint_id",
+        type=str,
+        help="Breakpoint ID to remove",
+    )
+    remove_parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+
+    # breakpoint clear
+    clear_parser = subparsers.add_parser("clear", help="Clear all breakpoints")
+    clear_parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+
+    # breakpoint toggle
+    toggle_parser = subparsers.add_parser("toggle", help="Enable/disable a breakpoint")
+    toggle_parser.add_argument(
+        "breakpoint_id",
+        type=str,
+        help="Breakpoint ID to toggle",
+    )
+    toggle_parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+
+    return parser
+
+
+def _breakpoint_command(args: argparse.Namespace) -> int:
+    """Manage breakpoints."""
+    from .breakpoints import BreakpointManager
+
+    project_dir = args.project_dir.resolve()
+    state_dir = project_dir / STATE_DIR_NAME
+
+    if not state_dir.exists():
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+    manager = BreakpointManager(state_dir)
+
+    if args.subcommand == "set":
+        # Determine trigger and target
+        if args.before:
+            trigger = "before_step"
+            target = args.before
+        elif args.after:
+            trigger = "after_step"
+            target = args.after
+        else:
+            sys.stdout.write("Error: Must specify --before or --after\n")
+            return 1
+
+        bp = manager.add_breakpoint(
+            trigger=trigger,
+            target=target,
+            task_id=args.task_id,
+            condition=args.condition,
+            action="pause",
+        )
+
+        sys.stdout.write(f"✓ Breakpoint created: {bp.id}\n")
+        sys.stdout.write(f"  Trigger: {bp.trigger}\n")
+        sys.stdout.write(f"  Target: {bp.target}\n")
+        if bp.task_id:
+            sys.stdout.write(f"  Task: {bp.task_id}\n")
+        if bp.condition:
+            sys.stdout.write(f"  Condition: {bp.condition}\n")
+
+    elif args.subcommand == "list":
+        breakpoints = manager.list_breakpoints()
+
+        if not breakpoints:
+            sys.stdout.write("No breakpoints set\n")
+            return 0
+
+        sys.stdout.write(f"Breakpoints ({len(breakpoints)}):\n\n")
+        for bp in breakpoints:
+            status = "✓" if bp.enabled else "✗"
+            sys.stdout.write(f"{status} {bp.id}: {bp.trigger} {bp.target}\n")
+            if bp.task_id:
+                sys.stdout.write(f"    Task: {bp.task_id}\n")
+            if bp.condition:
+                sys.stdout.write(f"    Condition: {bp.condition}\n")
+            sys.stdout.write(f"    Hit count: {bp.hit_count}\n")
+            sys.stdout.write("\n")
+
+    elif args.subcommand == "remove":
+        if manager.remove_breakpoint(args.breakpoint_id):
+            sys.stdout.write(f"✓ Breakpoint {args.breakpoint_id} removed\n")
+        else:
+            sys.stdout.write(f"Breakpoint {args.breakpoint_id} not found\n")
+            return 1
+
+    elif args.subcommand == "clear":
+        count = manager.clear_all()
+        sys.stdout.write(f"✓ Cleared {count} breakpoint(s)\n")
+
+    elif args.subcommand == "toggle":
+        enabled = manager.toggle_breakpoint(args.breakpoint_id)
+        if enabled is not None:
+            status = "enabled" if enabled else "disabled"
+            sys.stdout.write(f"✓ Breakpoint {args.breakpoint_id} {status}\n")
+        else:
+            sys.stdout.write(f"Breakpoint {args.breakpoint_id} not found\n")
+            return 1
+
+    return 0
+
+
 def _build_view_changes_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Feature PRD Runner - view current code changes (git diff)",
@@ -2553,6 +2928,32 @@ def main(argv: list[str] | None = None) -> None:
                     args.context,
                 )
             )
+        if argv[0] == "correct":
+            args = _build_correct_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _correct_command(
+                    args.task_id,
+                    args.project_dir,
+                    args.run_id,
+                    args.file,
+                    args.issue,
+                    args.fix,
+                )
+            )
+        if argv[0] == "require":
+            args = _build_require_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _require_command(
+                    args.requirement,
+                    args.project_dir,
+                    args.run_id,
+                    args.task_id,
+                    args.priority,
+                )
+            )
+        if argv[0] == "breakpoint":
+            args = _build_breakpoint_parser().parse_args(argv[1:])
+            raise SystemExit(_breakpoint_command(args))
         if argv[0] == "explain":
             args = _build_explain_parser().parse_args(argv[1:])
             raise SystemExit(
