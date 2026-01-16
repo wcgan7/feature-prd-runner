@@ -15,8 +15,11 @@ from ..io_utils import _load_data
 from ..phase_utils import _normalize_phases
 from ..tasks import _normalize_tasks
 from .models import (
+    AuthStatus,
     ControlAction,
     ControlResponse,
+    LoginRequest,
+    LoginResponse,
     PhaseInfo,
     ProjectInfo,
     ProjectStatus,
@@ -89,6 +92,49 @@ def create_app(
             "version": "1.0.0",
             "status": "running",
         }
+
+    @app.post("/api/auth/login")
+    async def login(request: LoginRequest) -> LoginResponse:
+        """Login endpoint.
+
+        Args:
+            request: Login credentials.
+
+        Returns:
+            Access token and user info.
+        """
+        from datetime import timedelta
+
+        from .auth import auth_config, create_access_token, verify_credentials
+
+        if not verify_credentials(request.username, request.password):
+            raise HTTPException(status_code=401, detail="Incorrect username or password")
+
+        access_token_expires = timedelta(minutes=auth_config.access_token_expire_minutes)
+        access_token = create_access_token(
+            data={"sub": request.username}, expires_delta=access_token_expires
+        )
+
+        return LoginResponse(
+            access_token=access_token,
+            token_type="bearer",
+            username=request.username,
+        )
+
+    @app.get("/api/auth/status")
+    async def auth_status() -> AuthStatus:
+        """Get authentication status.
+
+        Returns:
+            Auth status including whether auth is enabled.
+        """
+        from .auth import auth_config
+
+        return AuthStatus(
+            enabled=auth_config.enabled,
+            authenticated=not auth_config.enabled,  # Always authenticated if auth disabled
+            username=auth_config.username if not auth_config.enabled else None,
+        )
 
     @app.get("/api/projects")
     async def list_projects(

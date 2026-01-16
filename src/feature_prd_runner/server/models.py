@@ -135,6 +135,29 @@ class ControlResponse(BaseModel):
     data: Optional[dict[str, Any]] = None
 
 
+class LoginRequest(BaseModel):
+    """Login request."""
+
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    """Login response."""
+
+    access_token: str
+    token_type: str = "bearer"
+    username: str
+
+
+class AuthStatus(BaseModel):
+    """Authentication status."""
+
+    enabled: bool
+    authenticated: bool
+    username: Optional[str] = None
+
+
 class WebSocketMessage(BaseModel):
     """WebSocket message."""
 

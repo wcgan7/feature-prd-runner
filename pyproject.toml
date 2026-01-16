@@ -27,6 +27,8 @@ server = [
   "uvicorn[standard]>=0.27.0",
   "websockets>=12.0",
   "pydantic>=2.5.0",
+  "pyjwt>=2.8.0",
+  "python-multipart>=0.0.6",
 ]
 
 [tool.mypy]
