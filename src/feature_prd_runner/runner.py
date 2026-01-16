@@ -1062,6 +1062,88 @@ def _plan_parallel_command(
     return 0
 
 
+def _build_server_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - start web dashboard server",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to bind to (default: 8080)",
+    )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload for development",
+    )
+    parser.add_argument(
+        "--no-cors",
+        action="store_true",
+        help="Disable CORS (not recommended for development)",
+    )
+    return parser
+
+
+def _server_command(
+    project_dir: Path,
+    host: str,
+    port: int,
+    reload: bool,
+    enable_cors: bool,
+) -> int:
+    """Start the web dashboard server."""
+    project_dir = project_dir.resolve()
+
+    try:
+        import uvicorn  # type: ignore
+    except ImportError:
+        sys.stdout.write("Error: uvicorn not installed.\n")
+        sys.stdout.write("Install with: pip install 'feature-prd-runner[server]'\n")
+        return 1
+
+    try:
+        from .server import create_app
+    except ImportError as e:
+        sys.stdout.write(f"Error importing server module: {e}\n")
+        sys.stdout.write("Install with: pip install 'feature-prd-runner[server]'\n")
+        return 1
+
+    # Create app with project directory
+    app = create_app(project_dir=project_dir, enable_cors=enable_cors)
+
+    sys.stdout.write(f"\n{'='*60}\n")
+    sys.stdout.write("Feature PRD Runner - Web Dashboard\n")
+    sys.stdout.write(f"{'='*60}\n")
+    sys.stdout.write(f"Project: {project_dir}\n")
+    sys.stdout.write(f"Server: http://{host}:{port}\n")
+    sys.stdout.write(f"API Docs: http://{host}:{port}/docs\n")
+    sys.stdout.write(f"{'='*60}\n\n")
+
+    # Run server
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info",
+    )
+
+    return 0
+
+
 def _explain_command(project_dir: Path, task_id: str) -> int:
     """Explain why a task is blocked."""
     project_dir = project_dir.resolve()
@@ -2406,6 +2488,17 @@ def main(argv: list[str] | None = None) -> None:
                     args.project_dir,
                     args.prd_file,
                     bool(args.tree),
+                )
+            )
+        if argv[0] == "server":
+            args = _build_server_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _server_command(
+                    args.project_dir,
+                    args.host,
+                    args.port,
+                    bool(args.reload),
+                    enable_cors=not bool(args.no_cors),
                 )
             )
 

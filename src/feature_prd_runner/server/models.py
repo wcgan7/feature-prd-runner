@@ -1,0 +1,131 @@
+"""Pydantic models for API responses."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Optional
+
+from pydantic import BaseModel, Field
+
+
+class PhaseInfo(BaseModel):
+    """Phase information."""
+
+    id: str
+    name: str
+    description: str
+    status: str
+    deps: list[str] = Field(default_factory=list)
+    progress: float = 0.0  # 0.0 to 1.0
+
+
+class TaskInfo(BaseModel):
+    """Task information."""
+
+    id: str
+    type: str
+    phase_id: Optional[str] = None
+    step: str
+    lifecycle: str
+    status: str
+    branch: Optional[str] = None
+    last_error: Optional[str] = None
+    last_run_id: Optional[str] = None
+    worker_attempts: int = 0
+
+
+class RunMetrics(BaseModel):
+    """Run metrics."""
+
+    tokens_used: int = 0
+    api_calls: int = 0
+    estimated_cost_usd: float = 0.0
+    wall_time_seconds: float = 0.0
+    phases_completed: int = 0
+    phases_total: int = 0
+    files_changed: int = 0
+    lines_added: int = 0
+    lines_removed: int = 0
+
+
+class RunInfo(BaseModel):
+    """Run information."""
+
+    run_id: str
+    task_id: str
+    phase: str
+    step: str
+    status: str
+    started_at: str
+    updated_at: str
+    metrics: Optional[RunMetrics] = None
+
+
+class RunDetail(BaseModel):
+    """Detailed run information."""
+
+    run_id: str
+    task_id: str
+    phase: str
+    step: str
+    status: str
+    started_at: str
+    updated_at: str
+    current_task_id: Optional[str] = None
+    current_phase_id: Optional[str] = None
+    last_error: Optional[str] = None
+    phases: list[PhaseInfo] = Field(default_factory=list)
+    tasks: list[TaskInfo] = Field(default_factory=list)
+    metrics: Optional[RunMetrics] = None
+
+
+class ProjectStatus(BaseModel):
+    """Project status overview."""
+
+    project_dir: str
+    status: str
+    current_task_id: Optional[str] = None
+    current_phase_id: Optional[str] = None
+    run_id: Optional[str] = None
+    last_error: Optional[str] = None
+    phases_completed: int = 0
+    phases_total: int = 0
+    tasks_ready: int = 0
+    tasks_running: int = 0
+    tasks_done: int = 0
+    tasks_blocked: int = 0
+
+
+class LogEntry(BaseModel):
+    """Log entry."""
+
+    timestamp: str
+    level: str
+    message: str
+    run_id: Optional[str] = None
+    task_id: Optional[str] = None
+
+
+class ControlAction(BaseModel):
+    """Control action request."""
+
+    action: str  # pause, resume, skip, retry, stop
+    task_id: Optional[str] = None
+    step: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class ControlResponse(BaseModel):
+    """Control action response."""
+
+    success: bool
+    message: str
+    data: Optional[dict[str, Any]] = None
+
+
+class WebSocketMessage(BaseModel):
+    """WebSocket message."""
+
+    type: str  # status_update, log_entry, phase_complete, error
+    timestamp: str
+    data: dict[str, Any]

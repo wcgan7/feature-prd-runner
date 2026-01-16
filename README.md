@@ -97,6 +97,35 @@ For machine-readable output:
 feature-prd-runner status --project-dir /path/to/your/project --json
 ```
 
+## Web Dashboard
+
+Monitor and control runs through a modern web interface:
+
+```bash
+# Start the backend server
+feature-prd-runner server --port 8080
+
+# In another terminal, start the frontend (requires Node.js)
+cd web
+npm install
+npm run dev
+```
+
+Access the dashboard at http://localhost:3000
+
+**Features**:
+- Real-time run status and progress
+- Phase timeline with dependencies
+- Live log streaming via WebSocket
+- Metrics: API usage, costs, timing, code changes
+- Responsive design for mobile/desktop
+
+**Requirements**:
+- Backend: `pip install 'feature-prd-runner[server]'`
+- Frontend: Node.js 18+ and npm
+
+See [web/README.md](web/README.md) for detailed setup and development instructions.
+
 ## Dry Run
 
 Preview what the runner would do next without making any changes (no git changes, no `.prd_runner` writes, no Codex, no tests):
