@@ -11,6 +11,7 @@ import ProjectSelector from './components/ProjectSelector'
 import Login from './components/Login'
 import ApprovalGate from './components/ApprovalGate'
 import Chat from './components/Chat'
+import FileReview from './components/FileReview'
 
 interface ProjectStatus {
   project_dir: string
@@ -262,6 +263,11 @@ function App() {
         />
 
         <ApprovalGate projectDir={currentProject || undefined} />
+
+        <FileReview
+          taskId={status?.current_task_id}
+          projectDir={currentProject || undefined}
+        />
 
         <div className="grid">
           <div className="col-2">

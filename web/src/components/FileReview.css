@@ -1,0 +1,402 @@
+.file-review {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5rem;
+}
+
+.review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.review-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.review-stats {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.875rem;
+}
+
+.stat {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-weight: 600;
+}
+
+.stat.approved {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.stat.rejected {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.stat.pending {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.stat.total {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.loading,
+.error,
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+  color: #666;
+}
+
+.error {
+  color: #f44336;
+}
+
+.review-container {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 1.5rem;
+  height: 600px;
+}
+
+.file-list {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow-y: auto;
+  background: #fafafa;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid #e0e0e0;
+  cursor: pointer;
+  transition: background 0.2s;
+  position: relative;
+}
+
+.file-item:hover {
+  background: #f5f5f5;
+}
+
+.file-item.selected {
+  background: #e3f2fd;
+  border-left: 4px solid #2196f3;
+}
+
+.file-item.approved {
+  border-left: 4px solid #4caf50;
+}
+
+.file-item.rejected {
+  border-left: 4px solid #f44336;
+}
+
+.file-status {
+  flex-shrink: 0;
+}
+
+.status-icon {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: white;
+  font-weight: bold;
+  text-align: center;
+  line-height: 24px;
+  font-size: 0.875rem;
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name {
+  font-size: 0.875rem;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-changes {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.additions {
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+.deletions {
+  color: #c62828;
+  font-weight: 600;
+}
+
+.review-badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+}
+
+.file-item.approved .review-badge {
+  background: #4caf50;
+  color: white;
+}
+
+.file-item.rejected .review-badge {
+  background: #f44336;
+  color: white;
+}
+
+.file-detail {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detail-header {
+  background: #f5f5f5;
+  padding: 1rem;
+  border-bottom: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.file-path-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.status-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.file-path {
+  font-family: 'Courier New', monospace;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.change-stats {
+  display: flex;
+  gap: 1rem;
+}
+
+.diff-container {
+  flex: 1;
+  overflow-y: auto;
+  background: #fafafa;
+}
+
+.diff-view {
+  font-family: 'Courier New', monospace;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.diff-line {
+  padding: 0 0.75rem;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.diff-line.addition {
+  background: #e6ffed;
+  color: #24292e;
+}
+
+.diff-line.deletion {
+  background: #ffebe9;
+  color: #24292e;
+}
+
+.diff-line.hunk {
+  background: #f1f8ff;
+  color: #586069;
+  font-weight: 600;
+}
+
+.no-diff {
+  padding: 2rem;
+  text-align: center;
+  color: #666;
+}
+
+.review-actions {
+  padding: 1rem;
+  border-top: 1px solid #e0e0e0;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.comment-input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  resize: vertical;
+}
+
+.comment-input:focus {
+  outline: none;
+  border-color: #2196f3;
+}
+
+.comment-input:disabled {
+  background: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.approve-btn,
+.reject-btn {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.approve-btn {
+  background: #4caf50;
+  color: white;
+}
+
+.approve-btn:hover:not(:disabled) {
+  background: #45a049;
+}
+
+.reject-btn {
+  background: #f44336;
+  color: white;
+}
+
+.reject-btn:hover:not(:disabled) {
+  background: #da190b;
+}
+
+.approve-btn:disabled,
+.reject-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.navigation-buttons {
+  padding: 1rem;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f9f9f9;
+}
+
+.navigation-buttons button {
+  padding: 0.5rem 1rem;
+  background: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.navigation-buttons button:hover:not(:disabled) {
+  background: #1976d2;
+}
+
+.navigation-buttons button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #9e9e9e;
+}
+
+.file-counter {
+  font-size: 0.875rem;
+  color: #666;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .review-container {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .file-list {
+    max-height: 300px;
+  }
+
+  .diff-container {
+    max-height: 400px;
+  }
+}
+
+@media (max-width: 768px) {
+  .review-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .review-stats {
+    flex-wrap: wrap;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+  }
+
+  .approve-btn,
+  .reject-btn {
+    width: 100%;
+  }
+}
