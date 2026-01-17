@@ -12,7 +12,6 @@ from .constants import (
     AUTO_RESUME_ERROR_TYPES,
     IGNORED_REVIEW_PATH_PREFIXES,
     TASK_STATUS_BLOCKED,
-    TASK_STATUS_DOING,
     TASK_STATUS_DONE,
     TASK_STATUS_IMPLEMENTING,
     TASK_STATUS_PLAN_IMPL,
@@ -76,7 +75,7 @@ def _infer_lifecycle_step(task: dict[str, Any], status: str) -> tuple[str, str]:
         return TaskLifecycle.READY.value, TaskStep.REVIEW.value
     if status == TASK_STATUS_PLAN_IMPL:
         return TaskLifecycle.READY.value, TaskStep.PLAN_IMPL.value
-    if status in {TASK_STATUS_IMPLEMENTING, TASK_STATUS_DOING, "in_progress"}:
+    if status == TASK_STATUS_IMPLEMENTING:
         return TaskLifecycle.READY.value, TaskStep.IMPLEMENT.value
     return TaskLifecycle.READY.value, TaskStep.PLAN_IMPL.value
 
@@ -603,8 +602,8 @@ def _blocking_event_payload(blocked_tasks: list[dict[str, Any]]) -> dict[str, An
                 "last_error": task.get("last_error"),
                 "last_error_type": task.get("last_error_type"),
                 "block_reason": task.get("block_reason"),
-                "blocking_issues": _coerce_string_list(task.get("human_blocking_issues")),
-                "blocking_next_steps": _coerce_string_list(task.get("human_next_steps")),
+                "human_blocking_issues": _coerce_string_list(task.get("human_blocking_issues")),
+                "human_next_steps": _coerce_string_list(task.get("human_next_steps")),
             }
             for task in blocked_tasks
         ],
