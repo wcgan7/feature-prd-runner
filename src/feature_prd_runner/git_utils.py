@@ -72,6 +72,19 @@ def _git_current_branch(project_dir: Path) -> Optional[str]:
     return result.stdout.strip()
 
 
+def _git_head_sha(project_dir: Path) -> Optional[str]:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def _git_branch_exists(project_dir: Path, branch: str) -> bool:
     result = subprocess.run(
         ["git", "show-ref", "--verify", f"refs/heads/{branch}"],

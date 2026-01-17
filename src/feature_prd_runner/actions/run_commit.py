@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..git_utils import _git_commit, _git_has_changes, _git_push
+from ..git_utils import _git_commit, _git_has_changes, _git_head_sha, _git_push
 from ..models import CommitResult
 
 
@@ -55,12 +55,14 @@ def run_commit_action(
 
     try:
         _git_commit(project_dir, commit_message)
+        commit_sha = _git_head_sha(project_dir)
         if push_enabled:
             _git_push(project_dir, branch)
         return CommitResult(
             run_id=run_id,
             committed=True,
             pushed=bool(push_enabled),
+            commit_sha=commit_sha,
             error=None,
             repo_clean=False,
             skipped=False,

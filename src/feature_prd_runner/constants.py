@@ -26,7 +26,6 @@ TASK_STATUS_TODO = "todo"
 TASK_STATUS_DOING = "doing"
 TASK_STATUS_PLAN_IMPL = "plan_impl"
 TASK_STATUS_IMPLEMENTING = "implementing"
-TASK_STATUS_TESTING = "testing"  # Kept for compatibility, mapped to implementing logic
 TASK_STATUS_REVIEW = "review"
 TASK_STATUS_DONE = "done"
 TASK_STATUS_BLOCKED = "blocked"

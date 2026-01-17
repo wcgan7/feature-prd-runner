@@ -434,10 +434,10 @@ def run_worker_action(
     if not ok and mode == "implement":
         return AllowlistViolation(
             run_id=run_id,
-            step=step,
             disallowed_paths=disallowed_files,
             changed_files=post_run_changed,
-            introduced_changes=introduced,
+            task_id=str(task.get("id")) if task.get("id") else None,
+            phase=str(phase_id) if phase_id is not None else None,
         )
     if not ok:
         failure = True
@@ -523,56 +523,51 @@ def run_worker_action(
             simple_review=simple_review,
         )
         if not valid_review:
-            return ReviewResult(
+            return WorkerFailed(
                 run_id=run_id,
-                valid=False,
-                blocking_severities_present=False,
-                issues=[],
-                files=[],
-                review_path=str(review_path),
-                review_issue=review_issue,
+                step=step,
+                error_type="invalid_review",
+                error_detail=review_issue or "Review output invalid",
+                changed_files=changed_files,
+                task_id=str(task.get("id")) if task.get("id") else None,
+                phase=str(phase_id) if phase_id is not None else None,
             )
-        issues = review_data.get("issues") or []
-        if simple_review:
-            # Simple review: "high" severity issues are blocking, mergeable=false also blocks
-            blocking = [
-                it
-                for it in issues
-                if isinstance(it, dict)
-                and str(it.get("severity", "")).strip().lower() == "high"
-            ]
-            # If mergeable is explicitly false, treat as blocking
-            if not review_data.get("mergeable", True):
-                blocking_severities_present = True
-            else:
-                blocking_severities_present = bool(blocking)
-            blocker_files = []  # Simple review doesn't track files
-        else:
-            blocking = [
-                it
-                for it in issues
-                if isinstance(it, dict)
-                and str(it.get("severity", "")).strip().lower() in {"critical", "high"}
-            ]
-            blocking_severities_present = bool(blocking)
-            blocker_files = _extract_review_blocker_files(review_data)
+
+        raw_issues = review_data.get("issues") or []
+        formatted_issues: list[str] = []
+        for item in raw_issues:
+            if isinstance(item, str):
+                text = item.strip()
+                if text:
+                    formatted_issues.append(text)
+                continue
+            if isinstance(item, dict):
+                severity = str(item.get("severity", "")).strip().upper()
+                summary = str(item.get("summary") or item.get("text") or "").strip()
+                if severity and summary:
+                    formatted_issues.append(f"{severity}: {summary}")
+                elif summary:
+                    formatted_issues.append(summary)
+                continue
+
+        mergeable = bool(review_data.get("mergeable", True))
         return ReviewResult(
             run_id=run_id,
-            valid=True,
-            blocking_severities_present=blocking_severities_present,
-            issues=blocking,
-            files=blocker_files,
+            mergeable=mergeable,
+            issues=formatted_issues,
             review_path=str(review_path),
-            review_issue=None,
+            task_id=str(task.get("id")) if task.get("id") else None,
+            phase=str(phase_id) if phase_id is not None else None,
         )
 
     if step == TaskStep.IMPLEMENT:
         if not introduced:
             return NoIntroducedChanges(
                 run_id=run_id,
-                step=step,
                 repo_dirty=repo_dirty,
                 changed_files=post_run_changed,
+                task_id=str(task.get("id")) if task.get("id") else None,
+                phase=str(phase_id) if phase_id is not None else None,
             )
         return WorkerSucceeded(
             step=step,

@@ -9,6 +9,12 @@ Modern web dashboard for monitoring and controlling Feature PRD Runner.
 - Node.js 18+ and npm
 - Backend server running (see main README)
 
+For the backend, if you prefer `uv`, you can install the server extra with:
+
+```bash
+uv pip install 'feature-prd-runner[server]'
+```
+
 ### Installation
 
 ```bash
@@ -27,6 +33,21 @@ npm run dev
 The dashboard will be available at http://localhost:3000
 
 The backend API should be running at http://localhost:8080
+
+### Tests
+
+Run unit/integration tests (Vitest):
+
+```bash
+npm test
+```
+
+Optional:
+
+```bash
+npm run test:ui
+npm run test:coverage
+```
 
 ### Production Build
 

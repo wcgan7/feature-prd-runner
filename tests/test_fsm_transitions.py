@@ -587,7 +587,7 @@ class TestCommitResult:
 
         result = reduce_task(fresh_task, event, caps=caps)
 
-        assert result.lifecycle == TaskLifecycle.COMPLETE
+        assert result.lifecycle == TaskLifecycle.DONE
         assert result.commit_sha == "abc123def"
 
     def test_commit_failure(

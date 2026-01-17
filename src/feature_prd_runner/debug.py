@@ -53,7 +53,7 @@ class StateSnapshot:
     lifecycle: str
     step: str
     status: str
-    attempts: int
+    worker_attempts: int
     last_error: Optional[str]
     last_error_type: Optional[str]
     context: list[str]
@@ -317,7 +317,7 @@ class ErrorAnalyzer:
         Returns:
             Formatted error message string.
         """
-        console = Console(record=True, width=80)
+        console = Console(record=True, width=2000 if verbose else 80)
 
         # Header
         severity_colors = {
@@ -400,9 +400,10 @@ class ErrorAnalyzer:
         lines = [
             f"Task '{task_id}' is blocked and requires human intervention.",
             "",
+            f"Lifecycle: {task.get('lifecycle')}",
             f"Status: {task.get('status')}",
             f"Step: {task.get('step')}",
-            f"Attempts: {task.get('attempts', 0)}",
+            f"Worker attempts: {task.get('worker_attempts', 0)}",
             "",
         ]
 
@@ -462,7 +463,7 @@ class ErrorAnalyzer:
                     lifecycle=task.get("lifecycle", "unknown"),
                     step=task.get("step", "unknown"),
                     status=task.get("status", "unknown"),
-                    attempts=task.get("attempts", 0),
+                    worker_attempts=task.get("worker_attempts", 0),
                     last_error=task.get("last_error"),
                     last_error_type=task.get("last_error_type"),
                     context=task.get("context", []),
@@ -524,7 +525,7 @@ class ErrorAnalyzer:
         table.add_row("Lifecycle:", snapshot.lifecycle)
         table.add_row("Step:", snapshot.step)
         table.add_row("Status:", snapshot.status)
-        table.add_row("Attempts:", str(snapshot.attempts))
+        table.add_row("Worker attempts:", str(snapshot.worker_attempts))
 
         console.print(table)
 

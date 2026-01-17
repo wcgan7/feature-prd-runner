@@ -35,7 +35,7 @@ from .git_utils import _ensure_branch, _git_changed_files, _git_has_changes
 from .io_utils import FileLock, _append_event, _load_data, _save_data, _update_progress
 from .models import ProgressHumanBlockers, TaskLifecycle, TaskState, TaskStep, WorkerFailed, WorkerSucceeded
 from .parallel import PhaseResult
-from .phase_utils import _normalize_phases, _phase_for_task, _sync_phase_status
+from .tasks import _normalize_phases, _phase_for_task, _sync_phase_status
 from .signals import build_allowed_files
 from .tasks import (
     _find_task,

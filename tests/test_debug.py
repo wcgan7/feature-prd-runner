@@ -96,7 +96,7 @@ class TestStateSnapshot:
             lifecycle="waiting_human",
             step="verify",
             status="test_failed",
-            attempts=3,
+            worker_attempts=3,
             last_error="Tests failed",
             last_error_type="test_failed",
             context=["context1", "context2"],
@@ -107,7 +107,7 @@ class TestStateSnapshot:
         assert snapshot.lifecycle == "waiting_human"
         assert snapshot.step == "verify"
         assert snapshot.status == "test_failed"
-        assert snapshot.attempts == 3
+        assert snapshot.worker_attempts == 3
         assert snapshot.last_error == "Tests failed"
         assert len(snapshot.context) == 2
 
@@ -423,7 +423,7 @@ class TestErrorAnalyzer:
                     "lifecycle": "waiting_human",
                     "status": "test_failed",
                     "step": "verify",
-                    "attempts": 2,
+                    "worker_attempts": 2,
                     "last_error": "Tests failed with 3 errors",
                     "last_error_type": "test_failed",
                     "block_reason": "Verification failed",
@@ -440,7 +440,7 @@ class TestErrorAnalyzer:
         assert "waiting_human" in explanation
         assert "test_failed" in explanation
         assert "verify" in explanation
-        assert "Attempts: 2" in explanation
+        assert "Worker attempts: 2" in explanation
         assert "Tests failed with 3 errors" in explanation
         assert "Verification failed" in explanation
         assert "Fix test failures" in explanation
@@ -485,7 +485,7 @@ class TestErrorAnalyzer:
                     "lifecycle": "waiting_human",
                     "step": "verify",
                     "status": "test_failed",
-                    "attempts": 3,
+                    "worker_attempts": 3,
                     "last_error": "Tests failed",
                     "last_error_type": "test_failed",
                     "context": ["ctx1", "ctx2"],
@@ -505,7 +505,7 @@ class TestErrorAnalyzer:
         assert snapshot.lifecycle == "waiting_human"
         assert snapshot.step == "verify"
         assert snapshot.status == "test_failed"
-        assert snapshot.attempts == 3
+        assert snapshot.worker_attempts == 3
         assert snapshot.last_error == "Tests failed"
         assert snapshot.last_error_type == "test_failed"
         assert len(snapshot.context) == 2
@@ -546,7 +546,7 @@ class TestErrorAnalyzer:
         assert snapshot.lifecycle == "unknown"
         assert snapshot.step == "unknown"
         assert snapshot.status == "unknown"
-        assert snapshot.attempts == 0
+        assert snapshot.worker_attempts == 0
 
     def test_trace_history_no_events_file(self, error_analyzer: ErrorAnalyzer):
         """Test trace_history when events file doesn't exist."""
@@ -621,7 +621,7 @@ class TestErrorAnalyzer:
             lifecycle="waiting_human",
             step="verify",
             status="test_failed",
-            attempts=2,
+            worker_attempts=2,
             last_error="Tests failed with 3 errors",
             last_error_type="test_failed",
             context=["context1", "context2"],
@@ -634,7 +634,7 @@ class TestErrorAnalyzer:
         assert "waiting_human" in formatted
         assert "verify" in formatted
         assert "test_failed" in formatted
-        assert "2" in formatted  # attempts
+        assert "2" in formatted  # worker attempts
         assert "Tests failed with 3 errors" in formatted
         assert "context1" in formatted
         assert "feature" in formatted
@@ -646,7 +646,7 @@ class TestErrorAnalyzer:
             lifecycle="running",
             step="implement",
             status="active",
-            attempts=1,
+            worker_attempts=1,
             last_error=None,
             last_error_type=None,
             context=[f"context{i}" for i in range(10)],
@@ -665,7 +665,7 @@ class TestErrorAnalyzer:
             lifecycle="queued",
             step="plan",
             status="pending",
-            attempts=0,
+            worker_attempts=0,
             last_error=None,
             last_error_type=None,
             context=[],

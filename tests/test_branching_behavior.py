@@ -87,10 +87,8 @@ def test_single_branch_used_across_phases(tmp_path: Path, monkeypatch: pytest.Mo
         if step == TaskStep.REVIEW:
             return ReviewResult(
                 run_id=run_id,
-                valid=True,
-                blocking_severities_present=False,
+                mergeable=True,
                 issues=[],
-                files=[],
                 review_path=None,
             )
         raise AssertionError(f"Unexpected worker step: {step}")
@@ -186,10 +184,8 @@ def test_no_new_branch_does_not_checkout(tmp_path: Path, monkeypatch: pytest.Mon
         if step == TaskStep.REVIEW:
             return ReviewResult(
                 run_id=run_id,
-                valid=True,
-                blocking_severities_present=False,
+                mergeable=True,
                 issues=[],
-                files=[],
                 review_path=None,
             )
         raise AssertionError(f"Unexpected worker step: {step}")

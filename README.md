@@ -23,6 +23,12 @@ From this repo:
 python -m pip install -e .
 ```
 
+If you prefer `uv`:
+
+```bash
+uv pip install -e .
+```
+
 ## Quick Start (in your target project)
 
 The `example/` folder in this repository contains a starter `AGENTS.md` and a sample PRD.
@@ -121,7 +127,7 @@ Access the dashboard at http://localhost:3000
 - Responsive design for mobile/desktop
 
 **Requirements**:
-- Backend: `pip install 'feature-prd-runner[server]'`
+- Backend: `pip install 'feature-prd-runner[server]'` (or `uv pip install 'feature-prd-runner[server]'`)
 - Frontend: Node.js 18+ and npm
 
 See [web/README.md](web/README.md) for detailed setup and development instructions.
@@ -518,7 +524,24 @@ See [docs/PARALLEL_EXECUTION.md](docs/PARALLEL_EXECUTION.md) for:
 
 ## Testing
 
+### Python
+
 ```bash
 python -m pip install -e ".[test]"
 python -m pytest
+```
+
+With `uv`:
+
+```bash
+uv pip install -e ".[test]"
+uv run pytest
+```
+
+### Web Dashboard (Frontend)
+
+```bash
+cd web
+npm install
+npm test
 ```

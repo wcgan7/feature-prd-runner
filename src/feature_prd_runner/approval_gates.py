@@ -164,7 +164,7 @@ class ApprovalGateManager:
         response = bus.request_approval(request)
 
         # Send timeout notification if needed
-        if not response.approved and response.feedback == "Auto-approved due to timeout":
+        if response.approved and response.feedback == "Auto-approved due to timeout":
             if self.notification_manager:
                 self.notification_manager.notify_approval_timeout(
                     gate_type=gate_type.value,

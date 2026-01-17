@@ -456,35 +456,28 @@ class TestSummarizeEvent:
         """Test ReviewResult event."""
         event = MockEvent(
             "ReviewResult",
-            valid=True,
-            blocking_severities_present=False,
+            mergeable=True,
             issues=[],
         )
 
         result = summarize_event(event)
 
         assert result["event"] == "ReviewResult"
-        assert result["valid"] is True
-        assert result["blocking"] is False
-        assert result["blocking_n"] == 0
+        assert result["mergeable"] is True
+        assert result["issues_n"] == 0
 
     def test_review_result_with_issues(self):
         """Test ReviewResult with blocking issues."""
         event = MockEvent(
             "ReviewResult",
-            valid=False,
-            blocking_severities_present=True,
-            issues=[
-                {"severity": "error", "message": "Issue 1"},
-                {"severity": "error", "message": "Issue 2"},
-            ],
+            mergeable=False,
+            issues=["Issue 1", "Issue 2"],
         )
 
         result = summarize_event(event)
 
-        assert result["valid"] is False
-        assert result["blocking"] is True
-        assert result["blocking_n"] == 2
+        assert result["mergeable"] is False
+        assert result["issues_n"] == 2
 
     def test_allowlist_violation_event(self):
         """Test AllowlistViolation event."""

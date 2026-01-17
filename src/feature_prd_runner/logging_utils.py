@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 
-_FAILED_RE = re.compile(r"^FAILED\s+(\S+)", re.M)
+_FAILED_NODEID_RE = re.compile(r"^(?P<nodeid>\S+)\s+FAILED\b", re.M)
+_FAILED_SUMMARY_RE = re.compile(r"^FAILED\s+(?P<nodeid>\S+)\b", re.M)
 _ASSERT_RE = re.compile(r"^(E\s+.+)$", re.M)
 _FAILURE_HEADER_RE = re.compile(r"^_{5,}\s*(.+?)\s*_{5,}$", re.M)
 
@@ -24,7 +25,19 @@ def summarize_pytest_failures(log_text: str, max_failed: int = 5) -> dict[str, o
     if not log_text:
         return {"failed": [], "headline": None, "first_error": None}
 
-    failed = _FAILED_RE.findall(log_text)[:max_failed]
+    failed: list[str] = []
+    seen: set[str] = set()
+    for regex in (_FAILED_NODEID_RE, _FAILED_SUMMARY_RE):
+        for match in regex.finditer(log_text):
+            nodeid = (match.group("nodeid") or "").strip()
+            if not nodeid or nodeid in seen:
+                continue
+            seen.add(nodeid)
+            failed.append(nodeid)
+            if len(failed) >= max_failed:
+                break
+        if len(failed) >= max_failed:
+            break
 
     # Grab first "E   ..." line (usually the key assertion or exception)
     m_err = _ASSERT_RE.search(log_text)
@@ -74,14 +87,22 @@ def summarize_event(event: Any, run_dir: Path | None = None) -> dict[str, Any]:
         d["error_detail"] = (detail[:240] + "…") if len(detail) > 240 else detail
         d["timed_out"] = bool(getattr(event, "timed_out", False))
         d["no_heartbeat"] = bool(getattr(event, "no_heartbeat", False))
-        d["introduced_n"] = len(getattr(event, "introduced_changes", []) or [])
+        introduced = getattr(event, "introduced_changes", None)
+        if isinstance(introduced, bool):
+            d["introduced_n"] = 1 if introduced else 0
+        else:
+            d["introduced_n"] = len(introduced or [])
         d["changed_n"] = len(getattr(event, "changed_files", []) or [])
         stderr_tail = str(getattr(event, "stderr_tail", "") or "").strip()
         if stderr_tail:
             d["stderr_tail"] = (stderr_tail[:240] + "…") if len(stderr_tail) > 240 else stderr_tail
 
     elif event_name == "WorkerSucceeded":
-        d["introduced_n"] = len(getattr(event, "introduced_changes", []) or [])
+        introduced = getattr(event, "introduced_changes", None)
+        if isinstance(introduced, bool):
+            d["introduced_n"] = 1 if introduced else 0
+        else:
+            d["introduced_n"] = len(introduced or [])
         d["changed_n"] = len(getattr(event, "changed_files", []) or [])
         d["repo_dirty"] = bool(getattr(event, "repo_dirty", False))
         if d.get("step") == "plan_impl":
@@ -100,13 +121,17 @@ def summarize_event(event: Any, run_dir: Path | None = None) -> dict[str, Any]:
         d["error_type"] = getattr(event, "error_type", None)
 
     elif event_name == "ReviewResult":
-        d["valid"] = bool(getattr(event, "valid", False))
-        d["blocking"] = bool(getattr(event, "blocking_severities_present", False))
-        d["blocking_n"] = len(getattr(event, "issues", []) or [])
+        d["mergeable"] = bool(getattr(event, "mergeable", False))
+        d["issues_n"] = len(getattr(event, "issues", []) or [])
 
     elif event_name == "AllowlistViolation":
         d["disallowed_n"] = len(getattr(event, "disallowed_paths", []) or [])
-        d["introduced_n"] = len(getattr(event, "introduced_changes", []) or [])
+        d["changed_n"] = len(getattr(event, "changed_files", []) or [])
+        introduced = getattr(event, "introduced_changes", None)
+        if isinstance(introduced, bool):
+            d["introduced_n"] = 1 if introduced else 0
+        else:
+            d["introduced_n"] = len(introduced or [])
 
     return d
 

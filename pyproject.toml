@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
   "loguru",
   "PyYAML>=6.0",
+  "rich",
 ]
 
 [project.optional-dependencies]

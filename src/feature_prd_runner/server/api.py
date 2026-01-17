@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 
 from ..io_utils import _load_data
-from ..phase_utils import _normalize_phases
+from ..tasks import _normalize_phases
 from ..tasks import _normalize_tasks
 from .models import (
     ApprovalAction,

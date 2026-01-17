@@ -189,11 +189,6 @@ def extract_failed_test_files(text: str, project_dir: Path) -> list[str]:
     return sorted(out)
 
 
-# Keep old name as alias for backwards compatibility
-def extract_failing_paths_from_pytest_log(log_text: str, project_dir: Path) -> list[str]:
-    """Alias for extract_failed_test_files for backwards compatibility."""
-    return extract_failed_test_files(log_text, project_dir)
-
 # pytest frame: src/foo.py:123: in func
 _PYTEST_FRAME_RE = re.compile(r"(?m)^(?P<path>(?:src|tests)/[^\s:]+\.py):\d+:")
 

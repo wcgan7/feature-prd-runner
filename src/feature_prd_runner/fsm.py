@@ -268,50 +268,35 @@ def reduce_task(task: TaskState, event: Any, *, caps: dict[str, int]) -> TaskSta
     if isinstance(event, ReviewResult):
         _record_run_id(task, event.run_id)
         task.last_review_path = event.review_path or task.last_review_path
-        if not event.valid:
-            task.review_gen_attempts += 1
-            task.last_error = event.review_issue or "Review output invalid"
-            task.last_error_type = "review_invalid"
-            if task.review_gen_attempts >= caps.get("review_gen_attempts", 3):
-                _set_waiting(task, "REVIEW_INVALID", task.last_error_type, task.last_error)
-                return task
+        task.last_review_mergeable = bool(event.mergeable)
+        task.last_review_issues = list(event.issues)
+
+        if event.mergeable:
+            task.review_fix_attempts = 0
+            task.review_blockers = []
+            task.review_blocker_files = []
+            task.last_error = None
+            task.last_error_type = None
             _clear_blocking(task)
-            _set_step(task, TaskStep.REVIEW)
+            _set_step(task, TaskStep.COMMIT)
             _set_ready(task)
             return task
 
-        if event.blocking_severities_present:
-            task.review_fix_attempts += 1
-            task.last_error = "Review blockers found"
-            task.last_error_type = "review_blockers"
-            task.review_blockers = [
-                f"{issue.get('severity','').upper()}: {issue.get('summary') or issue.get('text') or ''}"
-                for issue in event.issues
-                if isinstance(issue, dict)
-            ]
-            task.review_blocker_files = list(event.files)
-            if task.review_fix_attempts >= caps.get("review_fix_attempts", 3):
-                _set_waiting(task, "REVIEW_STUCK", task.last_error_type, task.last_error)
-                return task
-            _clear_blocking(task)
-            _set_step(task, TaskStep.IMPLEMENT, PromptMode.ADDRESS_REVIEW)
-            _set_ready(task)
-            return task
-
-        task.review_fix_attempts = 0
-        task.review_blockers = []
+        task.review_fix_attempts += 1
+        task.last_error = "Review blockers found"
+        task.last_error_type = "review_blockers"
+        task.review_blockers = list(event.issues)
         task.review_blocker_files = []
-        task.last_error = None
-        task.last_error_type = None
         _clear_blocking(task)
-        _set_step(task, TaskStep.COMMIT)
+        _set_step(task, TaskStep.IMPLEMENT, PromptMode.ADDRESS_REVIEW)
         _set_ready(task)
         return task
 
     if isinstance(event, CommitResult):
         _record_run_id(task, event.run_id)
-        if event.repo_clean or event.pushed or event.committed or getattr(event, "skipped", False):
+        if event.committed or event.repo_clean or event.pushed or getattr(event, "skipped", False):
             task.lifecycle = TaskLifecycle.DONE
+            task.commit_sha = event.commit_sha or task.commit_sha
             task.last_error = None
             task.last_error_type = None
             task.block_reason = None
@@ -326,6 +311,7 @@ def reduce_task(task: TaskState, event: Any, *, caps: dict[str, int]) -> TaskSta
         _record_run_id(task, event.run_id)
         if event.succeeded:
             # Resume prompt succeeded - continue with normal flow
+            task.last_changed_files = list(event.changed_files)
             task.last_error = None
             task.last_error_type = None
             _clear_blocking(task)
