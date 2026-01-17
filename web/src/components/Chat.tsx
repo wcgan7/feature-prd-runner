@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import './Chat.css'
+import { buildApiUrl, buildAuthHeaders } from '../api'
 
 interface ChatMessage {
   id: string
@@ -15,9 +16,17 @@ interface ChatProps {
   projectDir?: string
 }
 
+type OutgoingMessageType = 'guidance' | 'clarification_request' | 'requirement' | 'correction'
+
 const Chat = ({ runId, projectDir }: ChatProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputValue, setInputValue] = useState('')
+  const [messageType, setMessageType] = useState<OutgoingMessageType>('guidance')
+  const [requirementPriority, setRequirementPriority] = useState<'high' | 'medium' | 'low'>('medium')
+  const [requirementTaskId, setRequirementTaskId] = useState('')
+  const [correctionTaskId, setCorrectionTaskId] = useState('')
+  const [correctionFile, setCorrectionFile] = useState('')
+  const [correctionSuggestedFix, setCorrectionSuggestedFix] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isOpen, setIsOpen] = useState(false)
@@ -41,17 +50,10 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
 
   const fetchMessages = async () => {
     try {
-      const params = new URLSearchParams()
-      if (projectDir) params.append('project_dir', projectDir)
-      if (runId) params.append('run_id', runId)
-
-      const headers: HeadersInit = {}
-      const token = localStorage.getItem('feature-prd-runner-auth-token')
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
-
-      const response = await fetch(`/api/messages?${params}`, { headers })
+      const response = await fetch(
+        buildApiUrl('/api/messages', projectDir, { run_id: runId }),
+        { headers: buildAuthHeaders() }
+      )
       if (!response.ok) {
         throw new Error(`HTTP error ${response.status}`)
       }
@@ -66,29 +68,41 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
   const sendMessage = async () => {
     if (!inputValue.trim() || sending) return
 
+    if (messageType === 'correction' && !correctionTaskId.trim()) {
+      setError('Task ID is required for corrections')
+      return
+    }
+
     setSending(true)
     setError(null)
 
     try {
-      const params = new URLSearchParams()
-      if (projectDir) params.append('project_dir', projectDir)
-      if (runId) params.append('run_id', runId)
-
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
+      const metadata: Record<string, any> = {}
+      if (messageType === 'requirement') {
+        metadata.priority = requirementPriority
+        if (requirementTaskId.trim()) {
+          metadata.task_id = requirementTaskId.trim()
+        }
+      } else if (messageType === 'correction') {
+        metadata.task_id = correctionTaskId.trim()
+        metadata.issue = inputValue.trim()
+        if (correctionFile.trim()) {
+          metadata.file = correctionFile.trim()
+        }
+        if (correctionSuggestedFix.trim()) {
+          metadata.suggested_fix = correctionSuggestedFix.trim()
+        }
+      } else if (messageType === 'clarification_request') {
+        metadata.expects_response = true
       }
-      const token = localStorage.getItem('feature-prd-runner-auth-token')
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
 
-      const response = await fetch(`/api/messages?${params}`, {
+      const response = await fetch(buildApiUrl('/api/messages', projectDir, { run_id: runId }), {
         method: 'POST',
-        headers,
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           content: inputValue,
-          type: 'guidance',
-          metadata: {},
+          type: messageType,
+          metadata,
         }),
       })
 
@@ -97,6 +111,13 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
       }
 
       setInputValue('')
+      if (messageType === 'requirement') {
+        setRequirementTaskId('')
+      } else if (messageType === 'correction') {
+        setCorrectionTaskId('')
+        setCorrectionFile('')
+        setCorrectionSuggestedFix('')
+      }
       // Immediately fetch messages to show the sent message
       await fetchMessages()
     } catch (err) {
@@ -130,6 +151,10 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
         return 'Question'
       case 'clarification_response':
         return 'Answer'
+      case 'requirement':
+        return 'Requirement'
+      case 'correction':
+        return 'Correction'
       default:
         return type
     }
@@ -200,21 +225,127 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
             </div>
           )}
 
-          <div className="chat-input">
-            <textarea
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Type a message to the worker..."
-              disabled={sending}
-              rows={2}
-            />
-            <button
-              onClick={sendMessage}
-              disabled={!inputValue.trim() || sending}
-            >
-              {sending ? 'Sending...' : 'Send'}
-            </button>
+          <div className="chat-input" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: '0.75rem', color: '#666' }}>
+                Type
+              </label>
+              <select
+                value={messageType}
+                onChange={(e) => setMessageType(e.target.value as OutgoingMessageType)}
+                disabled={sending}
+                aria-label="Message type"
+                style={{ padding: '0.25rem 0.5rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.75rem' }}
+              >
+                <option value="guidance">Guidance</option>
+                <option value="clarification_request">Question</option>
+                <option value="requirement">Requirement</option>
+                <option value="correction">Correction</option>
+              </select>
+            </div>
+
+            {messageType === 'requirement' && (
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <input
+                  value={requirementTaskId}
+                  onChange={(e) => setRequirementTaskId(e.target.value)}
+                  placeholder="Optional task_id"
+                  disabled={sending}
+                  aria-label="Requirement task id"
+                  style={{
+                    flex: 1,
+                    minWidth: '160px',
+                    padding: '0.5rem',
+                    border: '1px solid #e0e0e0',
+                    borderRadius: '8px',
+                    fontSize: '0.75rem',
+                    fontFamily: 'inherit',
+                  }}
+                />
+                <select
+                  value={requirementPriority}
+                  onChange={(e) => setRequirementPriority(e.target.value as any)}
+                  disabled={sending}
+                  aria-label="Requirement priority"
+                  style={{ padding: '0.25rem 0.5rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.75rem' }}
+                >
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+            )}
+
+            {messageType === 'correction' && (
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <input
+                  value={correctionTaskId}
+                  onChange={(e) => setCorrectionTaskId(e.target.value)}
+                  placeholder="task_id (required)"
+                  disabled={sending}
+                  aria-label="Correction task id"
+                  style={{
+                    flex: 1,
+                    minWidth: '160px',
+                    padding: '0.5rem',
+                    border: '1px solid #e0e0e0',
+                    borderRadius: '8px',
+                    fontSize: '0.75rem',
+                    fontFamily: 'inherit',
+                  }}
+                />
+                <input
+                  value={correctionFile}
+                  onChange={(e) => setCorrectionFile(e.target.value)}
+                  placeholder="Optional file path"
+                  disabled={sending}
+                  aria-label="Correction file path"
+                  style={{
+                    flex: 2,
+                    minWidth: '180px',
+                    padding: '0.5rem',
+                    border: '1px solid #e0e0e0',
+                    borderRadius: '8px',
+                    fontSize: '0.75rem',
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+            )}
+
+            {messageType === 'correction' && (
+              <input
+                value={correctionSuggestedFix}
+                onChange={(e) => setCorrectionSuggestedFix(e.target.value)}
+                placeholder="Optional suggested fix"
+                disabled={sending}
+                aria-label="Correction suggested fix"
+                style={{
+                  padding: '0.5rem',
+                  border: '1px solid #e0e0e0',
+                  borderRadius: '8px',
+                  fontSize: '0.75rem',
+                  fontFamily: 'inherit',
+                }}
+              />
+            )}
+
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
+              <textarea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Type a message to the worker..."
+                disabled={sending}
+                rows={2}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={!inputValue.trim() || sending || (messageType === 'correction' && !correctionTaskId.trim())}
+              >
+                {sending ? 'Sending...' : 'Send'}
+              </button>
+            </div>
           </div>
 
           <div className="chat-hints">
@@ -222,7 +353,7 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
             <ul>
               <li>Provide guidance to steer the worker's approach</li>
               <li>Ask questions about the current implementation</li>
-              <li>Request explanations or clarifications</li>
+              <li>Inject requirements or corrections mid-run</li>
             </ul>
           </div>
         </>

@@ -22,9 +22,9 @@ This document tracks planned enhancements to make the Feature PRD Runner more ve
 
 ## High Priority Features
 
-### 🟢 1. Active Human-in-the-Loop Controls
+### 🟡 1. Active Human-in-the-Loop Controls
 
-**Status**: 🟢 95% Complete (Production Ready)
+**Status**: 🟡 In Progress
 **Priority**: P0 (Critical)
 **Impact**: Versatility ⭐⭐⭐⭐⭐ | Usefulness ⭐⭐⭐⭐⭐ | Robustness ⭐⭐⭐⭐
 
@@ -264,7 +264,7 @@ class GuidanceSystem:
 
     def add_constraint(self, constraint: str):
         """Add constraint on implementation."""
-        # "Must maintain backwards compatibility"
+        # "Must avoid network access"
         pass
 
     def provide_example(self, example: str, context: str):
@@ -602,23 +602,23 @@ async def steer_websocket(websocket: WebSocket, run_id: str):
 ```
 
 **Acceptance Criteria**:
-- [ ] Approval gates system with configurable checkpoints
-- [ ] `steer` command for real-time interaction
-- [ ] Live collaboration chat with worker
-- [ ] Step-by-step approval mode (--interactive)
-- [ ] Change review UI (CLI and Web)
-- [ ] Inline editing and corrections
-- [ ] Breakpoint system with conditions
-- [ ] Guidance injection API
+- [x] Approval gates system with configurable checkpoints
+- [x] `steer` command for real-time interaction
+- [x] Live collaboration chat with worker
+- [x] Step-by-step approval mode (`--interactive`)
+- [x] Change review UI (CLI and Web)
+- [x] Inline corrections (`correct`/`require`)
+- [x] Breakpoint system with conditions
+- [x] Guidance injection API
 - [ ] Multi-user collaboration support
 - [ ] Comments and annotations system
-- [ ] WebSocket-based real-time updates
+- [x] WebSocket-based real-time updates
 - [ ] Web UI panels for all features
-- [ ] Notification system for approval requests
-- [ ] Timeout handling for approvals
+- [x] Notification system for approval requests
+- [x] Timeout handling for approvals
 - [ ] Rollback on rejection
 - [ ] Tests for all approval flows
-- [ ] Documentation with examples
+- [x] Documentation with examples
 - [ ] Video tutorials for interactive features
 
 **Related Features**:
@@ -762,9 +762,9 @@ feature-prd-runner workers estimate --prd-file feature.md
 
 ---
 
-### 🟢 2. Web UI Dashboard
+### 🟡 2. Web UI Dashboard
 
-**Status**: 🟢 Complete
+**Status**: 🟡 In Progress
 **Priority**: P0 (Critical)
 **Impact**: Versatility ⭐⭐⭐ | Usefulness ⭐⭐⭐⭐⭐ | Robustness ⭐⭐⭐
 
@@ -903,14 +903,14 @@ feature-prd-runner server --auth --users-file users.yaml
 - [x] Authentication and authorization system (optional, env-configured)
 - [x] Multi-project support
 - [x] Mobile-responsive design
-- [x] One-command server startup
-- [x] Documentation and screenshots (in README)
+- [ ] One-command server startup
+- [ ] Documentation and screenshots (in README)
 
 ---
 
-### 🔴 3. Flexible Step Progression & Custom Prompts
+### 🟡 3. Flexible Step Progression & Custom Prompts
 
-**Status**: 🔴 Not Started
+**Status**: 🟡 In Progress
 **Priority**: P0 (Critical)
 **Impact**: Versatility ⭐⭐⭐⭐⭐ | Usefulness ⭐⭐⭐⭐⭐ | Robustness ⭐⭐⭐
 
@@ -1119,18 +1119,17 @@ register_step("security_scan", SecurityScanStep())
 - Extensible with custom step types
 
 **Acceptance Criteria**:
-- [ ] `exec` command for one-off custom prompts
+- [x] `exec` command for one-off custom prompts
 - [ ] Custom workflow definitions (YAML)
 - [ ] Step injection commands
 - [ ] Conditional step execution
 - [ ] Step hooks system
-- [ ] Interactive mode implementation
+- [x] Interactive mode implementation
 - [ ] Parallel custom task execution
 - [ ] Custom step registration API
 - [ ] Built-in workflow presets (standard, hotfix, thorough)
 - [ ] Documentation with examples for each feature
 - [ ] Tests for workflow engine
-- [ ] Backward compatibility with existing runs
 
 ---
 
@@ -1496,25 +1495,25 @@ feature-prd-runner diff run-123 run-456
 ```
 
 **Acceptance Criteria**:
-- [ ] Rich error formatting with colors and structure
-- [ ] Root cause analysis for common errors
+- [x] Rich error formatting with colors and structure
+- [x] Root cause analysis for common errors
 - [ ] Actionable suggestions with specific file/line numbers
 - [ ] `debug` command with interactive mode
 - [ ] `replay` command with verbose logging
-- [ ] `explain` command for blocked tasks
+- [x] `explain` command for blocked tasks
 - [ ] AI-powered `suggest-fix` command
-- [ ] `trace` and `inspect` commands
+- [x] `trace` and `inspect` commands
 - [ ] Error templates for all error types
-- [ ] Tests for error analysis
+- [x] Tests for error analysis
 - [ ] Documentation with examples
 
 ---
 
 ## Phase 2: Observability & UX (Weeks 3-4)
 
-### 🔴 6. Comprehensive Metrics & Telemetry
+### 🟡 6. Comprehensive Metrics & Telemetry
 
-**Status**: 🔴 Not Started
+**Status**: 🟡 In Progress
 **Priority**: P1
 **Impact**: Versatility ⭐⭐ | Usefulness ⭐⭐⭐⭐⭐ | Robustness ⭐⭐⭐⭐
 
@@ -1645,7 +1644,7 @@ feature-prd-runner metrics --compare run-1 run-2
 - Alert configuration
 
 **Acceptance Criteria**:
-- [ ] `RunMetrics` dataclass with all key metrics
+- [x] `RunMetrics` dataclass with all key metrics
 - [ ] `MetricsCollector` integration into orchestrator
 - [ ] `metrics` CLI command with formatting
 - [ ] Historical metrics tracking
@@ -1653,7 +1652,7 @@ feature-prd-runner metrics --compare run-1 run-2
 - [ ] Performance timing breakdown
 - [ ] HTML/CSV export formats
 - [ ] Metrics comparison tool
-- [ ] Integration with web dashboard
+- [x] Integration with web dashboard
 - [ ] Tests for metrics collection
 - [ ] Documentation
 
@@ -2228,14 +2227,14 @@ feature-prd-runner plan --prd-file feature.md --show-parallel
 ```
 
 **Acceptance Criteria**:
-- [ ] Topological sort for dependency resolution
-- [ ] Circular dependency detection
-- [ ] Parallel execution with worker pool
+- [x] Topological sort for dependency resolution
+- [x] Circular dependency detection
+- [x] Parallel execution with worker pool
 - [ ] Resource limits enforcement
 - [ ] Progress tracking for parallel phases
 - [ ] Error handling and rollback
-- [ ] CLI flags for parallel control
-- [ ] Visualization of execution plan
+- [x] CLI flags for parallel control
+- [x] Visualization of execution plan
 - [ ] Tests for parallel execution
 - [ ] Documentation
 
@@ -2436,9 +2435,9 @@ feature-prd-runner checkpoint show checkpoint-abc123
 
 ## Phase 5: Advanced Features (Weeks 11+)
 
-### 🔴 14. Advanced Dependency Management
+### 🟡 14. Advanced Dependency Management
 
-**Status**: 🔴 Not Started
+**Status**: 🟡 In Progress
 **Priority**: P3
 **Impact**: Versatility ⭐⭐⭐ | Usefulness ⭐⭐⭐ | Robustness ⭐⭐⭐
 
@@ -2505,7 +2504,7 @@ phases:
 **Acceptance Criteria**:
 - [ ] `PhaseOutput` and `DependencyGraph` classes
 - [ ] Import/export system in prompts
-- [ ] Circular dependency detection
+- [x] Circular dependency detection
 - [ ] Tests for dependency resolution
 - [ ] Documentation
 
@@ -2587,9 +2586,9 @@ security:
 
 ---
 
-### 🔴 16. Documentation & Onboarding
+### 🟡 16. Documentation & Onboarding
 
-**Status**: 🔴 Not Started
+**Status**: 🟡 In Progress
 **Priority**: P2
 **Impact**: Versatility ⭐⭐ | Usefulness ⭐⭐⭐⭐ | Robustness ⭐⭐
 
@@ -2625,7 +2624,7 @@ feature-prd-runner help resume --examples
 
 **Acceptance Criteria**:
 - [ ] Interactive onboarding wizard
-- [ ] Example projects (Python, TypeScript, Go)
+- [x] Example project (Python)
 - [ ] Video tutorials (basic, advanced)
 - [ ] Comprehensive troubleshooting guide
 - [ ] API documentation (Sphinx/MkDocs)

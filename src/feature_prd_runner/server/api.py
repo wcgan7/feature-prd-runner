@@ -20,6 +20,8 @@ from .models import (
     ApprovalAction,
     ApprovalGateInfo,
     AuthStatus,
+    BreakpointCreateRequest,
+    BreakpointInfo,
     ChatMessage,
     ControlAction,
     ControlResponse,
@@ -655,6 +657,141 @@ def create_app(
                 data={"action": action.action, "task_id": action.task_id},
             )
 
+    @app.get("/api/breakpoints")
+    async def list_breakpoints(
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+    ) -> list[BreakpointInfo]:
+        """List configured breakpoints for a project."""
+        from ..breakpoints import BreakpointManager
+
+        proj_dir = _get_project_dir(project_dir)
+        state_dir = proj_dir / ".prd_runner"
+        if not state_dir.exists():
+            return []
+
+        manager = BreakpointManager(state_dir)
+        return [BreakpointInfo(**bp.to_dict()) for bp in manager.list_breakpoints()]
+
+    @app.post("/api/breakpoints")
+    async def create_breakpoint(
+        request: BreakpointCreateRequest,
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+    ) -> ControlResponse:
+        """Create a breakpoint."""
+        from ..breakpoints import BreakpointManager
+
+        proj_dir = _get_project_dir(project_dir)
+        state_dir = proj_dir / ".prd_runner"
+        if not state_dir.exists():
+            return ControlResponse(
+                success=False,
+                message="No .prd_runner state directory found",
+                data={},
+            )
+
+        manager = BreakpointManager(state_dir)
+        bp = manager.add_breakpoint(
+            trigger=request.trigger,
+            target=request.target,
+            task_id=request.task_id,
+            condition=request.condition,
+            action=request.action,
+        )
+        return ControlResponse(
+            success=True,
+            message="Breakpoint created",
+            data=bp.to_dict(),
+        )
+
+    @app.post("/api/breakpoints/{breakpoint_id}/toggle")
+    async def toggle_breakpoint(
+        breakpoint_id: str,
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+    ) -> ControlResponse:
+        """Toggle breakpoint enabled status."""
+        from ..breakpoints import BreakpointManager
+
+        proj_dir = _get_project_dir(project_dir)
+        state_dir = proj_dir / ".prd_runner"
+        if not state_dir.exists():
+            return ControlResponse(
+                success=False,
+                message="No .prd_runner state directory found",
+                data={},
+            )
+
+        manager = BreakpointManager(state_dir)
+        enabled = manager.toggle_breakpoint(breakpoint_id)
+        if enabled is None:
+            return ControlResponse(
+                success=False,
+                message=f"Breakpoint not found: {breakpoint_id}",
+                data={"breakpoint_id": breakpoint_id},
+            )
+
+        bp = next((b for b in manager.list_breakpoints() if b.id == breakpoint_id), None)
+        return ControlResponse(
+            success=True,
+            message=f"Breakpoint {'enabled' if enabled else 'disabled'}",
+            data=bp.to_dict() if bp else {"breakpoint_id": breakpoint_id, "enabled": enabled},
+        )
+
+    @app.delete("/api/breakpoints/{breakpoint_id}")
+    async def delete_breakpoint(
+        breakpoint_id: str,
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+    ) -> ControlResponse:
+        """Delete a breakpoint."""
+        from ..breakpoints import BreakpointManager
+
+        proj_dir = _get_project_dir(project_dir)
+        state_dir = proj_dir / ".prd_runner"
+        if not state_dir.exists():
+            return ControlResponse(
+                success=False,
+                message="No .prd_runner state directory found",
+                data={},
+            )
+
+        manager = BreakpointManager(state_dir)
+        removed = manager.remove_breakpoint(breakpoint_id)
+        if not removed:
+            return ControlResponse(
+                success=False,
+                message=f"Breakpoint not found: {breakpoint_id}",
+                data={"breakpoint_id": breakpoint_id},
+            )
+
+        return ControlResponse(
+            success=True,
+            message="Breakpoint deleted",
+            data={"breakpoint_id": breakpoint_id},
+        )
+
+    @app.delete("/api/breakpoints")
+    async def clear_breakpoints(
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+    ) -> ControlResponse:
+        """Clear all breakpoints."""
+        from ..breakpoints import BreakpointManager
+
+        proj_dir = _get_project_dir(project_dir)
+        state_dir = proj_dir / ".prd_runner"
+        if not state_dir.exists():
+            return ControlResponse(
+                success=False,
+                message="No .prd_runner state directory found",
+                data={},
+            )
+
+        manager = BreakpointManager(state_dir)
+        count = manager.clear_all()
+        return ControlResponse(
+            success=True,
+            message=f"Cleared {count} breakpoint(s)",
+            data={"count": count},
+        )
+
     @app.get("/api/approvals")
     async def get_approvals(
         project_dir: Optional[str] = Query(None, description="Project directory path"),
@@ -670,39 +807,44 @@ def create_app(
         proj_dir = _get_project_dir(project_dir)
         paths = _get_paths(proj_dir)
 
-        # Look for pending approval requests in message bus
-        approvals = []
-        message_bus_path = paths["state_dir"] / "message_bus.json"
+        # Resolve current run and read approval state from progress.json
+        run_state = _load_data(paths["run_state"], {})
+        run_id = run_state.get("run_id")
+        if not run_id:
+            return []
 
-        if message_bus_path.exists():
-            try:
-                with open(message_bus_path) as f:
-                    bus_data = json.load(f)
+        progress_path: Optional[Path] = None
+        for run_dir in paths["runs"].glob(f"{run_id}*"):
+            candidate = run_dir / "progress.json"
+            if candidate.exists():
+                progress_path = candidate
+                break
 
-                # Find pending approval requests
-                for request in bus_data.get("approval_requests", []):
-                    if request.get("status") == "pending":
-                        approvals.append(
-                            ApprovalGateInfo(
-                                request_id=request.get("id", ""),
-                                gate_type=request.get("gate_type", ""),
-                                message=request.get("message", ""),
-                                task_id=request.get("context", {}).get("task_id"),
-                                phase_id=request.get("context", {}).get("phase_id"),
-                                created_at=request.get("created_at", ""),
-                                timeout=request.get("timeout"),
-                                context=request.get("context", {}),
-                                show_diff=request.get("context", {}).get("show_diff", False),
-                                show_plan=request.get("context", {}).get("show_plan", False),
-                                show_tests=request.get("context", {}).get("show_tests", False),
-                                show_review=request.get("context", {}).get("show_review", False),
-                            )
-                        )
+        if not progress_path:
+            return []
 
-            except Exception as e:
-                logger.error("Failed to read message bus: {}", e)
+        progress = _load_data(progress_path, {})
+        approval = progress.get("approval_pending")
+        if not isinstance(approval, dict):
+            return []
 
-        return approvals
+        context = approval.get("context") if isinstance(approval.get("context"), dict) else {}
+        return [
+            ApprovalGateInfo(
+                request_id=str(approval.get("id", "")),
+                gate_type=str(approval.get("gate_type", "")),
+                message=str(approval.get("message", "")),
+                task_id=context.get("task_id"),
+                phase_id=context.get("phase_id"),
+                created_at=str(approval.get("created_at", "")),
+                timeout=approval.get("timeout"),
+                context=context,
+                show_diff=bool(context.get("show_diff", False)),
+                show_plan=bool(context.get("show_plan", False)),
+                show_tests=bool(context.get("show_tests", False)),
+                show_review=bool(context.get("show_review", False)),
+            )
+        ]
 
     @app.post("/api/approvals/respond")
     async def respond_to_approval(
@@ -718,69 +860,71 @@ def create_app(
         Returns:
             Response indicating success or failure.
         """
+        from ..messaging import ApprovalResponse, MessageBus
+
         proj_dir = _get_project_dir(project_dir)
         paths = _get_paths(proj_dir)
 
-        message_bus_path = paths["state_dir"] / "message_bus.json"
+        run_state = _load_data(paths["run_state"], {})
+        run_id = run_state.get("run_id")
+        if not run_id:
+            return ControlResponse(success=False, message="No active run found", data={})
 
-        if not message_bus_path.exists():
+        progress_path: Optional[Path] = None
+        for run_dir in paths["runs"].glob(f"{run_id}*"):
+            candidate = run_dir / "progress.json"
+            if candidate.exists():
+                progress_path = candidate
+                break
+
+        if not progress_path:
             return ControlResponse(
                 success=False,
-                message="No pending approval requests found",
+                message=f"No progress.json found for run {run_id}",
                 data={},
             )
 
-        try:
-            # Read message bus
-            with open(message_bus_path) as f:
-                bus_data = json.load(f)
-
-            # Find the request
-            request_found = False
-            for request in bus_data.get("approval_requests", []):
-                if request.get("id") == action.request_id:
-                    request_found = True
-                    request["status"] = "approved" if action.approved else "rejected"
-                    request["responded_at"] = datetime.now(timezone.utc).isoformat()
-                    if action.feedback:
-                        request["feedback"] = action.feedback
-                    break
-
-            if not request_found:
-                return ControlResponse(
-                    success=False,
-                    message=f"Approval request {action.request_id} not found",
-                    data={},
-                )
-
-            # Write back to message bus
-            with open(message_bus_path, "w") as f:
-                json.dump(bus_data, f, indent=2)
-
-            logger.info(
-                "Approval request {} {}: {}",
-                action.request_id,
-                "approved" if action.approved else "rejected",
-                action.feedback or "no feedback",
-            )
-
-            return ControlResponse(
-                success=True,
-                message=f"Approval request {'approved' if action.approved else 'rejected'}",
-                data={
-                    "request_id": action.request_id,
-                    "approved": action.approved,
-                    "feedback": action.feedback,
-                },
-            )
-
-        except Exception as e:
-            logger.error("Failed to respond to approval: {}", e)
+        progress = _load_data(progress_path, {})
+        pending = progress.get("approval_pending")
+        if not isinstance(pending, dict):
             return ControlResponse(
                 success=False,
-                message=f"Error processing approval: {e}",
+                message="No pending approval request found",
                 data={},
             )
+
+        pending_id = str(pending.get("id", ""))
+        if pending_id != action.request_id:
+            return ControlResponse(
+                success=False,
+                message=f"Approval request {action.request_id} not found",
+                data={"pending_request_id": pending_id},
+            )
+
+        response = ApprovalResponse(
+            request_id=action.request_id,
+            approved=action.approved,
+            feedback=action.feedback,
+            responded_at=datetime.now(timezone.utc).isoformat(),
+        )
+        MessageBus(progress_path).respond_to_approval(response)
+
+        logger.info(
+            "Approval request {} {}: {}",
+            action.request_id,
+            "approved" if action.approved else "rejected",
+            action.feedback or "no feedback",
+        )
+
+        return ControlResponse(
+            success=True,
+            message=f"Approval request {'approved' if action.approved else 'rejected'}",
+            data={
+                "request_id": action.request_id,
+                "approved": action.approved,
+                "feedback": action.feedback,
+            },
+        )
 
     @app.get("/api/messages")
     async def get_messages(

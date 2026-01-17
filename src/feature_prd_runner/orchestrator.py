@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -16,7 +17,8 @@ from .actions.run_commit import run_commit_action
 from .actions.run_verify import run_verify_action
 from .actions.run_worker import run_resume_prompt_action, run_worker_action
 from .custom_execution import execute_custom_prompt
-from .approval_gates import ApprovalGateManager, create_default_gates_config
+from .approval_gates import ApprovalGateManager, GateType, create_default_gates_config
+from .breakpoints import BreakpointManager
 from .parallel_integration import (
     should_use_parallel_execution,
     log_parallel_execution_intent,
@@ -55,6 +57,8 @@ from .git_utils import (
     _ensure_branch,
     _ensure_gitignore,
     _git_current_branch,
+    _git_diff_stat,
+    _git_diff_text,
     _git_has_changes,
     _git_is_repo,
     _gitignore_change_is_prd_runner_only,
@@ -165,6 +169,23 @@ def _step_suffix(task_type: str, task_step: str) -> str:
     elif step_str == TaskStep.COMMIT.value:
         return "-commit"
     return ""
+
+
+def _gate_before_step(step: TaskStep) -> Optional[GateType]:
+    return {
+        TaskStep.PLAN_IMPL: GateType.BEFORE_PLAN_IMPL,
+        TaskStep.IMPLEMENT: GateType.BEFORE_IMPLEMENT,
+        TaskStep.VERIFY: GateType.BEFORE_VERIFY,
+        TaskStep.REVIEW: GateType.BEFORE_REVIEW,
+        TaskStep.COMMIT: GateType.BEFORE_COMMIT,
+    }.get(step)
+
+
+def _gate_after_step(step: TaskStep) -> Optional[GateType]:
+    return {
+        TaskStep.IMPLEMENT: GateType.AFTER_IMPLEMENT,
+        TaskStep.VERIFY: GateType.AFTER_VERIFY,
+    }.get(step)
 
 
 def run_feature_prd(
@@ -299,9 +320,8 @@ def run_feature_prd(
     if parallel:
         logger.info("Parallel execution enabled with {} workers", max_workers)
         logger.warning(
-            "Note: Parallel execution is currently experimental. "
-            "Phases will be analyzed for dependencies but executed sequentially. "
-            "Full parallel execution will be implemented in a future version."
+            "Note: Parallel execution is experimental. Independent phases may run concurrently, "
+            "but the runner may fall back to sequential execution when it is not viable."
         )
 
     if (require_clean or commit_enabled or push_enabled) and not _git_is_repo(project_dir):
@@ -316,6 +336,7 @@ def run_feature_prd(
         return
 
     paths = _ensure_state_files(project_dir, prd_path)
+    breakpoint_manager = BreakpointManager(paths["state_dir"])
 
     lock_path = paths["state_dir"] / LOCK_FILE
     iteration = 0
@@ -495,6 +516,62 @@ def run_feature_prd(
         approval_manager = ApprovalGateManager(gate_config)
         logger.info("Interactive mode enabled - approval gates active")
         logger.info("Use 'feature-prd-runner approve/reject/steer' commands to control execution")
+
+    def _block_task_and_stop(
+        *,
+        task_id: str,
+        task_type: str,
+        phase_id: Optional[str],
+        branch: Optional[str],
+        run_id: str,
+        step: TaskStep,
+        summary: str,
+        error_type: str,
+        next_steps: list[str],
+        details: dict[str, object] | None = None,
+    ) -> None:
+        _write_blocked_report(
+            paths["state_dir"],
+            error_type=error_type,
+            summary=summary,
+            details=details,
+            next_steps=next_steps,
+        )
+
+        blocked_snapshot: list[dict[str, Any]] | None = None
+        with FileLock(lock_path):
+            queue = _load_data(paths["task_queue"], {})
+            tasks = _normalize_tasks(queue)
+            target = _find_task(tasks, task_id)
+            if target:
+                target["lifecycle"] = TaskLifecycle.WAITING_HUMAN.value
+                target["block_reason"] = error_type.upper()
+                target["status"] = TASK_STATUS_BLOCKED
+                target["last_error"] = summary
+                target["last_error_type"] = error_type
+                target["human_blocking_issues"] = [summary]
+                target["human_next_steps"] = list(next_steps)
+                target["last_updated_at"] = _now_iso()
+                _record_blocked_intent(
+                    target,
+                    task_status=target.get("status", step.value),
+                    task_type=task_type,
+                    phase_id=phase_id or target.get("phase_id") or target.get("id"),
+                    branch=branch or target.get("branch"),
+                    test_command=target.get("test_command"),
+                    run_id=run_id,
+                    step=target.get("step"),
+                    lifecycle=target.get("lifecycle"),
+                    prompt_mode=target.get("prompt_mode"),
+                )
+                blocked_snapshot = [dict(target)]
+                _save_queue(paths["task_queue"], queue, tasks)
+
+        if blocked_snapshot:
+            _append_event(paths["events"], _blocking_event_payload(blocked_snapshot))
+            _report_blocking_tasks(blocked_snapshot, paths, stopping=True)
+
+        _finalize_run_state(paths, lock_path, status="blocked", last_error=summary)
 
     # NOTE: Approval gate integration points for future enhancement:
     # - Before PLAN_IMPL: approval_manager.request_approval(GateType.BEFORE_PLAN_IMPL, ...)
@@ -1306,6 +1383,97 @@ def run_feature_prd(
                 step_enum = TaskStep(task_step)
             except ValueError:
                 step_enum = TaskStep.PLAN_IMPL
+
+        # Breakpoints: pause before executing a step.
+        try:
+            bp_context = {
+                "files_changed": len(
+                    _git_changed_files(
+                        project_dir,
+                        include_untracked=True,
+                        ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
+                    )
+                )
+            }
+            bp = breakpoint_manager.check_breakpoint(
+                trigger="before_step",
+                target=step_enum.value,
+                task_id=task_id,
+                context=bp_context,
+            )
+        except Exception:
+            bp = None
+
+        if bp and bp.action == "pause":
+            summary = f"Breakpoint hit: {bp.id} ({bp.trigger} {bp.target})"
+            if bp.task_id:
+                summary = f"{summary} for task {bp.task_id}"
+            _block_task_and_stop(
+                task_id=task_id,
+                task_type=task_type,
+                phase_id=phase_id,
+                branch=branch,
+                run_id=run_id,
+                step=step_enum,
+                summary=summary,
+                error_type="breakpoint_hit",
+                details={"breakpoint": bp.to_dict()},
+                next_steps=[
+                    "Inspect the working tree changes.",
+                    f"Resume the task when ready: feature-prd-runner resume {task_id} --project-dir <your-project>",
+                ],
+            )
+            return
+
+        # Approval gates: pause before executing a step.
+        if approval_manager:
+            gate = _gate_before_step(step_enum)
+            if gate and approval_manager.is_gate_enabled(gate):
+                gate_cfg = approval_manager.get_gate_config(gate)
+                approval_context: dict[str, Any] = {
+                    "task_id": task_id,
+                    "phase_id": phase_id,
+                    "step": step_enum.value,
+                    "show_diff": gate_cfg.show_diff,
+                    "show_plan": gate_cfg.show_plan,
+                    "show_tests": gate_cfg.show_tests,
+                    "show_review": gate_cfg.show_review,
+                }
+
+                if gate_cfg.show_plan and task_type != "plan":
+                    plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
+                    if plan_path.exists():
+                        approval_context["plan"] = json.dumps(_load_data(plan_path, {}), indent=2)
+
+                if gate_cfg.show_diff:
+                    diff_text, diff_truncated = _git_diff_text(project_dir)
+                    diff_stat, diff_stat_truncated = _git_diff_stat(project_dir)
+                    approval_context["diff"] = diff_text
+                    approval_context["diff_truncated"] = diff_truncated
+                    approval_context["diff_stat"] = diff_stat
+                    approval_context["diff_stat_truncated"] = diff_stat_truncated
+
+                response = approval_manager.request_approval(gate, progress_path, approval_context)
+                if not response.approved:
+                    summary = f"Approval rejected: {gate.value}"
+                    if response.feedback:
+                        summary = f"{summary} ({response.feedback})"
+                    _block_task_and_stop(
+                        task_id=task_id,
+                        task_type=task_type,
+                        phase_id=phase_id,
+                        branch=branch,
+                        run_id=run_id,
+                        step=step_enum,
+                        summary=summary,
+                        error_type="approval_rejected",
+                        details={"gate_type": gate.value, "feedback": response.feedback},
+                        next_steps=[
+                            "Adjust your guidance or code changes as needed.",
+                            f"Resume the task when ready: feature-prd-runner resume {task_id} --project-dir <your-project>",
+                        ],
+                    )
+                    return
         event = None
         if task_type == "plan":
             _log_task_start(
@@ -1625,6 +1793,107 @@ def run_feature_prd(
             _report_blocking_tasks(blocked_snapshot, paths, stopping=True)
             _finalize_run_state(paths, lock_path, status="blocked", last_error=final_error)
             return
+
+        if not blocked_snapshot:
+            # Breakpoints: pause after completing a step (before proceeding).
+            try:
+                bp_context = {
+                    "files_changed": len(
+                        _git_changed_files(
+                            project_dir,
+                            include_untracked=True,
+                            ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
+                        )
+                    )
+                }
+                bp = breakpoint_manager.check_breakpoint(
+                    trigger="after_step",
+                    target=step_enum.value,
+                    task_id=task_id,
+                    context=bp_context,
+                )
+            except Exception:
+                bp = None
+
+            if bp and bp.action == "pause":
+                summary = f"Breakpoint hit: {bp.id} ({bp.trigger} {bp.target})"
+                if bp.task_id:
+                    summary = f"{summary} for task {bp.task_id}"
+                _block_task_and_stop(
+                    task_id=task_id,
+                    task_type=task_type,
+                    phase_id=phase_id,
+                    branch=branch,
+                    run_id=run_id,
+                    step=step_enum,
+                    summary=summary,
+                    error_type="breakpoint_hit",
+                    details={"breakpoint": bp.to_dict()},
+                    next_steps=[
+                        "Inspect the working tree changes.",
+                        f"Resume the task when ready: feature-prd-runner resume {task_id} --project-dir <your-project>",
+                    ],
+                )
+                return
+
+            # Approval gates: pause after completing a step (on success).
+            if approval_manager:
+                gate = _gate_after_step(step_enum)
+                if gate and approval_manager.is_gate_enabled(gate):
+                    should_gate = False
+                    if gate == GateType.AFTER_IMPLEMENT and isinstance(event, WorkerSucceeded):
+                        should_gate = True
+                    elif gate == GateType.AFTER_VERIFY and isinstance(event, VerificationResult) and event.passed:
+                        should_gate = True
+
+                    if should_gate:
+                        gate_cfg = approval_manager.get_gate_config(gate)
+                        approval_context: dict[str, Any] = {
+                            "task_id": task_id,
+                            "phase_id": phase_id,
+                            "step": step_enum.value,
+                            "show_diff": gate_cfg.show_diff,
+                            "show_plan": gate_cfg.show_plan,
+                            "show_tests": gate_cfg.show_tests,
+                            "show_review": gate_cfg.show_review,
+                        }
+
+                        if gate_cfg.show_plan and task_type != "plan":
+                            plan_path = _impl_plan_path(paths["artifacts"], str(phase_id or task_id))
+                            if plan_path.exists():
+                                approval_context["plan"] = json.dumps(
+                                    _load_data(plan_path, {}), indent=2
+                                )
+
+                        if gate_cfg.show_diff:
+                            diff_text, diff_truncated = _git_diff_text(project_dir)
+                            diff_stat, diff_stat_truncated = _git_diff_stat(project_dir)
+                            approval_context["diff"] = diff_text
+                            approval_context["diff_truncated"] = diff_truncated
+                            approval_context["diff_stat"] = diff_stat
+                            approval_context["diff_stat_truncated"] = diff_stat_truncated
+
+                        response = approval_manager.request_approval(gate, progress_path, approval_context)
+                        if not response.approved:
+                            summary = f"Approval rejected: {gate.value}"
+                            if response.feedback:
+                                summary = f"{summary} ({response.feedback})"
+                            _block_task_and_stop(
+                                task_id=task_id,
+                                task_type=task_type,
+                                phase_id=phase_id,
+                                branch=branch,
+                                run_id=run_id,
+                                step=step_enum,
+                                summary=summary,
+                                error_type="approval_rejected",
+                                details={"gate_type": gate.value, "feedback": response.feedback},
+                                next_steps=[
+                                    "Adjust your guidance or code changes as needed.",
+                                    f"Resume the task when ready: feature-prd-runner resume {task_id} --project-dir <your-project>",
+                                ],
+                            )
+                            return
 
         _finalize_run_state(paths, lock_path, status=final_status, last_error=final_error)
 

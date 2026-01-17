@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { buildApiUrl, buildAuthHeaders, buildWsUrl } from '../api'
 
 interface Props {
   runId: string
+  projectDir?: string
 }
 
 type LogLevel = 'ALL' | 'ERROR' | 'WARN' | 'INFO' | 'DEBUG'
 
-export default function LiveLog({ runId }: Props) {
+export default function LiveLog({ runId, projectDir }: Props) {
   const [logs, setLogs] = useState<string[]>([])
   const [connected, setConnected] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -21,8 +23,7 @@ export default function LiveLog({ runId }: Props) {
     fetchLogs()
 
     // Connect to WebSocket for live updates
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws/logs/${runId}`
+    const wsUrl = buildWsUrl(`/ws/logs/${runId}`, projectDir)
 
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
@@ -60,7 +61,7 @@ export default function LiveLog({ runId }: Props) {
         ws.close()
       }
     }
-  }, [runId])
+  }, [runId, projectDir])
 
   useEffect(() => {
     // Auto-scroll to bottom when new logs arrive (if enabled)
@@ -84,7 +85,9 @@ export default function LiveLog({ runId }: Props) {
 
   const fetchLogs = async () => {
     try {
-      const response = await fetch(`/api/logs/${runId}?lines=100`)
+      const response = await fetch(buildApiUrl(`/api/logs/${runId}`, projectDir, { lines: 100 }), {
+        headers: buildAuthHeaders(),
+      })
       if (response.ok) {
         const data = await response.json()
         if (data.logs && Array.isArray(data.logs)) {

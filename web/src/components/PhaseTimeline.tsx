@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { buildApiUrl, buildAuthHeaders } from '../api'
 
 interface Phase {
   id: string
@@ -9,7 +10,11 @@ interface Phase {
   progress: number
 }
 
-export default function PhaseTimeline() {
+interface Props {
+  projectDir?: string
+}
+
+export default function PhaseTimeline({ projectDir }: Props) {
   const [phases, setPhases] = useState<Phase[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -45,11 +50,13 @@ export default function PhaseTimeline() {
     fetchPhases()
     const interval = setInterval(fetchPhases, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [projectDir])
 
   const fetchPhases = async () => {
     try {
-      const response = await fetch('/api/phases')
+      const response = await fetch(buildApiUrl('/api/phases', projectDir), {
+        headers: buildAuthHeaders(),
+      })
       if (response.ok) {
         const data = await response.json()
         setPhases(normalizePhases(data))

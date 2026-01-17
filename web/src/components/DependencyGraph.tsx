@@ -11,6 +11,7 @@ import {
   Position,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { buildApiUrl, buildAuthHeaders } from '../api'
 
 interface Phase {
   id: string
@@ -21,7 +22,11 @@ interface Phase {
   progress: number
 }
 
-export default function DependencyGraph() {
+interface Props {
+  projectDir?: string
+}
+
+export default function DependencyGraph({ projectDir }: Props) {
   const [phases, setPhases] = useState<Phase[]>([])
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
@@ -58,7 +63,7 @@ export default function DependencyGraph() {
     fetchPhases()
     const interval = setInterval(fetchPhases, 10000) // Poll every 10 seconds
     return () => clearInterval(interval)
-  }, [])
+  }, [projectDir])
 
   useEffect(() => {
     if (phases.length > 0) {
@@ -68,7 +73,9 @@ export default function DependencyGraph() {
 
   const fetchPhases = async () => {
     try {
-      const response = await fetch('/api/phases')
+      const response = await fetch(buildApiUrl('/api/phases', projectDir), {
+        headers: buildAuthHeaders(),
+      })
       if (response.ok) {
         const data = await response.json()
         setPhases(normalizePhases(data))

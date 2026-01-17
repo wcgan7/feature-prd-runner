@@ -83,7 +83,7 @@ def test_allowlist_violation_writes_manifest(tmp_path: Path, monkeypatch: pytest
     run_dir.mkdir()
     progress_path = run_dir / "progress.json"
     progress_path.write_text(json.dumps({"run_id": "run-1"}))
-    events_path = tmp_path / "events.ndjson"
+    events_path = tmp_path / "events.jsonl"
 
     def fake_run_codex_worker(**kwargs: Any) -> dict[str, Any]:
         stdout_path = run_dir / "stdout.log"

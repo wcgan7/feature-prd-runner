@@ -12,6 +12,9 @@ import Login from './components/Login'
 import ApprovalGate from './components/ApprovalGate'
 import Chat from './components/Chat'
 import FileReview from './components/FileReview'
+import TasksPanel from './components/TasksPanel'
+import RunsPanel from './components/RunsPanel'
+import BreakpointsPanel from './components/BreakpointsPanel'
 
 interface ProjectStatus {
   project_dir: string
@@ -260,6 +263,7 @@ function App() {
           currentTaskId={status?.current_task_id}
           currentPhaseId={status?.current_phase_id}
           status={status?.status}
+          projectDir={currentProject || undefined}
         />
 
         <ApprovalGate projectDir={currentProject || undefined} />
@@ -271,19 +275,36 @@ function App() {
 
         <div className="grid">
           <div className="col-2">
-            <PhaseTimeline />
+            <PhaseTimeline projectDir={currentProject || undefined} />
           </div>
           <div className="col-2">
-            <MetricsPanel status={status} />
+            <MetricsPanel status={status} projectDir={currentProject || undefined} />
           </div>
         </div>
 
-        <MetricsChart />
+        <MetricsChart projectDir={currentProject || undefined} />
 
-        <DependencyGraph />
+        <DependencyGraph projectDir={currentProject || undefined} />
+
+        <div className="grid">
+          <div className="col-2">
+            <TasksPanel
+              projectDir={currentProject || undefined}
+              currentTaskId={status?.current_task_id}
+            />
+          </div>
+          <div className="col-2">
+            <RunsPanel
+              projectDir={currentProject || undefined}
+              currentRunId={status?.run_id}
+            />
+          </div>
+        </div>
+
+        <BreakpointsPanel projectDir={currentProject || undefined} />
 
         {status?.run_id && (
-          <LiveLog runId={status.run_id} />
+          <LiveLog runId={status.run_id} projectDir={currentProject || undefined} />
         )}
       </div>
 

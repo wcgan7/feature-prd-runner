@@ -19,9 +19,11 @@ from loguru import logger
 from .actions.run_commit import run_commit_action
 from .actions.run_verify import run_verify_action
 from .actions.run_worker import run_worker_action
+from .breakpoints import BreakpointManager
 from .constants import (
     ERROR_TYPE_BLOCKING_ISSUES,
     ERROR_TYPE_PLAN_MISSING,
+    IGNORED_REVIEW_PATH_PREFIXES,
     MAX_ALLOWLIST_EXPANSION_ATTEMPTS,
     MAX_IMPL_PLAN_ATTEMPTS,
     MAX_NO_PROGRESS_ATTEMPTS,
@@ -119,6 +121,7 @@ class PhaseExecutor:
         self.push_enabled = push_enabled
         self.git_coordinator = get_git_coordinator()
         self.lock_path = paths["state_dir"] / "run.lock"
+        self.breakpoint_manager = BreakpointManager(paths["state_dir"])
 
     def execute_phase(
         self,
@@ -323,6 +326,60 @@ class PhaseExecutor:
 
             event = None
             try:
+                # Breakpoints: pause before executing a step.
+                try:
+                    bp_context = {
+                        "files_changed": len(
+                            _git_changed_files(
+                                self.project_dir,
+                                include_untracked=True,
+                                ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
+                            )
+                        )
+                    }
+                    bp = self.breakpoint_manager.check_breakpoint(
+                        trigger="before_step",
+                        target=step_enum.value,
+                        task_id=task_id,
+                        context=bp_context,
+                    )
+                except Exception:
+                    bp = None
+
+                if bp and bp.action == "pause":
+                    msg = f"Breakpoint hit: {bp.id} ({bp.trigger} {bp.target})"
+                    with FileLock(self.lock_path):
+                        queue = _load_data(self.paths["task_queue"], {})
+                        tasks = _normalize_tasks(queue)
+                        task_obj = _find_task(tasks, task_id)
+                        if task_obj:
+                            task_state = TaskState.from_dict(task_obj)
+                            task_state.lifecycle = TaskLifecycle.WAITING_HUMAN
+                            task_state.block_reason = "BREAKPOINT_HIT"
+                            task_state.last_error_type = "breakpoint_hit"
+                            task_state.last_error = msg
+                            task_state.human_blocking_issues = [msg]
+                            task_state.human_next_steps = ["Resume the task when ready."]
+                            task_state.last_run_id = run_id
+                            updated = task_state.to_dict()
+                            task_obj.clear()
+                            task_obj.update(updated)
+                            _record_blocked_intent(
+                                task_obj,
+                                task_status=task_obj.get("status", TASK_STATUS_BLOCKED),
+                                task_type=task_obj.get("type", "implement"),
+                                phase_id=phase_id,
+                                branch=task_obj.get("branch"),
+                                test_command=task_obj.get("test_command"),
+                                run_id=run_id,
+                                step=task_obj.get("step"),
+                                lifecycle=task_obj.get("lifecycle"),
+                                prompt_mode=task_obj.get("prompt_mode"),
+                            )
+                            _save_queue(self.paths["task_queue"], queue, tasks)
+
+                    return False, msg
+
                 if step_enum in {TaskStep.PLAN_IMPL, TaskStep.IMPLEMENT, TaskStep.REVIEW}:
                     plan_path = _impl_plan_path(self.paths["artifacts"], phase_id)
                     event = run_worker_action(
@@ -434,6 +491,35 @@ class PhaseExecutor:
                 }
                 task_state = reduce_task(task_state, event, caps=caps)
                 task_state.last_run_id = run_id
+
+                # Breakpoints: pause after completing a step (before proceeding).
+                try:
+                    bp_context = {
+                        "files_changed": len(
+                            _git_changed_files(
+                                self.project_dir,
+                                include_untracked=True,
+                                ignore_prefixes=IGNORED_REVIEW_PATH_PREFIXES,
+                            )
+                        )
+                    }
+                    bp = self.breakpoint_manager.check_breakpoint(
+                        trigger="after_step",
+                        target=step_enum.value,
+                        task_id=task_id,
+                        context=bp_context,
+                    )
+                except Exception:
+                    bp = None
+
+                if bp and bp.action == "pause":
+                    msg = f"Breakpoint hit: {bp.id} ({bp.trigger} {bp.target})"
+                    task_state.lifecycle = TaskLifecycle.WAITING_HUMAN
+                    task_state.block_reason = "BREAKPOINT_HIT"
+                    task_state.last_error_type = "breakpoint_hit"
+                    task_state.last_error = msg
+                    task_state.human_blocking_issues = [msg]
+                    task_state.human_next_steps = ["Resume the task when ready."]
 
                 logger.info(
                     "[Task {}] FSM: {} -> {} (lifecycle={})",

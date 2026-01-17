@@ -147,6 +147,115 @@ describe('Chat', () => {
     })
   })
 
+  it('sends requirement messages with metadata', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      })
+
+    render(<Chat runId="run-123" projectDir="/tmp/project" />)
+
+    const toggleButton = screen.getByRole('button', { name: /open chat/i })
+    await userEvent.click(toggleButton)
+
+    const typeSelect = await screen.findByLabelText(/message type/i)
+    await userEvent.selectOptions(typeSelect, 'requirement')
+
+    const requirementTaskId = screen.getByLabelText(/requirement task id/i)
+    await userEvent.type(requirementTaskId, 'phase-1')
+
+    const prioritySelect = screen.getByLabelText(/requirement priority/i)
+    await userEvent.selectOptions(prioritySelect, 'high')
+
+    const input = screen.getByPlaceholderText(/type a message/i)
+    await userEvent.type(input, 'Must add rate limiting')
+
+    const sendButton = screen.getByRole('button', { name: /send/i })
+    await userEvent.click(sendButton)
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/messages'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"type":"requirement"'),
+        })
+      )
+    })
+
+    const [, postCall] = (global.fetch as any).mock.calls
+    expect(postCall[0]).toContain('project_dir=')
+    expect(postCall[1].body).toContain('"priority":"high"')
+    expect(postCall[1].body).toContain('"task_id":"phase-1"')
+  })
+
+  it('requires a task id for correction messages', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      })
+
+    render(<Chat runId="run-123" projectDir="/tmp/project" />)
+
+    const toggleButton = screen.getByRole('button', { name: /open chat/i })
+    await userEvent.click(toggleButton)
+
+    const typeSelect = await screen.findByLabelText(/message type/i)
+    await userEvent.selectOptions(typeSelect, 'correction')
+
+    const input = screen.getByPlaceholderText(/type a message/i)
+    await userEvent.type(input, 'Missing input validation')
+
+    const sendButton = screen.getByRole('button', { name: /send/i })
+    expect(sendButton).toBeDisabled()
+
+    const correctionTaskId = screen.getByLabelText(/correction task id/i)
+    await userEvent.type(correctionTaskId, 'phase-2')
+    expect(sendButton).not.toBeDisabled()
+
+    const correctionFile = screen.getByLabelText(/correction file path/i)
+    await userEvent.type(correctionFile, 'src/app.py')
+
+    const correctionFix = screen.getByLabelText(/correction suggested fix/i)
+    await userEvent.type(correctionFix, 'Add validation for empty input')
+
+    await userEvent.click(sendButton)
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/messages'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"type":"correction"'),
+        })
+      )
+    })
+
+    const [, postCall] = (global.fetch as any).mock.calls
+    expect(postCall[1].body).toContain('"task_id":"phase-2"')
+    expect(postCall[1].body).toContain('"file":"src/app.py"')
+    expect(postCall[1].body).toContain('"suggested_fix":"Add validation for empty input"')
+    expect(postCall[1].body).toContain('"issue":"Missing input validation"')
+  })
+
   it('clears input after sending message', async () => {
     global.fetch = vi.fn()
       .mockResolvedValueOnce({

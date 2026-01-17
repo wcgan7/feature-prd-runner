@@ -226,7 +226,7 @@ def run_worker_action(
         codex_command: Command template used to run Codex.
         user_prompt: Optional extra prompt content to inject.
         progress_path: Progress file path used for worker heartbeat and results.
-        events_path: Events ndjson path for logging.
+        events_path: Events jsonl path for logging.
         heartbeat_seconds: Heartbeat interval expected from the worker.
         heartbeat_grace_seconds: Allowed heartbeat staleness before terminating.
         shift_minutes: Timebox for the worker run.

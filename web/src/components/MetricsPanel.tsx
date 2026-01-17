@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { buildApiUrl, buildAuthHeaders } from '../api'
 
 interface ProjectStatus {
   project_dir: string
@@ -17,6 +18,7 @@ interface ProjectStatus {
 
 interface Props {
   status: ProjectStatus | null
+  projectDir?: string
 }
 
 interface RunMetrics {
@@ -31,7 +33,7 @@ interface RunMetrics {
   lines_removed: number
 }
 
-export default function MetricsPanel({ status }: Props) {
+export default function MetricsPanel({ status, projectDir }: Props) {
   const [metrics, setMetrics] = useState<RunMetrics | null>(null)
 
   const normalizeMetrics = (value: unknown): RunMetrics | null => {
@@ -60,11 +62,13 @@ export default function MetricsPanel({ status }: Props) {
     fetchMetrics()
     const interval = setInterval(fetchMetrics, 10000) // Poll every 10 seconds
     return () => clearInterval(interval)
-  }, [])
+  }, [projectDir])
 
   const fetchMetrics = async () => {
     try {
-      const response = await fetch('/api/metrics')
+      const response = await fetch(buildApiUrl('/api/metrics', projectDir), {
+        headers: buildAuthHeaders(),
+      })
       if (response.ok) {
         const data = await response.json()
         setMetrics(normalizeMetrics(data))
@@ -96,11 +100,21 @@ export default function MetricsPanel({ status }: Props) {
     return `$${cost.toFixed(2)}`
   }
 
+  const hasAnyMetrics =
+    !!metrics &&
+    (metrics.api_calls > 0 ||
+      metrics.tokens_used > 0 ||
+      metrics.phases_total > 0 ||
+      metrics.files_changed > 0 ||
+      metrics.lines_added > 0 ||
+      metrics.lines_removed > 0 ||
+      metrics.wall_time_seconds > 0)
+
   return (
     <div className="card">
       <h2>Metrics</h2>
 
-      {!metrics || metrics.api_calls === 0 ? (
+      {!metrics || !hasAnyMetrics ? (
         <div className="empty-state">
           <p>No metrics available</p>
           <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>

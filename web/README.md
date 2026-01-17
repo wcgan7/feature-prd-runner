@@ -67,9 +67,17 @@ npm run preview
 
 - **Real-time Updates**: WebSocket-based live updates for runs and logs
 - **Project Overview**: Current status, progress, and task breakdown
+- **Tasks & Runs**: Tables for tasks and recent runs
 - **Phase Timeline**: Visual timeline of all phases with dependencies
 - **Live Logs**: Streaming logs from active runs
 - **Metrics Panel**: API usage, costs, timing, and code changes
+- **Controls**: Retry, skip, resume, stop
+- **Approvals**: Pending approvals with approve/reject + feedback
+- **File Review**: Per-file approve/reject flow with diffs
+- **Breakpoints**: Create/toggle/delete/clear breakpoints
+- **Chat**: Send guidance/requirements/corrections during a run
+- **Auth (Optional)**: Token-based login when enabled on the server
+- **Multi-Project**: Select a discovered `.prd_runner` project
 
 ## Architecture
 
@@ -139,11 +147,8 @@ The dashboard is responsive and works on mobile devices, tablets, and desktops.
 
 ## Future Enhancements
 
-- [ ] Control panel (pause, resume, skip, retry)
-- [ ] Dependency graph visualization
-- [ ] Advanced metrics charts (Recharts/D3.js)
-- [ ] Authentication system
-- [ ] Multi-project support
 - [ ] Dark theme
 - [ ] Export reports (PDF, CSV)
 - [ ] Email/Slack notifications
+- [ ] WebSocket for all realtime panels (status/tasks/phases)
+- [ ] More hardening + E2E tests

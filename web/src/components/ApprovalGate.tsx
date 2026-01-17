@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import './ApprovalGate.css'
+import { buildApiUrl, buildAuthHeaders } from '../api'
 
 interface ApprovalGateInfo {
   request_id: string
@@ -36,17 +37,9 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
 
   const fetchApprovals = async () => {
     try {
-      const url = projectDir
-        ? `/api/approvals?project_dir=${encodeURIComponent(projectDir)}`
-        : '/api/approvals'
-
-      const headers: HeadersInit = {}
-      const token = localStorage.getItem('feature-prd-runner-auth-token')
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
-
-      const response = await fetch(url, { headers })
+      const response = await fetch(buildApiUrl('/api/approvals', projectDir), {
+        headers: buildAuthHeaders(),
+      })
       if (!response.ok) {
         throw new Error(`HTTP error ${response.status}`)
       }
@@ -65,17 +58,9 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
     setResultMessage(null)
 
     try {
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      }
-      const token = localStorage.getItem('feature-prd-runner-auth-token')
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
-
-      const response = await fetch('/api/approvals/respond', {
+      const response = await fetch(buildApiUrl('/api/approvals/respond', projectDir), {
         method: 'POST',
-        headers,
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           request_id: requestId,
           approved,

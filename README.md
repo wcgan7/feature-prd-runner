@@ -145,9 +145,13 @@ Access the dashboard at http://localhost:3000
 
 **Features**:
 - Real-time run status and progress
+- Tasks and runs tables (per project)
 - Phase timeline with dependencies
 - Live log streaming via WebSocket
 - Metrics: API usage, costs, timing, code changes
+- Approval gates (approve/reject) and file-by-file review
+- Breakpoint management
+- Live collaboration chat (guidance/requirements/corrections)
 - Responsive design for mobile/desktop
 
 **Requirements**:

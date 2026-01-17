@@ -228,3 +228,27 @@ class FileReviewRequest(BaseModel):
     file_path: str
     approved: bool
     comment: Optional[str] = None
+
+
+class BreakpointInfo(BaseModel):
+    """Breakpoint information."""
+
+    id: str
+    trigger: str
+    target: str
+    task_id: Optional[str] = None
+    condition: Optional[str] = None
+    action: str = "pause"
+    enabled: bool = True
+    hit_count: int = 0
+    created_at: Optional[str] = None
+
+
+class BreakpointCreateRequest(BaseModel):
+    """Request to create a breakpoint."""
+
+    trigger: str
+    target: str
+    task_id: Optional[str] = None
+    condition: Optional[str] = None
+    action: str = "pause"

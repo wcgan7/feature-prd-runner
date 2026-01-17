@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { buildApiUrl, buildAuthHeaders } from '../api'
 
 interface RunMetrics {
   tokens_used: number
@@ -13,7 +14,11 @@ interface RunMetrics {
   lines_removed: number
 }
 
-export default function MetricsChart() {
+interface Props {
+  projectDir?: string
+}
+
+export default function MetricsChart({ projectDir }: Props) {
   const [metrics, setMetrics] = useState<RunMetrics | null>(null)
 
   const normalizeMetrics = (value: unknown): RunMetrics | null => {
@@ -42,11 +47,13 @@ export default function MetricsChart() {
     fetchMetrics()
     const interval = setInterval(fetchMetrics, 10000) // Poll every 10 seconds
     return () => clearInterval(interval)
-  }, [])
+  }, [projectDir])
 
   const fetchMetrics = async () => {
     try {
-      const response = await fetch('/api/metrics')
+      const response = await fetch(buildApiUrl('/api/metrics', projectDir), {
+        headers: buildAuthHeaders(),
+      })
       if (response.ok) {
         const data = await response.json()
         setMetrics(normalizeMetrics(data))
@@ -56,7 +63,17 @@ export default function MetricsChart() {
     }
   }
 
-  if (!metrics || metrics.api_calls === 0) {
+  const hasAnyMetrics =
+    !!metrics &&
+    (metrics.api_calls > 0 ||
+      metrics.tokens_used > 0 ||
+      metrics.phases_total > 0 ||
+      metrics.files_changed > 0 ||
+      metrics.lines_added > 0 ||
+      metrics.lines_removed > 0 ||
+      metrics.wall_time_seconds > 0)
+
+  if (!metrics || !hasAnyMetrics) {
     return (
       <div className="card">
         <h2>Metrics Visualization</h2>

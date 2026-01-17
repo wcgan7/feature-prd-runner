@@ -1,14 +1,16 @@
 import { useState } from 'react'
+import { buildApiUrl, buildAuthHeaders } from '../api'
 
 interface Props {
   currentTaskId?: string
   currentPhaseId?: string
   status?: string
+  projectDir?: string
 }
 
 type ControlAction = 'retry' | 'skip' | 'resume' | 'stop'
 
-export default function ControlPanel({ currentTaskId, currentPhaseId, status }: Props) {
+export default function ControlPanel({ currentTaskId, currentPhaseId, status, projectDir }: Props) {
   const [loading, setLoading] = useState<ControlAction | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [selectedStep, setSelectedStep] = useState('plan_impl')
@@ -37,11 +39,11 @@ export default function ControlPanel({ currentTaskId, currentPhaseId, status }: 
         params: action === 'retry' ? { step: selectedStep } : null,
       }
 
-      const response = await fetch('/api/control', {
+      const response = await fetch(buildApiUrl('/api/control', projectDir), {
         method: 'POST',
-        headers: {
+        headers: buildAuthHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
         body: JSON.stringify(body),
       })
 
