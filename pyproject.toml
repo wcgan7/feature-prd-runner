@@ -11,16 +11,30 @@ requires-python = ">=3.10"
 dependencies = [
   "loguru",
   "PyYAML>=6.0",
+  "rich",
 ]
 
 [project.optional-dependencies]
 test = [
   "pytest>=7",
   "tomli>=2; python_version < '3.11'",
+  "httpx>=0.24.0",  # Required for FastAPI TestClient
+  "anthropic>=0.18.0",  # Required for API tests (mocked)
 ]
 dev = [
   "mypy>=1.8",
   "ruff>=0.4",
+]
+server = [
+  "fastapi>=0.109.0",
+  "uvicorn[standard]>=0.27.0",
+  "websockets>=12.0",
+  "pydantic>=2.5.0",
+  "pyjwt>=2.8.0",
+  "python-multipart>=0.0.6",
+]
+notifications = [
+  "plyer>=2.1.0",
 ]
 
 [tool.mypy]

@@ -50,7 +50,7 @@ def _ensure_state_files(project_dir: Path, prd_path: Path) -> dict[str, Path]:
     if not phase_plan_path.exists():
         _save_data(phase_plan_path, {"updated_at": _now_iso(), "phases": []})
 
-    events_path = artifacts_dir / "events.ndjson"
+    events_path = artifacts_dir / "events.jsonl"
     if not events_path.exists():
         events_path.touch()
 

@@ -23,6 +23,36 @@ From this repo:
 python -m pip install -e .
 ```
 
+If you prefer `uv` (install `uv` first via `brew install uv`, `pipx install uv`, or `python -m pip install uv`):
+
+```bash
+uv pip install -e .
+```
+
+## Tests
+
+Python unit tests:
+
+```bash
+python -m pip install -e ".[test]"
+pytest
+```
+
+If you prefer `uv`:
+
+```bash
+uv pip install -e ".[test]"
+pytest
+```
+
+Web dashboard tests (Vitest):
+
+```bash
+cd web
+npm install
+npm test
+```
+
 ## Quick Start (in your target project)
 
 The `example/` folder in this repository contains a starter `AGENTS.md` and a sample PRD.
@@ -97,6 +127,39 @@ For machine-readable output:
 feature-prd-runner status --project-dir /path/to/your/project --json
 ```
 
+## Web Dashboard
+
+Monitor and control runs through a modern web interface:
+
+```bash
+# Start the backend server
+feature-prd-runner server --port 8080
+
+# In another terminal, start the frontend (requires Node.js)
+cd web
+npm install
+npm run dev
+```
+
+Access the dashboard at http://localhost:3000
+
+**Features**:
+- Real-time run status and progress
+- Tasks and runs tables (per project)
+- Phase timeline with dependencies
+- Live log streaming via WebSocket
+- Metrics: API usage, costs, timing, code changes
+- Approval gates (approve/reject) and file-by-file review
+- Breakpoint management
+- Live collaboration chat (guidance/requirements/corrections)
+- Responsive design for mobile/desktop
+
+**Requirements**:
+- Backend: `pip install 'feature-prd-runner[server]'` (or `uv pip install 'feature-prd-runner[server]'`)
+- Frontend: Node.js 18+ and npm
+
+See [web/README.md](web/README.md) for detailed setup and development instructions.
+
 ## Dry Run
 
 Preview what the runner would do next without making any changes (no git changes, no `.prd_runner` writes, no Codex, no tests):
@@ -161,6 +224,7 @@ Common options:
 - `--ensure-deps-command "..."`: install command used by `--ensure-deps install` (defaults to `python -m pip install -e ".[test]"` with fallback to `python -m pip install -e .`).
 - `--new-branch` / `--no-new-branch`: create/switch to a new git branch once at the start of the run (default: True). If `--no-new-branch`, you must already be on a named branch (not detached HEAD).
 - `--codex-command "..."`: Codex CLI command used to run the worker (default: `codex exec -`).
+- `--worker NAME`: worker provider name override (e.g., `codex`, `ollama`). Overrides `.prd_runner/config.yaml` routing.
 - `--shift-minutes N`: timebox per worker run.
 - `--reset-state`: archive and recreate `.prd_runner/` before starting.
 - `--require-clean` / `--no-require-clean`: refuse to run if there are git changes outside `.prd_runner/` (default: True).
@@ -205,6 +269,24 @@ verify:
   lint_command: "ruff check ."
   typecheck_command: "mypy ."
   test_command: "pytest -q"
+
+workers:
+  default: codex
+  providers:
+    codex:
+      type: codex
+      command: "codex exec -"
+    local:
+      type: ollama   # alias: "local"
+      endpoint: "http://localhost:11434"
+      model: "qwen2.5-coder:7b"
+      temperature: 0.2
+      num_ctx: 8192
+  routing:
+    plan: local
+    plan_impl: local
+    review: local
+    implement: codex
 ```
 
 CLI flags override `config.yaml`.
@@ -219,19 +301,275 @@ CLI flags override `config.yaml`.
 
 Available placeholders: `{prompt_file}`, `{project_dir}`, `{run_dir}`, `{prompt}`.
 
-## Standalone “Custom Prompt”
+## Workers (Codex + Ollama)
+
+List configured workers for a project:
+
+```bash
+feature-prd-runner workers list --project-dir /path/to/your/project
+```
+
+Test a worker (checks Codex binary, or Ollama endpoint/model):
+
+```bash
+feature-prd-runner workers test local --project-dir /path/to/your/project
+```
+
+## Custom Prompts & Ad-Hoc Tasks
+
+### The `exec` Command
+
+Execute ad-hoc custom prompts outside the normal workflow:
+
+```bash
+# Basic usage
+feature-prd-runner exec "Update all copyright headers to 2026"
+
+# With superadmin mode (bypass AGENTS.md rules)
+feature-prd-runner exec "Emergency fix: patch security vulnerability" --override-agents
+
+# With context
+feature-prd-runner exec "Add logging" --context-files "src/auth.py,src/api.py"
+```
+
+**Superadmin mode** (`--override-agents`) allows you to bypass AGENTS.md rules when you need full control:
+- Skip file allowlists
+- Bypass documentation/testing requirements
+- Emergency hotfixes
+- Administrative changes
+
+See [docs/CUSTOM_EXECUTION.md](docs/CUSTOM_EXECUTION.md) for full documentation.
+
+### Custom Prompt Before Run
 
 Use `--custom-prompt` to run one standalone worker prompt before the main loop. This is
-useful for “setup” steps like updating dependencies, regenerating locks, or resolving a
+useful for "setup" steps like updating dependencies, regenerating locks, or resolving a
 known failure before continuing phased implementation.
 
 ```bash
-feature-prd-runner --project-dir . --prd-file ./docs/feature_prd.md \
+feature-prd-runner run --prd-file ./docs/feature_prd.md \
   --custom-prompt "Regenerate lockfiles and ensure tests pass"
+
+# With superadmin mode
+feature-prd-runner run --prd-file ./docs/feature_prd.md \
+  --custom-prompt "Update dependencies" \
+  --override-agents
 ```
 
-If the worker reports `human_blocking_issues` in the run’s `progress.json`, the runner
+If the worker reports `human_blocking_issues` in the run's `progress.json`, the runner
 stops and surfaces the issues and suggested next steps.
+
+## Human-in-the-Loop Control
+
+The runner supports active human involvement through steering, approval gates, and bidirectional communication.
+
+### Interactive Mode
+
+Enable step-by-step approval gates at key checkpoints:
+
+```bash
+feature-prd-runner run --prd-file feature.md --interactive
+```
+
+This pauses execution before implement, after implement, and before commit for human approval.
+
+### Steering Commands
+
+**Send guidance to running workers:**
+
+```bash
+# Single message
+feature-prd-runner steer "Focus on error handling"
+
+# Interactive mode
+feature-prd-runner steer
+> Add more logging
+> Check edge cases
+```
+
+**Approve/reject pending approval gates:**
+
+```bash
+feature-prd-runner approve
+feature-prd-runner approve --feedback "Looks good"
+feature-prd-runner reject --reason "Need more tests first"
+```
+
+### Configuration
+
+Configure approval gates in `.prd_runner/config.yaml`:
+
+```yaml
+approval_gates:
+  enabled: true
+  gates:
+    before_implement:
+      enabled: true
+      show_plan: true
+      timeout: 300
+    after_implement:
+      enabled: true
+      show_diff: true
+      timeout: 300
+    before_commit:
+      enabled: true
+      show_diff: true
+      show_tests: true
+      required: true  # Cannot skip
+```
+
+See [docs/HUMAN_IN_THE_LOOP.md](docs/HUMAN_IN_THE_LOOP.md) for comprehensive documentation on:
+- Steering running workers
+- Approval gate configuration
+- Message bus architecture
+- Interactive mode details
+- Advanced usage patterns
+
+## Enhanced Error Messages & Debugging
+
+The runner provides comprehensive debugging tools for troubleshooting failures:
+
+### Debug Commands
+
+**Explain why a task is blocked:**
+```bash
+feature-prd-runner explain phase-1
+```
+
+**Inspect full task state:**
+```bash
+feature-prd-runner inspect phase-1
+feature-prd-runner inspect phase-1 --json  # JSON output
+```
+
+**Trace event history:**
+```bash
+feature-prd-runner trace phase-1
+feature-prd-runner trace phase-1 --limit 20  # Last 20 events
+```
+
+**View detailed logs:**
+```bash
+feature-prd-runner logs phase-1
+feature-prd-runner logs phase-1 --step verify --lines 200
+```
+
+### Rich Error Reports
+
+Errors include:
+- Root cause analysis
+- Files involved
+- Actionable suggestions with commands
+- Quick fixes
+
+Example error output:
+```
+❌ Error: phase-1
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Error Type: test_failed
+Verification failed: 2 tests failed
+
+Root Cause:
+  Tests failed during verification.
+
+Files Involved:
+  1. tests/test_auth.py
+
+Suggested Actions:
+  [1] Review test failures
+      $ feature-prd-runner logs phase-1 --step verify
+
+  [2] Retry after reviewing
+      $ feature-prd-runner retry phase-1
+
+Quick Fixes:
+  • View full test output
+    $ cat .prd_runner/runs/*/tests_phase-1.log
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+See [docs/DEBUGGING.md](docs/DEBUGGING.md) for full documentation on:
+- All debugging commands
+- Error analysis features
+- Root cause identification
+- Programmatic access
+- Best practices
+
+## Parallel Phase Execution
+
+Execute independent phases concurrently to reduce total execution time:
+
+### Enable Parallel Execution
+
+```bash
+# Run with parallel execution (experimental)
+feature-prd-runner run --prd-file feature.md --parallel
+
+# Limit concurrent workers
+feature-prd-runner run --prd-file feature.md --parallel --max-workers 2
+```
+
+### Visualize Execution Plan
+
+```bash
+# Show execution batches
+feature-prd-runner plan-parallel
+
+# Show dependency tree
+feature-prd-runner plan-parallel --tree
+```
+
+### How It Works
+
+Phases can specify dependencies in `phase_plan.yaml`:
+
+```yaml
+phases:
+  - id: database-schema
+    deps: []  # No dependencies
+
+  - id: frontend-components
+    deps: []  # Independent
+
+  - id: api-endpoints
+    deps: ["database-schema"]  # Depends on database
+
+  - id: integration
+    deps: ["api-endpoints", "frontend-components"]  # Depends on both
+```
+
+The parallel executor:
+- Detects circular dependencies
+- Uses topological sort to create execution batches
+- Executes independent phases in parallel
+- Tracks progress for all running phases
+
+**Example execution**:
+```
+Batch 1 (parallel): database-schema, frontend-components
+Batch 2: api-endpoints (waits for database-schema)
+Batch 3: integration (waits for both)
+```
+
+**Current Implementation Status**:
+- ✅ Dependency analysis with topological sort
+- ✅ Circular dependency detection
+- ✅ Execution plan visualization
+- ✅ Thread pool infrastructure
+- ✅ Full parallel execution (fully implemented!)
+- ✅ Thread-safe git operations
+- ✅ Thread-safe state management
+- ✅ Partial failure handling
+
+When `--parallel` is enabled, the system analyzes dependencies, creates an optimal execution plan, and **executes independent phases in parallel**. Each phase runs through its complete task lifecycle (plan_impl → implement → verify → review → commit) while maintaining thread safety for git operations and state updates.
+
+See [docs/PARALLEL_EXECUTION.md](docs/PARALLEL_EXECUTION.md) for:
+- Dependency resolution details
+- Configuration options
+- Examples and best practices
+- Progress tracking
+- Error handling
+- Troubleshooting
 
 ## Troubleshooting
 
@@ -247,7 +585,24 @@ stops and surfaces the issues and suggested next steps.
 
 ## Testing
 
+### Python
+
 ```bash
 python -m pip install -e ".[test]"
 python -m pytest
+```
+
+With `uv`:
+
+```bash
+uv pip install -e ".[test]"
+uv run pytest
+```
+
+### Web Dashboard (Frontend)
+
+```bash
+cd web
+npm install
+npm test
 ```

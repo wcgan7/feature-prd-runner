@@ -74,11 +74,14 @@ Output files (write/update):
         "status": "todo",
         "description": "What this phase delivers",
         "acceptance_criteria": ["list of acceptance checks"],
-        "branch": "feature/phase-1-short-name",
+        "branch": "feature/short-feature-name",
         "test_command": "optional command for this phase"
       }}
     ]
   }}
+  Branch naming:
+  - Use a single shared branch for the whole PRD run (same value for every phase if provided).
+  - Do NOT include the phase id (e.g. avoid `feature/phase-1-*`).
 - Task queue: {task_queue_path}
   Include one task per phase with:
   id, type="implement", phase_id, status, priority, deps, description,

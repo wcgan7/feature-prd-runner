@@ -61,6 +61,9 @@ class TaskState:
     impl_plan_hash: Optional[str] = None
     last_verification: Optional[dict[str, Any]] = None
     last_review_path: Optional[str] = None
+    last_review_mergeable: Optional[bool] = None
+    last_review_issues: list[str] = field(default_factory=list)
+    commit_sha: Optional[str] = None
     review_blockers: list[str] = field(default_factory=list)
     review_blocker_files: list[str] = field(default_factory=list)
 
@@ -142,6 +145,9 @@ class TaskState:
             impl_plan_hash=_pop("impl_plan_hash", None),
             last_verification=_pop("last_verification", None),
             last_review_path=_pop("last_review_path", None),
+            last_review_mergeable=_pop("last_review_mergeable", None),
+            last_review_issues=list(_pop("last_review_issues", []) or []),
+            commit_sha=_pop("commit_sha", None),
             review_blockers=list(_pop("review_blockers", []) or []),
             review_blocker_files=list(_pop("review_blocker_files", []) or []),
             block_reason=_pop("block_reason", None),
@@ -167,12 +173,7 @@ class TaskState:
             extra=extra,
         )
 
-    def legacy_status(self) -> str:
-        """Return a legacy `status` string for backwards-compatible consumers.
-
-        Returns:
-            A legacy status string (e.g., `done`, `blocked`, `implementing`).
-        """
+    def computed_status(self) -> str:
         if self.lifecycle == TaskLifecycle.DONE:
             return "done"
         if self.lifecycle == TaskLifecycle.WAITING_HUMAN:
@@ -182,6 +183,10 @@ class TaskState:
         if self.step == TaskStep.IMPLEMENT:
             return "implementing"
         return str(self.step.value)
+
+    @property
+    def status(self) -> str:
+        return self.computed_status()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the task state as a plain dictionary for persistence.
@@ -202,6 +207,7 @@ class TaskState:
                 "acceptance_criteria": list(self.acceptance_criteria),
                 "test_command": self.test_command,
                 "branch": self.branch,
+                "status": self.computed_status(),
                 "lifecycle": self.lifecycle.value,
                 "step": self.step.value,
                 "prompt_mode": self.prompt_mode.value if self.prompt_mode else None,
@@ -209,6 +215,9 @@ class TaskState:
                 "impl_plan_hash": self.impl_plan_hash,
                 "last_verification": self.last_verification,
                 "last_review_path": self.last_review_path,
+                "last_review_mergeable": self.last_review_mergeable,
+                "last_review_issues": list(self.last_review_issues),
+                "commit_sha": self.commit_sha,
                 "review_blockers": list(self.review_blockers),
                 "review_blocker_files": list(self.review_blocker_files),
                 "block_reason": self.block_reason,
@@ -233,7 +242,6 @@ class TaskState:
                 "manual_resume_attempts": int(self.manual_resume_attempts),
             }
         )
-        data["status"] = self.legacy_status()
         return data
 
 
@@ -267,15 +275,18 @@ class Event:
 class WorkerSucceeded(Event):
     """Represent a successful worker run for a specific step."""
 
-    step: TaskStep
     run_id: str
+    step: TaskStep
     changed_files: list[str] = field(default_factory=list)
-    introduced_changes: list[str] = field(default_factory=list)
+    introduced_changes: bool = False
     repo_dirty: bool = False
     plan_valid: Optional[bool] = None
     plan_issue: Optional[str] = None
     impl_plan_path: Optional[str] = None
     impl_plan_hash: Optional[str] = None
+    task_id: Optional[str] = field(default=None, kw_only=True)
+    phase: Optional[str] = field(default=None, kw_only=True)
+    captured_at: Optional[str] = field(default=None, kw_only=True)
 
     event_type: str = field(init=False, default="worker_succeeded")
 
@@ -284,15 +295,18 @@ class WorkerSucceeded(Event):
 class WorkerFailed(Event):
     """Represent a failed worker run for a specific step."""
 
-    step: TaskStep
     run_id: str
+    step: TaskStep
     error_type: str
     error_detail: str
-    stderr_tail: str
-    timed_out: bool
-    no_heartbeat: bool
     changed_files: list[str] = field(default_factory=list)
-    introduced_changes: list[str] = field(default_factory=list)
+    stderr_tail: str = ""
+    timed_out: bool = False
+    no_heartbeat: bool = False
+    introduced_changes: bool = False
+    task_id: Optional[str] = field(default=None, kw_only=True)
+    phase: Optional[str] = field(default=None, kw_only=True)
+    captured_at: Optional[str] = field(default=None, kw_only=True)
 
     event_type: str = field(init=False, default="worker_failed")
 
@@ -304,6 +318,9 @@ class ProgressHumanBlockers(Event):
     run_id: str
     issues: list[str]
     next_steps: list[str]
+    task_id: Optional[str] = field(default=None, kw_only=True)
+    phase: Optional[str] = field(default=None, kw_only=True)
+    captured_at: Optional[str] = field(default=None, kw_only=True)
 
     event_type: str = field(init=False, default="progress_human_blockers")
 
@@ -313,10 +330,11 @@ class AllowlistViolation(Event):
     """Report that the worker changed files outside the allowed allowlist."""
 
     run_id: str
-    step: TaskStep
     disallowed_paths: list[str]
     changed_files: list[str] = field(default_factory=list)
-    introduced_changes: list[str] = field(default_factory=list)
+    task_id: Optional[str] = field(default=None, kw_only=True)
+    phase: Optional[str] = field(default=None, kw_only=True)
+    captured_at: Optional[str] = field(default=None, kw_only=True)
 
     event_type: str = field(init=False, default="allowlist_violation")
 
@@ -326,9 +344,11 @@ class NoIntroducedChanges(Event):
     """Report that the worker introduced no changes for a step."""
 
     run_id: str
-    step: TaskStep
     repo_dirty: bool
     changed_files: list[str] = field(default_factory=list)
+    task_id: Optional[str] = field(default=None, kw_only=True)
+    phase: Optional[str] = field(default=None, kw_only=True)
+    captured_at: Optional[str] = field(default=None, kw_only=True)
 
     event_type: str = field(init=False, default="no_introduced_changes")
 
@@ -347,21 +367,23 @@ class VerificationResult(Event):
     failing_paths: list[str] = field(default_factory=list)
     needs_allowlist_expansion: bool = False
     error_type: Optional[str] = None
+    task_id: Optional[str] = field(default=None, kw_only=True)
+    phase: Optional[str] = field(default=None, kw_only=True)
 
     event_type: str = field(init=False, default="verification_result")
 
 
 @dataclass
 class ReviewResult(Event):
-    """Capture the result of validating a review output payload."""
+    """Capture the result of a review step."""
 
     run_id: str
-    valid: bool
-    blocking_severities_present: bool
-    issues: list[dict[str, Any]]
-    files: list[str]
+    mergeable: bool
+    issues: list[str] = field(default_factory=list)
     review_path: Optional[str] = None
-    review_issue: Optional[str] = None
+    task_id: Optional[str] = field(default=None, kw_only=True)
+    phase: Optional[str] = field(default=None, kw_only=True)
+    captured_at: Optional[str] = field(default=None, kw_only=True)
 
     event_type: str = field(init=False, default="review_result")
 
@@ -372,10 +394,14 @@ class CommitResult(Event):
 
     run_id: str
     committed: bool
-    pushed: bool
-    error: Optional[str]
-    repo_clean: bool
+    commit_sha: Optional[str] = None
+    pushed: bool = False
+    error: Optional[str] = None
+    repo_clean: bool = False
     skipped: bool = False
+    task_id: Optional[str] = field(default=None, kw_only=True)
+    phase: Optional[str] = field(default=None, kw_only=True)
+    captured_at: Optional[str] = field(default=None, kw_only=True)
 
     event_type: str = field(init=False, default="commit_result")
 
@@ -386,6 +412,10 @@ class ResumePromptResult(Event):
 
     run_id: str
     succeeded: bool
+    changed_files: list[str] = field(default_factory=list)
     error_detail: Optional[str] = None
+    task_id: Optional[str] = field(default=None, kw_only=True)
+    phase: Optional[str] = field(default=None, kw_only=True)
+    captured_at: Optional[str] = field(default=None, kw_only=True)
 
     event_type: str = field(init=False, default="resume_prompt_result")

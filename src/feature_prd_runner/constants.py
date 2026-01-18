@@ -23,29 +23,11 @@ TRANSIENT_ERROR_MARKERS = (
 )
 
 TASK_STATUS_TODO = "todo"
-TASK_STATUS_DOING = "doing"
 TASK_STATUS_PLAN_IMPL = "plan_impl"
 TASK_STATUS_IMPLEMENTING = "implementing"
-TASK_STATUS_TESTING = "testing"  # Kept for compatibility, mapped to implementing logic
 TASK_STATUS_REVIEW = "review"
 TASK_STATUS_DONE = "done"
 TASK_STATUS_BLOCKED = "blocked"
-
-TASK_IN_PROGRESS_STATUSES = {
-    TASK_STATUS_DOING,
-    "in_progress",
-    TASK_STATUS_PLAN_IMPL,
-    TASK_STATUS_IMPLEMENTING,
-    TASK_STATUS_REVIEW,
-}
-
-TASK_RUN_CODEX_STATUSES = {
-    TASK_STATUS_DOING,
-    "in_progress",
-    TASK_STATUS_PLAN_IMPL,
-    TASK_STATUS_IMPLEMENTING,
-    TASK_STATUS_REVIEW,
-}
 
 ERROR_TYPE_HEARTBEAT_TIMEOUT = "heartbeat_timeout"
 ERROR_TYPE_SHIFT_TIMEOUT = "shift_timeout"
@@ -128,15 +110,15 @@ REVIEW_ARCHITECTURE_CHECKS = [
     "state consistent or idempotent",
     "matches project conventions",
 ]
-MAX_REVIEW_ATTEMPTS = 3
+MAX_REVIEW_ATTEMPTS = 10
 MAX_NO_CHANGE_ATTEMPTS = 3
-MAX_IMPL_PLAN_ATTEMPTS = 3
+MAX_IMPL_PLAN_ATTEMPTS = 10
 MAX_NO_PROGRESS_ATTEMPTS = 3  # Allowed "no-op" runs before blocking
 MAX_MANUAL_RESUME_ATTEMPTS = 10
-MAX_TEST_FAIL_ATTEMPTS = 3
-MAX_ALLOWLIST_EXPANSION_ATTEMPTS = 3
+MAX_TEST_FAIL_ATTEMPTS = 10
+MAX_ALLOWLIST_EXPANSION_ATTEMPTS = 10
 REVIEW_SEVERITIES = {"critical", "high", "medium", "low"}
-REVIEW_BLOCKING_SEVERITIES = {"critical", "high"}  # gate commit on these
+REVIEW_BLOCKING_SEVERITIES = {"critical", "high", "medium"}  # gate commit on these
 
 IGNORED_REVIEW_PATH_PREFIXES = [
     ".prd_runner/",
