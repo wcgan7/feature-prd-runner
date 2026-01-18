@@ -1646,14 +1646,14 @@ feature-prd-runner metrics --compare run-1 run-2
 **Acceptance Criteria**:
 - [x] `RunMetrics` dataclass with all key metrics
 - [ ] `MetricsCollector` integration into orchestrator
-- [ ] `metrics` CLI command with formatting
+- [x] `metrics` CLI command with formatting
 - [ ] Historical metrics tracking
 - [ ] Cost estimation and tracking
 - [ ] Performance timing breakdown
-- [ ] HTML/CSV export formats
+- [x] HTML/CSV export formats
 - [ ] Metrics comparison tool
 - [x] Integration with web dashboard
-- [ ] Tests for metrics collection
+- [x] Tests for metrics collection
 - [ ] Documentation
 
 ---

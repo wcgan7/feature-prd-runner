@@ -25,7 +25,7 @@ from .constants import (
     MAX_REVIEW_ATTEMPTS,
     STATE_DIR_NAME,
 )
-from .orchestrator import run_feature_prd
+from .orchestrator import _default_run_branch, run_feature_prd
 from .prompts import _build_phase_prompt, _build_plan_prompt, _build_review_prompt
 from .io_utils import FileLock, _load_data, _load_data_with_error, _save_data
 from .custom_execution import execute_custom_prompt
@@ -1466,6 +1466,601 @@ def _build_logs_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_metrics_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - view run metrics and statistics",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+    parser.add_argument(
+        "--export",
+        type=str,
+        choices=["csv", "html"],
+        help="Export metrics to file format (csv or html)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Output file path (default: metrics.{csv|html} in current directory)",
+    )
+    return parser
+
+
+def _metrics_command(
+    project_dir: Path,
+    *,
+    as_json: bool = False,
+    export_format: str | None = None,
+    output_path: Path | None = None,
+) -> int:
+    """Display run metrics and statistics."""
+    project_dir = project_dir.resolve()
+    state_dir = project_dir / STATE_DIR_NAME
+
+    if not state_dir.exists():
+        sys.stdout.write(f"No .prd_runner state directory found in {project_dir}\n")
+        sys.stdout.write("Run 'feature-prd-runner run' first to generate metrics.\n")
+        return 1
+
+    # Calculate metrics directly to avoid complex imports
+    import json
+    import subprocess
+    import yaml
+    from dataclasses import dataclass, asdict
+    from datetime import datetime
+
+    @dataclass
+    class Metrics:
+        tokens_used: int = 0
+        api_calls: int = 0
+        estimated_cost_usd: float = 0.0
+        wall_time_seconds: float = 0.0
+        worker_time_seconds: float = 0.0
+        verification_time_seconds: float = 0.0
+        review_time_seconds: float = 0.0
+        phases_completed: int = 0
+        phases_total: int = 0
+        tasks_done: int = 0
+        tasks_total: int = 0
+        files_changed: int = 0
+        lines_added: int = 0
+        lines_removed: int = 0
+        worker_failures: int = 0
+        verification_failures: int = 0
+        allowlist_violations: int = 0
+        review_blockers: int = 0
+
+    m = Metrics()
+
+    # Load phase plan
+    phase_plan_path = state_dir / "phase_plan.yaml"
+    if phase_plan_path.exists():
+        try:
+            phase_plan = _load_data(phase_plan_path, {})
+            phases = phase_plan.get("phases", [])
+            m.phases_total = len(phases)
+        except Exception:
+            pass
+
+    # Load task queue
+    task_queue_path = state_dir / "task_queue.yaml"
+    if task_queue_path.exists():
+        try:
+            task_queue = _load_data(task_queue_path, {})
+            tasks = task_queue.get("tasks", [])
+            m.tasks_total = len(tasks)
+            done_phases = set()
+            for task in tasks:
+                if task.get("lifecycle") == "done":
+                    m.tasks_done += 1
+                    if task.get("phase_id"):
+                        done_phases.add(task["phase_id"])
+            m.phases_completed = len(done_phases)
+        except Exception:
+            pass
+
+    # Get git stats
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--numstat", "origin/main...HEAD"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                if not line:
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 3 and not parts[2].startswith(".prd_runner"):
+                    try:
+                        added = int(parts[0]) if parts[0] != "-" else 0
+                        removed = int(parts[1]) if parts[1] != "-" else 0
+                        m.lines_added += added
+                        m.lines_removed += removed
+                        if added > 0 or removed > 0:
+                            m.files_changed += 1
+                    except ValueError:
+                        continue
+    except Exception:
+        pass
+
+    # Try to import rich for formatting, fallback to plain text
+    try:
+        from rich.console import Console
+        from rich.table import Table
+        from rich.panel import Panel
+        use_rich = True
+    except ImportError:
+        use_rich = False
+
+    if as_json:
+        sys.stdout.write(json.dumps(asdict(m), indent=2))
+        sys.stdout.write("\n")
+        return 0
+
+    def format_time(seconds: float) -> str:
+        """Format seconds into human-readable time."""
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            minutes = int(seconds / 60)
+            secs = int(seconds % 60)
+            return f"{minutes}m {secs}s"
+        else:
+            hours = int(seconds / 3600)
+            minutes = int((seconds % 3600) / 60)
+            return f"{hours}h {minutes}m"
+
+    # Handle export formats
+    if export_format:
+        if output_path is None:
+            output_path = Path.cwd() / f"metrics.{export_format}"
+
+        if export_format == "csv":
+            import csv
+            with open(output_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Metric", "Value"])
+
+                # Progress
+                if m.tasks_total > 0:
+                    task_pct = int(m.tasks_done / m.tasks_total * 100)
+                    writer.writerow(["Tasks", f"{m.tasks_done}/{m.tasks_total} ({task_pct}%)"])
+                if m.phases_total > 0:
+                    phase_pct = int(m.phases_completed / m.phases_total * 100)
+                    writer.writerow(["Phases", f"{m.phases_completed}/{m.phases_total} ({phase_pct}%)"])
+
+                # Resource usage
+                if m.tokens_used > 0:
+                    writer.writerow(["Tokens Used", m.tokens_used])
+                if m.api_calls > 0:
+                    writer.writerow(["API Calls", m.api_calls])
+                if m.estimated_cost_usd > 0:
+                    writer.writerow(["Estimated Cost (USD)", f"${m.estimated_cost_usd:.2f}"])
+
+                # Timing
+                if m.wall_time_seconds > 0:
+                    writer.writerow(["Wall Time", format_time(m.wall_time_seconds)])
+                if m.worker_time_seconds > 0:
+                    writer.writerow(["Worker Time", format_time(m.worker_time_seconds)])
+                if m.verification_time_seconds > 0:
+                    writer.writerow(["Verification Time", format_time(m.verification_time_seconds)])
+                if m.review_time_seconds > 0:
+                    writer.writerow(["Review Time", format_time(m.review_time_seconds)])
+
+                # Code changes
+                if m.files_changed > 0:
+                    writer.writerow(["Files Changed", m.files_changed])
+                if m.lines_added > 0:
+                    writer.writerow(["Lines Added", m.lines_added])
+                if m.lines_removed > 0:
+                    writer.writerow(["Lines Removed", m.lines_removed])
+
+                # Issues
+                if m.worker_failures > 0:
+                    writer.writerow(["Worker Failures", m.worker_failures])
+                if m.verification_failures > 0:
+                    writer.writerow(["Verification Failures", m.verification_failures])
+                if m.allowlist_violations > 0:
+                    writer.writerow(["Allowlist Violations", m.allowlist_violations])
+                if m.review_blockers > 0:
+                    writer.writerow(["Review Blockers", m.review_blockers])
+
+            sys.stdout.write(f"Metrics exported to: {output_path}\n")
+            return 0
+
+        elif export_format == "html":
+            html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Feature PRD Runner Metrics</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }}
+        .container {{
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }}
+        .section {{
+            margin: 30px 0;
+        }}
+        .section h2 {{
+            color: #555;
+            font-size: 1.3em;
+            margin-bottom: 15px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }}
+        th, td {{
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }}
+        th {{
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }}
+        tr:hover {{
+            background: #f8f9fa;
+        }}
+        .metric-value {{
+            font-weight: 500;
+            color: #2196F3;
+        }}
+        .error-value {{
+            color: #f44336;
+        }}
+        .success-value {{
+            color: #4CAF50;
+        }}
+        .footer {{
+            margin-top: 40px;
+            text-align: center;
+            color: #999;
+            font-size: 0.9em;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Run Metrics Report</h1>
+        <p>Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+"""
+
+            # Progress section
+            if m.tasks_total > 0 or m.phases_total > 0:
+                html_content += """
+        <div class="section">
+            <h2>Progress</h2>
+            <table>
+                <tr><th>Metric</th><th>Value</th></tr>
+"""
+                if m.tasks_total > 0:
+                    task_pct = int(m.tasks_done / m.tasks_total * 100)
+                    html_content += f"""                <tr><td>Tasks</td><td class="metric-value">{m.tasks_done}/{m.tasks_total} ({task_pct}%)</td></tr>
+"""
+                if m.phases_total > 0:
+                    phase_pct = int(m.phases_completed / m.phases_total * 100)
+                    html_content += f"""                <tr><td>Phases</td><td class="metric-value">{m.phases_completed}/{m.phases_total} ({phase_pct}%)</td></tr>
+"""
+                html_content += """            </table>
+        </div>
+"""
+
+            # Resource usage section
+            if m.tokens_used > 0 or m.api_calls > 0 or m.estimated_cost_usd > 0:
+                html_content += """
+        <div class="section">
+            <h2>Resource Usage</h2>
+            <table>
+                <tr><th>Metric</th><th>Value</th></tr>
+"""
+                if m.tokens_used > 0:
+                    html_content += f"""                <tr><td>Tokens Used</td><td class="metric-value">{m.tokens_used:,}</td></tr>
+"""
+                if m.api_calls > 0:
+                    html_content += f"""                <tr><td>API Calls</td><td class="metric-value">{m.api_calls}</td></tr>
+"""
+                if m.estimated_cost_usd > 0:
+                    html_content += f"""                <tr><td>Estimated Cost</td><td class="metric-value">${m.estimated_cost_usd:.2f}</td></tr>
+"""
+                html_content += """            </table>
+        </div>
+"""
+
+            # Timing section
+            if m.wall_time_seconds > 0 or m.worker_time_seconds > 0:
+                html_content += """
+        <div class="section">
+            <h2>Timing</h2>
+            <table>
+                <tr><th>Metric</th><th>Value</th></tr>
+"""
+                if m.wall_time_seconds > 0:
+                    html_content += f"""                <tr><td>Wall Time</td><td class="metric-value">{format_time(m.wall_time_seconds)}</td></tr>
+"""
+                if m.worker_time_seconds > 0:
+                    html_content += f"""                <tr><td>Worker Time</td><td class="metric-value">{format_time(m.worker_time_seconds)}</td></tr>
+"""
+                if m.verification_time_seconds > 0:
+                    html_content += f"""                <tr><td>Verification Time</td><td class="metric-value">{format_time(m.verification_time_seconds)}</td></tr>
+"""
+                if m.review_time_seconds > 0:
+                    html_content += f"""                <tr><td>Review Time</td><td class="metric-value">{format_time(m.review_time_seconds)}</td></tr>
+"""
+                html_content += """            </table>
+        </div>
+"""
+
+            # Code changes section
+            if m.files_changed > 0 or m.lines_added > 0 or m.lines_removed > 0:
+                html_content += """
+        <div class="section">
+            <h2>Code Changes</h2>
+            <table>
+                <tr><th>Metric</th><th>Value</th></tr>
+"""
+                if m.files_changed > 0:
+                    html_content += f"""                <tr><td>Files Changed</td><td class="metric-value">{m.files_changed}</td></tr>
+"""
+                if m.lines_added > 0:
+                    html_content += f"""                <tr><td>Lines Added</td><td class="success-value">+{m.lines_added}</td></tr>
+"""
+                if m.lines_removed > 0:
+                    html_content += f"""                <tr><td>Lines Removed</td><td class="error-value">-{m.lines_removed}</td></tr>
+"""
+                html_content += """            </table>
+        </div>
+"""
+
+            # Issues section
+            if (m.worker_failures > 0 or m.verification_failures > 0 or
+                m.allowlist_violations > 0 or m.review_blockers > 0):
+                html_content += """
+        <div class="section">
+            <h2>Issues</h2>
+            <table>
+                <tr><th>Metric</th><th>Value</th></tr>
+"""
+                if m.worker_failures > 0:
+                    html_content += f"""                <tr><td>Worker Failures</td><td class="error-value">{m.worker_failures}</td></tr>
+"""
+                if m.verification_failures > 0:
+                    html_content += f"""                <tr><td>Verification Failures</td><td class="error-value">{m.verification_failures}</td></tr>
+"""
+                if m.allowlist_violations > 0:
+                    html_content += f"""                <tr><td>Allowlist Violations</td><td class="error-value">{m.allowlist_violations}</td></tr>
+"""
+                if m.review_blockers > 0:
+                    html_content += f"""                <tr><td>Review Blockers</td><td class="error-value">{m.review_blockers}</td></tr>
+"""
+                html_content += """            </table>
+        </div>
+"""
+
+            html_content += """
+        <div class="footer">
+            Generated by Feature PRD Runner
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+            with open(output_path, "w") as f:
+                f.write(html_content)
+
+            sys.stdout.write(f"Metrics exported to: {output_path}\n")
+            return 0
+
+    # Collect metrics to display
+    has_data = False
+
+    if use_rich:
+        console = Console()
+        progress_table = Table(show_header=False, box=None, padding=(0, 2))
+        progress_table.add_column("Metric", style="cyan")
+        progress_table.add_column("Value", style="green")
+
+        if m.tasks_total > 0:
+            task_pct = int(m.tasks_done / m.tasks_total * 100)
+            progress_table.add_row("Tasks", f"{m.tasks_done}/{m.tasks_total} ({task_pct}%)")
+        if m.phases_total > 0:
+            phase_pct = int(m.phases_completed / m.phases_total * 100)
+            progress_table.add_row("Phases", f"{m.phases_completed}/{m.phases_total} ({phase_pct}%)")
+
+        resource_table = Table(show_header=False, box=None, padding=(0, 2))
+        resource_table.add_column("Metric", style="cyan")
+        resource_table.add_column("Value", style="yellow")
+        if m.tokens_used > 0:
+            resource_table.add_row("Tokens", f"{m.tokens_used:,}")
+        if m.api_calls > 0:
+            resource_table.add_row("API Calls", str(m.api_calls))
+        if m.estimated_cost_usd > 0:
+            resource_table.add_row("Estimated Cost", f"${m.estimated_cost_usd:.2f}")
+
+        timing_table = Table(show_header=False, box=None, padding=(0, 2))
+        timing_table.add_column("Metric", style="cyan")
+        timing_table.add_column("Value", style="magenta")
+        if m.wall_time_seconds > 0:
+            timing_table.add_row("Wall Time", format_time(m.wall_time_seconds))
+        if m.worker_time_seconds > 0:
+            timing_table.add_row("Worker Time", format_time(m.worker_time_seconds))
+        if m.verification_time_seconds > 0:
+            timing_table.add_row("Verification", format_time(m.verification_time_seconds))
+        if m.review_time_seconds > 0:
+            timing_table.add_row("Review", format_time(m.review_time_seconds))
+
+        changes_table = Table(show_header=False, box=None, padding=(0, 2))
+        changes_table.add_column("Metric", style="cyan")
+        changes_table.add_column("Value", style="green")
+        if m.files_changed > 0:
+            changes_table.add_row("Files Changed", str(m.files_changed))
+        if m.lines_added > 0:
+            changes_table.add_row("Lines Added", f"+{m.lines_added}")
+        if m.lines_removed > 0:
+            changes_table.add_row("Lines Removed", f"-{m.lines_removed}")
+
+        errors_table = Table(show_header=False, box=None, padding=(0, 2))
+        errors_table.add_column("Metric", style="cyan")
+        errors_table.add_column("Value", style="red")
+        has_errors = False
+        if m.worker_failures > 0:
+            errors_table.add_row("Worker Failures", str(m.worker_failures))
+            has_errors = True
+        if m.verification_failures > 0:
+            errors_table.add_row("Verification Failures", str(m.verification_failures))
+            has_errors = True
+        if m.allowlist_violations > 0:
+            errors_table.add_row("Allowlist Violations", str(m.allowlist_violations))
+            has_errors = True
+        if m.review_blockers > 0:
+            errors_table.add_row("Review Blockers", str(m.review_blockers))
+            has_errors = True
+
+        console.print("\n")
+        console.print(Panel("[bold]Run Metrics[/bold]", style="blue"))
+        console.print("\n")
+
+        if progress_table.row_count > 0:
+            console.print("[bold]Progress:[/bold]")
+            console.print(progress_table)
+            console.print()
+            has_data = True
+        if resource_table.row_count > 0:
+            console.print("[bold]Resource Usage:[/bold]")
+            console.print(resource_table)
+            console.print()
+            has_data = True
+        if timing_table.row_count > 0:
+            console.print("[bold]Timing:[/bold]")
+            console.print(timing_table)
+            console.print()
+            has_data = True
+        if changes_table.row_count > 0:
+            console.print("[bold]Code Changes:[/bold]")
+            console.print(changes_table)
+            console.print()
+            has_data = True
+        if has_errors:
+            console.print("[bold]Issues:[/bold]")
+            console.print(errors_table)
+            console.print()
+            has_data = True
+
+        if not has_data:
+            console.print("[yellow]No metrics data available yet.[/yellow]")
+            console.print("[yellow]Metrics will be populated as the run progresses.[/yellow]")
+            console.print()
+    else:
+        # Plain text fallback
+        sys.stdout.write("\n=== Run Metrics ===\n\n")
+        if m.tasks_total > 0 or m.phases_total > 0:
+            sys.stdout.write("Progress:\n")
+            if m.tasks_total > 0:
+                task_pct = int(m.tasks_done / m.tasks_total * 100)
+                sys.stdout.write(f"  Tasks: {m.tasks_done}/{m.tasks_total} ({task_pct}%)\n")
+                has_data = True
+            if m.phases_total > 0:
+                phase_pct = int(m.phases_completed / m.phases_total * 100)
+                sys.stdout.write(f"  Phases: {m.phases_completed}/{m.phases_total} ({phase_pct}%)\n")
+                has_data = True
+            sys.stdout.write("\n")
+
+        if m.tokens_used > 0 or m.api_calls > 0 or m.estimated_cost_usd > 0:
+            sys.stdout.write("Resource Usage:\n")
+            if m.tokens_used > 0:
+                sys.stdout.write(f"  Tokens: {m.tokens_used:,}\n")
+                has_data = True
+            if m.api_calls > 0:
+                sys.stdout.write(f"  API Calls: {m.api_calls}\n")
+                has_data = True
+            if m.estimated_cost_usd > 0:
+                sys.stdout.write(f"  Estimated Cost: ${m.estimated_cost_usd:.2f}\n")
+                has_data = True
+            sys.stdout.write("\n")
+
+        if m.wall_time_seconds > 0 or m.worker_time_seconds > 0:
+            sys.stdout.write("Timing:\n")
+            if m.wall_time_seconds > 0:
+                sys.stdout.write(f"  Wall Time: {format_time(m.wall_time_seconds)}\n")
+                has_data = True
+            if m.worker_time_seconds > 0:
+                sys.stdout.write(f"  Worker Time: {format_time(m.worker_time_seconds)}\n")
+                has_data = True
+            if m.verification_time_seconds > 0:
+                sys.stdout.write(f"  Verification: {format_time(m.verification_time_seconds)}\n")
+                has_data = True
+            if m.review_time_seconds > 0:
+                sys.stdout.write(f"  Review: {format_time(m.review_time_seconds)}\n")
+                has_data = True
+            sys.stdout.write("\n")
+
+        if m.files_changed > 0 or m.lines_added > 0 or m.lines_removed > 0:
+            sys.stdout.write("Code Changes:\n")
+            if m.files_changed > 0:
+                sys.stdout.write(f"  Files Changed: {m.files_changed}\n")
+                has_data = True
+            if m.lines_added > 0:
+                sys.stdout.write(f"  Lines Added: +{m.lines_added}\n")
+                has_data = True
+            if m.lines_removed > 0:
+                sys.stdout.write(f"  Lines Removed: -{m.lines_removed}\n")
+                has_data = True
+            sys.stdout.write("\n")
+
+        if (m.worker_failures > 0 or m.verification_failures > 0 or
+            m.allowlist_violations > 0 or m.review_blockers > 0):
+            sys.stdout.write("Issues:\n")
+            if m.worker_failures > 0:
+                sys.stdout.write(f"  Worker Failures: {m.worker_failures}\n")
+                has_data = True
+            if m.verification_failures > 0:
+                sys.stdout.write(f"  Verification Failures: {m.verification_failures}\n")
+                has_data = True
+            if m.allowlist_violations > 0:
+                sys.stdout.write(f"  Allowlist Violations: {m.allowlist_violations}\n")
+                has_data = True
+            if m.review_blockers > 0:
+                sys.stdout.write(f"  Review Blockers: {m.review_blockers}\n")
+                has_data = True
+            sys.stdout.write("\n")
+
+        if not has_data:
+            sys.stdout.write("No metrics data available yet.\n")
+            sys.stdout.write("Metrics will be populated as the run progresses.\n\n")
+
+    return 0
+
+
 def _build_plan_parallel_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Feature PRD Runner - visualize parallel execution plan",
@@ -1617,6 +2212,466 @@ def _server_command(
     )
 
     return 0
+
+
+def _build_example_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Feature PRD Runner - create example project",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Output directory for example project",
+    )
+    parser.add_argument(
+        "--language",
+        type=str,
+        choices=["python", "typescript", "go"],
+        default="python",
+        help="Project language (default: python)",
+    )
+    return parser
+
+
+def _example_command(output_dir: Path, language: str) -> int:
+    """Create an example project with sample PRD and configuration."""
+    output_dir = output_dir.resolve()
+
+    if output_dir.exists():
+        sys.stdout.write(f"Error: Directory {output_dir} already exists\n")
+        sys.stdout.write("Please choose a different directory or remove the existing one.\n")
+        return 1
+
+    try:
+        # Create project structure
+        output_dir.mkdir(parents=True)
+        docs_dir = output_dir / "docs"
+        docs_dir.mkdir()
+        src_dir = output_dir / "src"
+        src_dir.mkdir()
+        tests_dir = output_dir / "tests"
+        tests_dir.mkdir()
+        prd_runner_dir = output_dir / ".prd_runner"
+        prd_runner_dir.mkdir()
+
+        # Create example PRD
+        prd_content = """# Feature: User Authentication System
+
+## Overview
+Implement a secure user authentication system with login, logout, and session management.
+
+## Goals
+- Allow users to securely log in and out
+- Maintain user sessions
+- Protect sensitive routes
+
+## Requirements
+
+### Phase 1: Basic Authentication
+**Phase ID**: `auth-basic`
+**Dependencies**: None
+
+1. Create user model with email and password fields
+2. Implement password hashing using industry-standard algorithms
+3. Create login endpoint that validates credentials
+4. Create logout endpoint that clears sessions
+5. Add input validation for email and password
+
+**Success Criteria**:
+- Users can register with email and password
+- Users can log in with valid credentials
+- Passwords are securely hashed and never stored in plain text
+- Invalid login attempts are rejected with appropriate errors
+
+**Test Requirements**:
+- Test successful login with valid credentials
+- Test login rejection with invalid credentials
+- Test password hashing implementation
+- Test logout functionality
+
+### Phase 2: Session Management
+**Phase ID**: `auth-sessions`
+**Dependencies**: `auth-basic`
+
+1. Implement session token generation
+2. Create session storage mechanism
+3. Add session validation middleware
+4. Implement session expiration logic
+5. Add refresh token support
+
+**Success Criteria**:
+- Sessions are created upon successful login
+- Session tokens are validated on protected routes
+- Sessions expire after configured timeout
+- Refresh tokens allow extending sessions
+
+**Test Requirements**:
+- Test session creation and validation
+- Test session expiration
+- Test protected route access with valid/invalid sessions
+- Test refresh token functionality
+
+### Phase 3: Security Hardening
+**Phase ID**: `auth-security`
+**Dependencies**: `auth-sessions`
+
+1. Add rate limiting for login attempts
+2. Implement account lockout after failed attempts
+3. Add CSRF protection
+4. Implement secure password reset flow
+5. Add logging for security events
+
+**Success Criteria**:
+- Login attempts are rate-limited
+- Accounts lock after excessive failed attempts
+- CSRF tokens protect against cross-site attacks
+- Password reset emails are sent securely
+- All security events are logged
+
+**Test Requirements**:
+- Test rate limiting enforcement
+- Test account lockout mechanism
+- Test CSRF protection
+- Test password reset flow
+- Verify security event logging
+
+## Technical Notes
+- Use bcrypt or Argon2 for password hashing
+- Sessions should be stored server-side (Redis recommended)
+- JWT tokens are acceptable for stateless authentication
+- Follow OWASP authentication best practices
+
+## Out of Scope
+- OAuth integration (future phase)
+- Multi-factor authentication (future phase)
+- Social login (future phase)
+"""
+
+        prd_path = docs_dir / "authentication.md"
+        prd_path.write_text(prd_content)
+
+        # Create config based on language
+        if language == "python":
+            config_content = """# Feature PRD Runner Configuration
+
+# Verification profile and commands
+verify_profile: python
+test_command: pytest -v
+lint_command: ruff check .
+format_command: ruff format --check .
+typecheck_command: mypy src/ --strict
+
+# Ensure dependencies
+ensure_ruff: install
+ensure_deps: install
+
+# Worker configuration
+codex_command: codex exec -
+
+# Git configuration
+new_branch: feature/user-authentication
+
+# Retry configuration
+max_task_attempts: 10
+max_review_attempts: 3
+stop_on_blocking_issues: true
+
+# Approval gates (optional - uncomment to enable)
+# approval_gates:
+#   enabled: true
+#   gates:
+#     before_implement:
+#       enabled: true
+#       message: "Review implementation plan?"
+#     before_commit:
+#       enabled: true
+#       message: "Review and approve commit?"
+#       required: true
+"""
+
+            # Create sample Python files
+            src_init = src_dir / "__init__.py"
+            src_init.write_text('"""User authentication package."""\n')
+
+            src_main = src_dir / "main.py"
+            src_main.write_text("""\"\"\"Main application entry point.\"\"\"
+
+def main() -> None:
+    \"\"\"Run the application.\"\"\"
+    print("Hello from Feature PRD Runner example!")
+
+
+if __name__ == "__main__":
+    main()
+""")
+
+            tests_init = tests_dir / "__init__.py"
+            tests_init.write_text("")
+
+            tests_main = tests_dir / "test_main.py"
+            tests_main.write_text("""\"\"\"Tests for main module.\"\"\"
+
+from src.main import main
+
+
+def test_main() -> None:
+    \"\"\"Test main function runs without error.\"\"\"
+    main()  # Should not raise
+""")
+
+            # Create pyproject.toml
+            pyproject_content = """[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auth-example"
+version = "0.1.0"
+description = "Example authentication system"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "mypy>=1.8",
+    "ruff>=0.4",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+"""
+            pyproject_path = output_dir / "pyproject.toml"
+            pyproject_path.write_text(pyproject_content)
+
+        elif language == "typescript":
+            config_content = """# Feature PRD Runner Configuration
+
+# Verification commands
+test_command: npm test
+lint_command: npm run lint
+typecheck_command: npm run type-check
+format_command: npm run format:check
+
+# Worker configuration
+codex_command: codex exec -
+
+# Git configuration
+new_branch: feature/user-authentication
+
+# Retry configuration
+max_task_attempts: 10
+max_review_attempts: 3
+stop_on_blocking_issues: true
+"""
+
+            # Create package.json
+            package_json = {
+                "name": "auth-example",
+                "version": "0.1.0",
+                "description": "Example authentication system",
+                "scripts": {
+                    "test": "jest",
+                    "lint": "eslint .",
+                    "type-check": "tsc --noEmit",
+                    "format:check": "prettier --check ."
+                }
+            }
+            import json
+            (output_dir / "package.json").write_text(json.dumps(package_json, indent=2) + "\n")
+
+            # Create sample TypeScript files
+            (src_dir / "index.ts").write_text("""export function main(): void {
+  console.log("Hello from Feature PRD Runner example!");
+}
+
+main();
+""")
+
+            (tests_dir / "index.test.ts").write_text("""import { main } from "../src/index";
+
+describe("main", () => {
+  it("should run without error", () => {
+    expect(() => main()).not.toThrow();
+  });
+});
+""")
+
+        elif language == "go":
+            config_content = """# Feature PRD Runner Configuration
+
+# Verification commands
+test_command: go test ./... -v
+lint_command: golangci-lint run
+format_command: gofmt -l .
+
+# Worker configuration
+codex_command: codex exec -
+
+# Git configuration
+new_branch: feature/user-authentication
+
+# Retry configuration
+max_task_attempts: 10
+max_review_attempts: 3
+stop_on_blocking_issues: true
+"""
+
+            # Create go.mod
+            (output_dir / "go.mod").write_text("""module example.com/auth
+
+go 1.21
+""")
+
+            # Create sample Go files
+            (src_dir / "main.go").write_text("""package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello from Feature PRD Runner example!")
+}
+""")
+
+            (tests_dir / "main_test.go").write_text("""package main
+
+import "testing"
+
+func TestMain(t *testing.T) {
+	// Test passes if main doesn't panic
+	main()
+}
+""")
+
+        # Write config
+        config_path = prd_runner_dir / "config.yaml"
+        config_path.write_text(config_content)
+
+        # Create README
+        readme_content = f"""# Example Feature PRD Runner Project
+
+This is an example project created by `feature-prd-runner example`.
+
+## Project Structure
+
+- `docs/` - Product Requirement Documents (PRDs)
+- `src/` - Source code
+- `tests/` - Test files
+- `.prd_runner/` - Runner configuration and state
+
+## Getting Started
+
+1. Review the example PRD: `docs/authentication.md`
+
+2. Initialize git repository:
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial commit"
+   ```
+
+3. Run the Feature PRD Runner:
+   ```bash
+   feature-prd-runner run --prd-file docs/authentication.md
+   ```
+
+4. Monitor progress:
+   ```bash
+   feature-prd-runner status
+   feature-prd-runner list --tasks
+   ```
+
+## Configuration
+
+The configuration is in `.prd_runner/config.yaml`. Key settings:
+
+- `verify_profile`: Set to `{language}` for this project
+- `test_command`: Command to run tests
+- `lint_command`: Command to run linter
+- `max_task_attempts`: Maximum retry attempts for each phase
+
+## Learn More
+
+- Documentation: https://github.com/anthropics/feature-prd-runner
+- Edit `.prd_runner/config.yaml` to customize behavior
+- Create new PRDs in `docs/` directory
+"""
+        readme_path = output_dir / "README.md"
+        readme_path.write_text(readme_content)
+
+        # Create .gitignore
+        gitignore_content = """# Feature PRD Runner
+.prd_runner/run_state.yaml
+.prd_runner/task_queue.yaml
+.prd_runner/phase_plan.yaml
+.prd_runner/runs/
+.prd_runner/artifacts/
+.prd_runner/.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# TypeScript/JavaScript
+node_modules/
+dist/
+*.js
+*.d.ts
+!jest.config.js
+
+# Go
+*.exe
+*.test
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+"""
+        gitignore_path = output_dir / ".gitignore"
+        gitignore_path.write_text(gitignore_content)
+
+        sys.stdout.write(f"\n{'='*60}\n")
+        sys.stdout.write(f"Example {language} project created successfully!\n")
+        sys.stdout.write(f"{'='*60}\n\n")
+        sys.stdout.write(f"Location: {output_dir}\n\n")
+        sys.stdout.write("Files created:\n")
+        sys.stdout.write(f"  - {prd_path.relative_to(output_dir)}  (Example PRD)\n")
+        sys.stdout.write(f"  - {config_path.relative_to(output_dir)}  (Configuration)\n")
+        sys.stdout.write(f"  - README.md  (Getting started guide)\n")
+        sys.stdout.write(f"  - .gitignore  (Git ignore rules)\n")
+        sys.stdout.write(f"  - src/  (Source files)\n")
+        sys.stdout.write(f"  - tests/  (Test files)\n\n")
+        sys.stdout.write("Next steps:\n")
+        sys.stdout.write(f"  1. cd {output_dir}\n")
+        sys.stdout.write("  2. git init\n")
+        sys.stdout.write("  3. git add .\n")
+        sys.stdout.write("  4. git commit -m 'Initial commit'\n")
+        sys.stdout.write("  5. feature-prd-runner run --prd-file docs/authentication.md\n\n")
+
+        return 0
+
+    except Exception as e:
+        sys.stdout.write(f"Error creating example project: {e}\n")
+        # Clean up on error
+        if output_dir.exists():
+            import shutil
+            shutil.rmtree(output_dir)
+        return 1
 
 
 def _explain_command(project_dir: Path, task_id: str) -> int:
@@ -2639,7 +3694,7 @@ def _dry_run_command(project_dir: Path, prd_path: Path | None, *, as_json: bool 
         branch = None
         if will_checkout_branch and phase:
             phase_id = phase.get("id") or next_task.get("phase_id") or next_task.get("id")
-            branch = phase.get("branch") or next_task.get("branch") or f"feature/{phase_id}"
+            branch = phase.get("branch") or next_task.get("branch") or _default_run_branch(prd_path)
 
         result["would_write_state_files"] = True
         result["would_spawn_codex"] = bool(will_spawn_codex)
@@ -2992,6 +4047,16 @@ def main(argv: list[str] | None = None) -> None:
                     args.run_id,
                 )
             )
+        if argv[0] == "metrics":
+            args = _build_metrics_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _metrics_command(
+                    args.project_dir,
+                    as_json=bool(args.json),
+                    export_format=args.export,
+                    output_path=args.output,
+                )
+            )
         if argv[0] == "plan-parallel":
             args = _build_plan_parallel_parser().parse_args(argv[1:])
             raise SystemExit(
@@ -3010,6 +4075,14 @@ def main(argv: list[str] | None = None) -> None:
                     args.port,
                     bool(args.reload),
                     enable_cors=not bool(args.no_cors),
+                )
+            )
+        if argv[0] == "example":
+            args = _build_example_parser().parse_args(argv[1:])
+            raise SystemExit(
+                _example_command(
+                    args.output,
+                    args.language,
                 )
             )
 
