@@ -1349,6 +1349,19 @@ def create_app(
                 # Generate PRD from prompt using codex worker
                 logger.info("Generating PRD from prompt: {}", request.content[:100])
                 from ..custom_execution import execute_custom_prompt
+                from ..config import load_runner_config
+
+                # Load project config to get codex command
+                config, config_err = load_runner_config(proj_dir)
+                if config_err:
+                    logger.warning("Failed to load config: {}", config_err)
+
+                # Get codex command from config or use default
+                codex_cmd = "codex exec -"
+                if config and "codex_command" in config:
+                    codex_cmd = config["codex_command"]
+
+                logger.info("Using codex command: {}", codex_cmd)
 
                 # Create a temporary file path for the generated PRD
                 generated_prd_path = proj_dir / ".prd_runner" / "temp_generated_prd.md"
@@ -1382,7 +1395,7 @@ Write the generated PRD to the file: {generated_prd_path}"""
                     success, error_msg = execute_custom_prompt(
                         user_prompt=prd_gen_prompt,
                         project_dir=proj_dir,
-                        codex_command="codex exec -",
+                        codex_command=codex_cmd,
                         heartbeat_seconds=60,
                         heartbeat_grace_seconds=120,
                         shift_minutes=5,
@@ -1391,9 +1404,13 @@ Write the generated PRD to the file: {generated_prd_path}"""
 
                     if not success:
                         logger.error("Failed to generate PRD: {}", error_msg)
+                        # Check if it's a codex not found error
+                        error_details = error_msg or ""
+                        if "cannot find the file" in error_details.lower() or "no such file" in error_details.lower():
+                            error_details += f"\n\nMake sure codex is installed and in your PATH, or configure 'codex_command' in .prd_runner/config.yaml"
                         return StartRunResponse(
                             success=False,
-                            message=f"Failed to generate PRD from prompt: {error_msg}",
+                            message=f"Failed to generate PRD from prompt: {error_details}",
                             run_id=None,
                             prd_path=None,
                         )
@@ -1416,9 +1433,13 @@ Write the generated PRD to the file: {generated_prd_path}"""
 
                 except Exception as e:
                     logger.error("Failed to generate PRD: {}", e)
+                    error_msg = str(e)
+                    # Check if it's a codex not found error
+                    if "cannot find the file" in error_msg.lower() or "no such file" in error_msg.lower():
+                        error_msg += f"\n\nMake sure codex is installed and in your PATH, or configure 'codex_command' in .prd_runner/config.yaml"
                     return StartRunResponse(
                         success=False,
-                        message=f"Failed to generate PRD from prompt: {e}",
+                        message=f"Failed to generate PRD from prompt: {error_msg}",
                         run_id=None,
                         prd_path=None,
                     )
