@@ -6,7 +6,6 @@ To run these tests, install with:
 
 Requirements:
 - httpx (for FastAPI TestClient)
-- anthropic (mocked in tests)
 """
 
 import json
@@ -128,20 +127,20 @@ This is a test feature.
 def test_start_run_quick_prompt_mode(client: TestClient, test_project: Path):
     """Test starting a run with quick prompt mode (PRD generation)."""
     prompt = "Add a user profile page with avatar upload"
+    generated_prd_content = "# Feature: User Profile\n\nGenerated PRD..."
 
-    # Mock the Anthropic API call
-    mock_response = MagicMock()
-    mock_response.content = [MagicMock(text="# Feature: User Profile\n\nGenerated PRD...")]
+    def mock_execute_custom_prompt(user_prompt, project_dir, **kwargs):
+        # Simulate successful PRD generation by creating the file
+        prd_path = project_dir / "generated_prd.md"
+        prd_path.write_text(generated_prd_content)
+        return True, None
 
     with patch("subprocess.Popen") as mock_popen, patch(
-        "anthropic.Anthropic"
-    ) as mock_anthropic:
+        "feature_prd_runner.server.api.execute_custom_prompt",
+        side_effect=mock_execute_custom_prompt
+    ):
         mock_process = MagicMock()
         mock_popen.return_value = mock_process
-
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = mock_response
-        mock_anthropic.return_value = mock_client
 
         response = client.post(
             "/api/runs/start",
@@ -162,12 +161,6 @@ def test_start_run_quick_prompt_mode(client: TestClient, test_project: Path):
         assert data["success"] is True
         assert data["run_id"] is not None
         assert data["prd_path"] is not None
-
-        # Verify PRD generation was called
-        mock_client.messages.create.assert_called_once()
-        call_kwargs = mock_client.messages.create.call_args.kwargs
-        assert call_kwargs["model"] == "claude-sonnet-4-20250514"
-        assert prompt in call_kwargs["messages"][0]["content"]
 
         # Verify generated PRD was saved
         prd_path = Path(data["prd_path"])
@@ -219,11 +212,10 @@ def test_start_run_empty_content(client: TestClient):
 
 def test_start_run_prd_generation_failure(client: TestClient):
     """Test handling of PRD generation failures."""
-    with patch("anthropic.Anthropic") as mock_anthropic:
-        mock_client = MagicMock()
-        mock_client.messages.create.side_effect = Exception("API Error")
-        mock_anthropic.return_value = mock_client
-
+    with patch(
+        "feature_prd_runner.server.api.execute_custom_prompt",
+        return_value=(False, "Codex worker failed")
+    ):
         response = client.post(
             "/api/runs/start",
             json={

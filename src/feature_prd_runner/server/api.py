@@ -1346,19 +1346,11 @@ def create_app(
             # Generate or use provided PRD
             prd_content = ""
             if request.mode == "quick_prompt":
-                # Generate PRD from prompt using LLM
+                # Generate PRD from prompt using codex worker
                 logger.info("Generating PRD from prompt: {}", request.content[:100])
-                try:
-                    import anthropic
+                from ..custom_execution import execute_custom_prompt
 
-                    client = anthropic.Anthropic()
-                    response = client.messages.create(
-                        model="claude-sonnet-4-20250514",
-                        max_tokens=4000,
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": f"""You are a product requirements document (PRD) generator. Generate a clear, well-structured PRD based on the following user request:
+                prd_gen_prompt = f"""You are a product requirements document (PRD) generator. Generate a clear, well-structured PRD based on the following user request:
 
 {request.content}
 
@@ -1377,12 +1369,48 @@ Format the PRD in markdown with these sections:
 ## Success Criteria
 [How to verify the feature works correctly]
 
-Be specific, actionable, and include all necessary details for implementation.""",
-                            }
-                        ],
+Be specific, actionable, and include all necessary details for implementation.
+
+Write the generated PRD to a file named 'generated_prd.md' in the current directory."""
+
+                try:
+                    # Use codex to generate the PRD
+                    success, error_msg = execute_custom_prompt(
+                        user_prompt=prd_gen_prompt,
+                        project_dir=proj_dir,
+                        codex_command="codex exec -",
+                        heartbeat_seconds=60,
+                        heartbeat_grace_seconds=120,
+                        shift_minutes=5,
+                        override_agents=False,
                     )
-                    prd_content = response.content[0].text
+
+                    if not success:
+                        logger.error("Failed to generate PRD: {}", error_msg)
+                        return StartRunResponse(
+                            success=False,
+                            message=f"Failed to generate PRD from prompt: {error_msg}",
+                            run_id=None,
+                            prd_path=None,
+                        )
+
+                    # Read the generated PRD
+                    generated_prd_path = proj_dir / "generated_prd.md"
+                    if not generated_prd_path.exists():
+                        logger.error("Generated PRD file not found at {}", generated_prd_path)
+                        return StartRunResponse(
+                            success=False,
+                            message="PRD generation completed but output file not found",
+                            run_id=None,
+                            prd_path=None,
+                        )
+
+                    prd_content = generated_prd_path.read_text()
                     logger.info("Generated PRD: {} chars", len(prd_content))
+
+                    # Clean up temporary file
+                    generated_prd_path.unlink()
+
                 except Exception as e:
                     logger.error("Failed to generate PRD: {}", e)
                     return StartRunResponse(
