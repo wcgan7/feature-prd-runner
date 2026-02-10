@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
 import './FileReview.css'
+import { useToast } from '../contexts/ToastContext'
+import EmptyState from './EmptyState'
+import LoadingSpinner from './LoadingSpinner'
 
 interface FileChange {
   file_path: string
@@ -23,6 +26,7 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
   const [selectedFile, setSelectedFile] = useState<number>(0)
   const [comments, setComments] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState<string | null>(null)
+  const toast = useToast()
 
   useEffect(() => {
     fetchFileChanges()
@@ -96,8 +100,10 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
         delete updated[filePath]
         return updated
       })
+
+      toast.success(approved ? 'File approved' : 'File rejected')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit review')
+      toast.error(err instanceof Error ? err.message : 'Failed to submit review')
     } finally {
       setSubmitting(null)
     }
@@ -163,7 +169,7 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
     return (
       <div className="file-review">
         <h2>File Review</h2>
-        <div className="loading">Loading file changes...</div>
+        <LoadingSpinner label="Loading file changes..." />
       </div>
     )
   }
@@ -172,7 +178,12 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
     return (
       <div className="file-review">
         <h2>File Review</h2>
-        <div className="error">Error: {error}</div>
+        <EmptyState
+          icon={<span>⚠️</span>}
+          title="Error loading files"
+          description={error}
+          size="sm"
+        />
       </div>
     )
   }
@@ -181,7 +192,12 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
     return (
       <div className="file-review">
         <h2>File Review</h2>
-        <div className="empty-state">No file changes to review</div>
+        <EmptyState
+          icon={<span>📁</span>}
+          title="No file changes to review"
+          description="File changes will appear here when they are ready for review."
+          size="sm"
+        />
       </div>
     )
   }

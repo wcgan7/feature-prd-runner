@@ -1,23 +1,9 @@
 import { useState, useEffect } from 'react'
 import { buildApiUrl, buildAuthHeaders } from '../api'
-
-interface ProjectStatus {
-  project_dir: string
-  status: string
-  current_task_id?: string
-  current_phase_id?: string
-  run_id?: string
-  last_error?: string
-  phases_completed: number
-  phases_total: number
-  tasks_ready: number
-  tasks_running: number
-  tasks_done: number
-  tasks_blocked: number
-}
+import EmptyState from './EmptyState'
+import './MetricsPanel.css'
 
 interface Props {
-  status: ProjectStatus | null
   projectDir?: string
 }
 
@@ -33,7 +19,7 @@ interface RunMetrics {
   lines_removed: number
 }
 
-export default function MetricsPanel({ status, projectDir }: Props) {
+export default function MetricsPanel({ projectDir }: Props) {
   const [metrics, setMetrics] = useState<RunMetrics | null>(null)
 
   const normalizeMetrics = (value: unknown): RunMetrics | null => {
@@ -115,87 +101,73 @@ export default function MetricsPanel({ status, projectDir }: Props) {
       <h2>Metrics</h2>
 
       {!metrics || !hasAnyMetrics ? (
-        <div className="empty-state">
-          <p>No metrics available</p>
-          <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-            Metrics will appear once runs start
-          </p>
-        </div>
+        <EmptyState
+          icon={<span>📊</span>}
+          title="No metrics available"
+          description="Metrics will appear once runs start"
+          size="sm"
+        />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="metrics-panel-content">
           <div>
-            <div style={{ fontSize: '0.875rem', color: '#666', marginBottom: '0.5rem' }}>
-              API Usage
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <div style={{ padding: '0.75rem', background: '#f5f5f5', borderRadius: '4px' }}>
-                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#333' }}>
+            <div className="metrics-panel-section-title">API Usage</div>
+            <div className="metrics-panel-grid">
+              <div className="metrics-panel-stat">
+                <div className="metrics-panel-stat-value">
                   {formatNumber(metrics.api_calls)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.25rem' }}>
-                  API Calls
-                </div>
+                <div className="metrics-panel-stat-label">API Calls</div>
               </div>
-              <div style={{ padding: '0.75rem', background: '#f5f5f5', borderRadius: '4px' }}>
-                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#333' }}>
+              <div className="metrics-panel-stat">
+                <div className="metrics-panel-stat-value">
                   {formatNumber(metrics.tokens_used)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.25rem' }}>
-                  Tokens
-                </div>
+                <div className="metrics-panel-stat-label">Tokens</div>
               </div>
             </div>
           </div>
 
           <div>
-            <div style={{ fontSize: '0.875rem', color: '#666', marginBottom: '0.5rem' }}>
-              Cost & Time
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <div style={{ padding: '0.75rem', background: '#f5f5f5', borderRadius: '4px' }}>
-                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#333' }}>
+            <div className="metrics-panel-section-title">Cost & Time</div>
+            <div className="metrics-panel-grid">
+              <div className="metrics-panel-stat">
+                <div className="metrics-panel-stat-value">
                   {formatCost(metrics.estimated_cost_usd)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.25rem' }}>
-                  Estimated Cost
-                </div>
+                <div className="metrics-panel-stat-label">Estimated Cost</div>
               </div>
-              <div style={{ padding: '0.75rem', background: '#f5f5f5', borderRadius: '4px' }}>
-                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#333' }}>
+              <div className="metrics-panel-stat">
+                <div className="metrics-panel-stat-value">
                   {formatDuration(metrics.wall_time_seconds)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.25rem' }}>
-                  Wall Time
-                </div>
+                <div className="metrics-panel-stat-label">Wall Time</div>
               </div>
             </div>
           </div>
 
           <div>
-            <div style={{ fontSize: '0.875rem', color: '#666', marginBottom: '0.5rem' }}>
-              Code Changes
-            </div>
-            <div style={{ padding: '0.75rem', background: '#f5f5f5', borderRadius: '4px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div className="metrics-panel-section-title">Code Changes</div>
+            <div className="metrics-panel-changes">
+              <div className="metrics-panel-changes-row">
                 <div>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 600, color: '#4caf50' }}>
+                  <div className="metrics-panel-change-item-value added">
                     +{formatNumber(metrics.lines_added)}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#666' }}>Added</div>
+                  <div className="metrics-panel-change-item-label">Added</div>
                 </div>
-                <div style={{ width: '1px', height: '40px', background: '#ddd' }} />
+                <div className="metrics-panel-divider" />
                 <div>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 600, color: '#f44336' }}>
+                  <div className="metrics-panel-change-item-value removed">
                     -{formatNumber(metrics.lines_removed)}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#666' }}>Removed</div>
+                  <div className="metrics-panel-change-item-label">Removed</div>
                 </div>
-                <div style={{ width: '1px', height: '40px', background: '#ddd' }} />
+                <div className="metrics-panel-divider" />
                 <div>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 600, color: '#333' }}>
+                  <div className="metrics-panel-change-item-value">
                     {formatNumber(metrics.files_changed)}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#666' }}>Files</div>
+                  <div className="metrics-panel-change-item-label">Files</div>
                 </div>
               </div>
             </div>

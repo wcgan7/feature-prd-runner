@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { buildApiUrl, buildAuthHeaders, buildWsUrl } from '../api'
+import './LiveLog.css'
 
 interface Props {
   runId: string
@@ -139,7 +140,7 @@ export default function LiveLog({ runId, projectDir }: Props) {
       <>
         {parts.map((part, i) =>
           part.toLowerCase() === searchTerm.toLowerCase() ? (
-            <span key={i} style={{ backgroundColor: '#ffeb3b', color: '#000' }}>
+            <span key={i} className="live-log-highlight">
               {part}
             </span>
           ) : (
@@ -150,53 +151,43 @@ export default function LiveLog({ runId, projectDir }: Props) {
     )
   }
 
+  const getLineClass = (line: string): string => {
+    const upperLine = line.toUpperCase()
+    if (upperLine.includes('ERROR') || upperLine.includes('FAIL')) {
+      return 'live-log-line-error'
+    }
+    if (upperLine.includes('WARN')) {
+      return 'live-log-line-warning'
+    }
+    return ''
+  }
+
   return (
     <div className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+      <div className="live-log-header">
         <h2>Live Logs</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <div
-            style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              background: connected ? '#4caf50' : '#999',
-            }}
-          />
-          <span style={{ fontSize: '0.875rem', color: '#666' }}>
+        <div className="live-log-status">
+          <div className={`live-log-status-dot ${connected ? 'connected' : 'disconnected'}`} />
+          <span className="live-log-status-text">
             {connected ? 'Connected' : 'Disconnected'}
           </span>
         </div>
       </div>
 
       {/* Search and Filter Controls */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+      <div className="live-log-controls">
         <input
           type="text"
           placeholder="Search logs..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          style={{
-            flex: '1',
-            minWidth: '200px',
-            padding: '0.5rem',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-          }}
+          className="live-log-search"
         />
 
         <select
           value={logLevel}
           onChange={(e) => setLogLevel(e.target.value as LogLevel)}
-          style={{
-            padding: '0.5rem',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            backgroundColor: '#fff',
-            cursor: 'pointer',
-          }}
+          className="live-log-select"
         >
           <option value="ALL">All Levels</option>
           <option value="ERROR">Errors</option>
@@ -206,32 +197,14 @@ export default function LiveLog({ runId, projectDir }: Props) {
         </select>
 
         {searchTerm && (
-          <button
-            onClick={() => setSearchTerm('')}
-            style={{
-              padding: '0.5rem 1rem',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              fontSize: '0.875rem',
-              backgroundColor: '#f5f5f5',
-              cursor: 'pointer',
-            }}
-          >
+          <button onClick={() => setSearchTerm('')} className="live-log-btn">
             Clear
           </button>
         )}
 
         <button
           onClick={() => setAutoScroll(!autoScroll)}
-          style={{
-            padding: '0.5rem 1rem',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            backgroundColor: autoScroll ? '#4caf50' : '#f5f5f5',
-            color: autoScroll ? '#fff' : '#333',
-            cursor: 'pointer',
-          }}
+          className={`live-log-btn live-log-btn-autoscroll ${autoScroll ? 'active' : ''}`}
         >
           Auto-scroll {autoScroll ? 'ON' : 'OFF'}
         </button>
@@ -239,19 +212,18 @@ export default function LiveLog({ runId, projectDir }: Props) {
 
       {/* Results count */}
       {(searchTerm || logLevel !== 'ALL') && (
-        <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.5rem' }}>
+        <div className="live-log-count">
           Showing {filteredLogs.length} of {logs.length} logs
         </div>
       )}
 
       <div
         ref={logContainerRef}
-        className="log-container"
+        className="log-container live-log-container"
         onScroll={handleScroll}
-        style={{ maxHeight: '500px', overflowY: 'auto' }}
       >
         {filteredLogs.length === 0 ? (
-          <div style={{ color: '#999', textAlign: 'center', padding: '2rem' }}>
+          <div className="live-log-empty">
             {logs.length === 0
               ? 'No logs available'
               : 'No logs match the current filters'}
@@ -259,17 +231,7 @@ export default function LiveLog({ runId, projectDir }: Props) {
         ) : (
           <>
             {filteredLogs.map((line, index) => (
-              <div
-                key={index}
-                className="log-line"
-                style={{
-                  color: line.toUpperCase().includes('ERROR')
-                    ? '#f44336'
-                    : line.toUpperCase().includes('WARN')
-                    ? '#ff9800'
-                    : undefined,
-                }}
-              >
+              <div key={index} className={`log-line ${getLineClass(line)}`}>
                 {highlightSearchTerm(line)}
               </div>
             ))}

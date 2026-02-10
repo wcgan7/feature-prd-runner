@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { buildApiUrl, buildAuthHeaders } from '../api'
+import { useToast } from '../contexts/ToastContext'
 import './TaskLauncher.css'
 
 interface TaskLauncherProps {
@@ -26,6 +27,7 @@ type LauncherMode = 'quick_task' | 'quick_prompt' | 'full_prd'
 export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherProps) {
   const [mode, setMode] = useState<LauncherMode>('quick_task')
   const [content, setContent] = useState('')
+  const toast = useToast()
 
   // Config for full workflow (quick_prompt and full_prd)
   const [testCommand, setTestCommand] = useState('')
@@ -40,21 +42,17 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
   const [contextFiles, setContextFiles] = useState('')
 
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError(null)
-    setSuccess(null)
 
     if (!content.trim()) {
-      setError('Please enter task description')
+      toast.error('Please enter task description')
       return
     }
 
     if (!projectDir) {
-      setError('No project selected')
+      toast.error('No project selected')
       return
     }
 
@@ -81,10 +79,10 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
         const data: ExecTaskResponse = await response.json()
 
         if (data.success) {
-          setSuccess('Task executed successfully!')
+          toast.success('Task executed successfully!')
           setContent('') // Clear the input
         } else {
-          setError(data.error || data.message || 'Failed to execute task')
+          toast.error(data.error || data.message || 'Failed to execute task')
         }
       } else {
         // Use the run endpoint for full workflow
@@ -109,17 +107,17 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
         const data: StartRunResponse = await response.json()
 
         if (data.success && data.run_id) {
-          setSuccess(`Run started successfully! Run ID: ${data.run_id}`)
+          toast.success(`Run started! ID: ${data.run_id}`)
           setContent('') // Clear the input
           if (onRunStarted) {
             onRunStarted(data.run_id)
           }
         } else {
-          setError(data.message || 'Failed to start run')
+          toast.error(data.message || 'Failed to start run')
         }
       }
     } catch (err) {
-      setError(`Error: ${err}`)
+      toast.error(`Error: ${err}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -336,10 +334,6 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
             </div>
           </div>
         )}
-
-        {/* Status Messages */}
-        {error && <div className="message error-message">{error}</div>}
-        {success && <div className="message success-message">{success}</div>}
 
         {/* Submit Button */}
         <div className="form-actions">

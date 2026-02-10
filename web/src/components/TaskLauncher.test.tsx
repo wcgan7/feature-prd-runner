@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { ToastProvider } from '../contexts/ToastContext'
 import TaskLauncher from './TaskLauncher'
+
+const renderWithProvider = (ui: React.ReactElement) => {
+  return render(<ToastProvider>{ui}</ToastProvider>)
+}
 
 describe('TaskLauncher', () => {
   const mockOnRunStarted = vi.fn()
@@ -19,20 +24,21 @@ describe('TaskLauncher', () => {
     })
   })
 
-  it('renders with default quick_prompt mode', () => {
-    render(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+  it('renders with default quick_task mode', () => {
+    renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
 
-    expect(screen.getByText('Launch New Run')).toBeInTheDocument()
+    expect(screen.getByText('Launch New Task')).toBeInTheDocument()
+    expect(screen.getByText('Quick Task')).toBeInTheDocument()
     expect(screen.getByText('Quick Prompt')).toBeInTheDocument()
     expect(screen.getByText('Full PRD')).toBeInTheDocument()
 
-    // Quick prompt mode should be active by default
-    const quickButton = screen.getByRole('button', { name: /quick prompt/i })
-    expect(quickButton).toHaveClass('active')
+    // Quick task mode should be active by default
+    const quickTaskButton = screen.getByRole('button', { name: /quick task/i })
+    expect(quickTaskButton).toHaveClass('active')
   })
 
   it('switches between modes', () => {
-    render(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+    renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
 
     const fullPrdButton = screen.getByRole('button', { name: /full prd/i })
     fireEvent.click(fullPrdButton)
@@ -41,19 +47,19 @@ describe('TaskLauncher', () => {
   })
 
   it('disables submit button when content is empty', () => {
-    render(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+    renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
 
-    const submitButton = screen.getByRole('button', { name: /start run/i })
+    const submitButton = screen.getByRole('button', { name: /execute task/i })
     expect(submitButton).toBeDisabled()
   })
 
   it('enables submit button when content is provided', () => {
-    render(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+    renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
 
-    const textarea = screen.getByLabelText(/feature prompt/i)
+    const textarea = screen.getByLabelText(/task description/i)
     fireEvent.change(textarea, { target: { value: 'Test prompt' } })
 
-    const submitButton = screen.getByRole('button', { name: /start run/i })
+    const submitButton = screen.getByRole('button', { name: /execute task/i })
     expect(submitButton).not.toBeDisabled()
   })
 
@@ -68,7 +74,11 @@ describe('TaskLauncher', () => {
     })
     global.fetch = mockFetch
 
-    render(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+    renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+
+    // Switch to quick_prompt mode
+    const quickPromptButton = screen.getByRole('button', { name: /quick prompt/i })
+    fireEvent.click(quickPromptButton)
 
     const textarea = screen.getByLabelText(/feature prompt/i)
     fireEvent.change(textarea, { target: { value: 'Add user authentication' } })
@@ -88,11 +98,13 @@ describe('TaskLauncher', () => {
     expect(body.content).toBe('Add user authentication')
     expect(body.verification_profile).toBe('none')
 
+    // Verify callback was invoked with run ID
     await waitFor(() => {
-      expect(screen.getByText(/run started successfully/i)).toBeInTheDocument()
+      expect(mockOnRunStarted).toHaveBeenCalledWith('run-123')
     })
 
-    expect(mockOnRunStarted).toHaveBeenCalledWith('run-123')
+    // Verify input was cleared after success
+    expect(textarea).toHaveValue('')
   })
 
   it('handles API errors gracefully', async () => {
@@ -106,7 +118,11 @@ describe('TaskLauncher', () => {
     })
     global.fetch = mockFetch
 
-    render(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+    renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+
+    // Switch to quick_prompt mode
+    const quickPromptButton = screen.getByRole('button', { name: /quick prompt/i })
+    fireEvent.click(quickPromptButton)
 
     const textarea = screen.getByLabelText(/feature prompt/i)
     fireEvent.change(textarea, { target: { value: 'Test prompt' } })
@@ -127,7 +143,11 @@ describe('TaskLauncher', () => {
     })
     global.fetch = mockFetch
 
-    render(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+    renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+
+    // Switch to quick_prompt mode
+    const quickPromptButton = screen.getByRole('button', { name: /quick prompt/i })
+    fireEvent.click(quickPromptButton)
 
     const textarea = screen.getByLabelText(/feature prompt/i)
     fireEvent.change(textarea, { target: { value: 'Test prompt' } })
@@ -140,9 +160,12 @@ describe('TaskLauncher', () => {
       expect(submitButton).toBeDisabled()
     })
 
-    // Wait for success message
+    // Wait for submission to complete and verify input was cleared
     await waitFor(() => {
-      expect(screen.getByText(/success/i)).toBeInTheDocument()
+      expect(textarea).toHaveValue('')
     })
+
+    // Button stays disabled because content is now empty (correct behavior)
+    expect(submitButton).toBeDisabled()
   })
 })

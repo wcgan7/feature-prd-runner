@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { ToastProvider } from '../contexts/ToastContext'
 import FileReview from './FileReview'
+
+const renderWithProvider = (ui: React.ReactElement) => {
+  return render(<ToastProvider>{ui}</ToastProvider>)
+}
 
 describe('FileReview', () => {
   let user: ReturnType<typeof userEvent.setup>
@@ -12,7 +17,7 @@ describe('FileReview', () => {
   })
 
   it('renders loading state initially', () => {
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
     expect(screen.getByText(/loading file changes/i)).toBeInTheDocument()
   })
 
@@ -22,7 +27,7 @@ describe('FileReview', () => {
       json: async () => [],
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       expect(screen.getByText(/no file changes to review/i)).toBeInTheDocument()
@@ -32,10 +37,10 @@ describe('FileReview', () => {
   it('displays error message on fetch failure', async () => {
     global.fetch = vi.fn().mockRejectedValueOnce(new Error('Network error'))
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
-      expect(screen.getByText(/error/i)).toBeInTheDocument()
+      expect(screen.getByText(/error loading files/i)).toBeInTheDocument()
       expect(screen.getByText(/network error/i)).toBeInTheDocument()
     })
   })
@@ -76,7 +81,7 @@ describe('FileReview', () => {
       json: async () => mockFiles,
     })
 
-    const { container } = render(<FileReview />)
+    const { container } = renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const list = container.querySelector('.file-list')
@@ -128,7 +133,7 @@ describe('FileReview', () => {
       json: async () => mockFiles,
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       expect(screen.getByText(/✓ 1/)).toBeInTheDocument() // approved count
@@ -165,7 +170,7 @@ describe('FileReview', () => {
       json: async () => mockFiles,
     })
 
-    const { container } = render(<FileReview />)
+    const { container } = renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const list = container.querySelector('.file-list')
@@ -203,7 +208,7 @@ describe('FileReview', () => {
       json: async () => mockFiles,
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const diffView = screen.getByText('-deleted line')
@@ -247,7 +252,7 @@ describe('FileReview', () => {
       }
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const list = document.querySelector('.file-list')
@@ -298,7 +303,7 @@ describe('FileReview', () => {
       }
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const list = document.querySelector('.file-list')
@@ -338,7 +343,7 @@ describe('FileReview', () => {
       json: async () => mockFiles,
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const list = document.querySelector('.file-list')
@@ -381,7 +386,7 @@ describe('FileReview', () => {
       }
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const list = document.querySelector('.file-list')
@@ -435,7 +440,7 @@ describe('FileReview', () => {
       }
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const list = document.querySelector('.file-list')
@@ -488,7 +493,7 @@ describe('FileReview', () => {
           })
       )
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const list = document.querySelector('.file-list')
@@ -543,7 +548,7 @@ describe('FileReview', () => {
       json: async () => mockFiles,
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       expect(screen.getByText(/file 1 of 3/i)).toBeInTheDocument()
@@ -590,7 +595,7 @@ describe('FileReview', () => {
       json: async () => [],
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
@@ -610,7 +615,7 @@ describe('FileReview', () => {
       json: async () => [],
     })
 
-    render(<FileReview taskId="task-123" projectDir="/path/to/project" />)
+    renderWithProvider(<FileReview taskId="task-123" projectDir="/path/to/project" />)
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
@@ -660,7 +665,7 @@ describe('FileReview', () => {
       json: async () => mockFiles,
     })
 
-    const { container } = render(<FileReview />)
+    const { container } = renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       const fileItems = container.querySelectorAll('.file-item')
@@ -690,7 +695,7 @@ describe('FileReview', () => {
       json: async () => mockFiles,
     })
 
-    render(<FileReview />)
+    renderWithProvider(<FileReview />)
 
     await waitFor(() => {
       expect(screen.getByText(/no diff available/i)).toBeInTheDocument()

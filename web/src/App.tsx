@@ -16,6 +16,8 @@ import TasksPanel from './components/TasksPanel'
 import RunsPanel from './components/RunsPanel'
 import BreakpointsPanel from './components/BreakpointsPanel'
 import TaskLauncher from './components/TaskLauncher'
+import LoadingSpinner from './components/LoadingSpinner'
+import { ToastProvider } from './contexts/ToastContext'
 
 interface ProjectStatus {
   project_dir: string
@@ -42,7 +44,7 @@ const STORAGE_KEY_PROJECT = 'feature-prd-runner-selected-project'
 const STORAGE_KEY_TOKEN = 'feature-prd-runner-auth-token'
 const STORAGE_KEY_USERNAME = 'feature-prd-runner-username'
 
-function App() {
+function AppContent() {
   const [status, setStatus] = useState<ProjectStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -167,7 +169,9 @@ function App() {
   if (!authChecked) {
     return (
       <div className="app">
-        <div className="loading">Checking authentication...</div>
+        <div className="loading-screen">
+          <LoadingSpinner size="lg" label="Checking authentication..." />
+        </div>
       </div>
     )
   }
@@ -179,7 +183,9 @@ function App() {
   if (loading) {
     return (
       <div className="app">
-        <div className="loading">Loading...</div>
+        <div className="loading-screen">
+          <LoadingSpinner size="lg" label="Loading dashboard..." />
+        </div>
       </div>
     )
   }
@@ -188,39 +194,32 @@ function App() {
     return (
       <div className="app">
         <header className="header">
-          <h1>Feature PRD Runner Dashboard</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div className="header-left">
+            <h1 className="header-title">Feature PRD Runner</h1>
+          </div>
+          <div className="header-right">
             <ProjectSelector
               currentProject={currentProject}
               onProjectChange={handleProjectChange}
             />
             {authStatus?.enabled && (
-              <button
-                onClick={handleLogout}
-                style={{
-                  padding: '0.5rem 1rem',
-                  background: '#f44336',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  fontSize: '0.875rem',
-                  cursor: 'pointer',
-                }}
-              >
+              <button onClick={handleLogout} className="btn-logout">
                 Logout
               </button>
             )}
           </div>
         </header>
         <div className="error">
-          <h2>Error</h2>
+          <h2>Connection Error</h2>
           <p>{error}</p>
           <p className="hint">
             {currentProject
               ? 'Make sure the selected project has a valid .prd_runner directory'
               : 'Select a project or make sure the backend server is running on port 8080'}
           </p>
-          <button onClick={fetchStatus}>Retry</button>
+          <button onClick={fetchStatus} className="btn btn-primary">
+            Retry
+          </button>
         </div>
       </div>
     )
@@ -231,33 +230,22 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>Feature PRD Runner Dashboard</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          {username && (
-            <div style={{ fontSize: '0.875rem', color: '#666' }}>
-              {username}
-            </div>
-          )}
+        <div className="header-left">
+          <h1 className="header-title">Feature PRD Runner</h1>
+        </div>
+        <div className="header-center">
           <ProjectSelector
             currentProject={currentProject}
             onProjectChange={handleProjectChange}
           />
+        </div>
+        <div className="header-right">
+          {username && <span className="header-username">{username}</span>}
           <div className="status-badge" data-status={status?.status}>
             {status?.status || 'unknown'}
           </div>
           {authStatus?.enabled && (
-            <button
-              onClick={handleLogout}
-              style={{
-                padding: '0.5rem 1rem',
-                background: '#f44336',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
-                fontSize: '0.875rem',
-                cursor: 'pointer',
-              }}
-            >
+            <button onClick={handleLogout} className="btn-logout">
               Logout
             </button>
           )}
@@ -268,20 +256,10 @@ function App() {
         <RunDashboard status={status} />
 
         {/* Task Launcher Section */}
-        <div style={{ marginBottom: '1.5rem' }}>
+        <div className="launcher-toggle-section">
           <button
             onClick={() => setShowLauncher(!showLauncher)}
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: showLauncher ? '#666' : '#007bff',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              fontSize: '0.95rem',
-              fontWeight: '600',
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
+            className={`btn-launcher-toggle ${showLauncher ? 'active' : ''}`}
           >
             {showLauncher ? 'Hide Task Launcher' : 'Launch New Run'}
           </button>
@@ -313,7 +291,7 @@ function App() {
             <PhaseTimeline projectDir={currentProject || undefined} />
           </div>
           <div className="col-2">
-            <MetricsPanel status={status} projectDir={currentProject || undefined} />
+            <MetricsPanel projectDir={currentProject || undefined} />
           </div>
         </div>
 
@@ -345,6 +323,14 @@ function App() {
 
       <Chat runId={status?.run_id} projectDir={currentProject || undefined} />
     </div>
+  )
+}
+
+function App() {
+  return (
+    <ToastProvider>
+      <AppContent />
+    </ToastProvider>
   )
 }
 

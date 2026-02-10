@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { buildApiUrl, buildAuthHeaders } from '../api'
+import EmptyState from './EmptyState'
+import LoadingSpinner from './LoadingSpinner'
+import './BreakpointsPanel.css'
 
 interface BreakpointInfo {
   id: string
@@ -171,53 +174,29 @@ export default function BreakpointsPanel({ projectDir }: Props) {
     <div className="card">
       <h2>Breakpoints</h2>
 
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button
-          onClick={fetchBreakpoints}
-          style={{
-            padding: '0.5rem 0.75rem',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            background: '#f5f5f5',
-            cursor: 'pointer',
-          }}
-        >
+      <div className="breakpoints-actions">
+        <button onClick={fetchBreakpoints} className="breakpoints-btn">
           Refresh
         </button>
         <button
           onClick={clearAll}
           disabled={breakpoints.length === 0}
-          style={{
-            padding: '0.5rem 0.75rem',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            background: breakpoints.length === 0 ? '#fafafa' : '#fff4f4',
-            cursor: breakpoints.length === 0 ? 'not-allowed' : 'pointer',
-            color: breakpoints.length === 0 ? '#999' : '#c62828',
-          }}
+          className="breakpoints-btn breakpoints-btn-danger"
         >
           Clear All
         </button>
       </div>
 
-      {error && (
-        <div style={{ marginTop: '0.75rem', color: '#c62828', fontSize: '0.875rem' }}>
-          Error: {error}
-        </div>
-      )}
+      {error && <div className="breakpoints-error">Error: {error}</div>}
 
-      <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#f5f5f5', borderRadius: '6px' }}>
-        <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-          Create Breakpoint
-        </div>
+      <div className="breakpoints-form">
+        <div className="breakpoints-form-title">Create Breakpoint</div>
 
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="breakpoints-form-row">
           <select
             value={form.trigger}
             onChange={(e) => setForm((prev) => ({ ...prev, trigger: e.target.value }))}
-            style={{ padding: '0.5rem', border: '1px solid #ddd', borderRadius: '4px' }}
+            className="breakpoints-form-select"
           >
             {triggerOptions.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -229,7 +208,7 @@ export default function BreakpointsPanel({ projectDir }: Props) {
           <select
             value={form.target}
             onChange={(e) => setForm((prev) => ({ ...prev, target: e.target.value }))}
-            style={{ padding: '0.5rem', border: '1px solid #ddd', borderRadius: '4px' }}
+            className="breakpoints-form-select"
           >
             {stepTargets.map((step) => (
               <option key={step} value={step}>
@@ -243,13 +222,7 @@ export default function BreakpointsPanel({ projectDir }: Props) {
             placeholder="Optional task_id"
             value={form.task_id}
             onChange={(e) => setForm((prev) => ({ ...prev, task_id: e.target.value }))}
-            style={{
-              minWidth: '180px',
-              padding: '0.5rem',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              fontSize: '0.875rem',
-            }}
+            className="breakpoints-form-input breakpoints-form-input-task"
           />
 
           <input
@@ -257,104 +230,65 @@ export default function BreakpointsPanel({ projectDir }: Props) {
             placeholder="Optional condition (e.g. files_changed > 10)"
             value={form.condition}
             onChange={(e) => setForm((prev) => ({ ...prev, condition: e.target.value }))}
-            style={{
-              minWidth: '260px',
-              flex: 1,
-              padding: '0.5rem',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              fontSize: '0.875rem',
-            }}
+            className="breakpoints-form-input breakpoints-form-input-condition"
           />
 
           <button
             onClick={createBreakpoint}
             disabled={creating}
-            style={{
-              padding: '0.5rem 0.75rem',
-              border: '1px solid #1976d2',
-              borderRadius: '4px',
-              fontSize: '0.875rem',
-              background: '#1976d2',
-              color: '#fff',
-              cursor: creating ? 'not-allowed' : 'pointer',
-              opacity: creating ? 0.7 : 1,
-            }}
+            className="breakpoints-btn breakpoints-btn-primary"
           >
             {creating ? 'Creating...' : 'Create'}
           </button>
         </div>
 
-        <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#666' }}>
+        <div className="breakpoints-form-hint">
           Breakpoints pause the runner when hit. Use the Control Panel to resume the blocked task.
         </div>
       </div>
 
       {loading ? (
-        <div className="empty-state">
-          <p>Loading breakpoints...</p>
-        </div>
+        <LoadingSpinner label="Loading breakpoints..." />
       ) : sorted.length === 0 ? (
-        <div className="empty-state">
-          <p>No breakpoints set</p>
-        </div>
+        <EmptyState
+          icon={<span>🔴</span>}
+          title="No breakpoints set"
+          description="Create a breakpoint above to pause execution at specific points."
+          size="sm"
+        />
       ) : (
-        <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+        <div className="breakpoints-table-wrapper">
+          <table className="breakpoints-table">
             <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #eee' }}>
-                <th style={{ padding: '0.5rem' }}>ID</th>
-                <th style={{ padding: '0.5rem' }}>Trigger</th>
-                <th style={{ padding: '0.5rem' }}>Target</th>
-                <th style={{ padding: '0.5rem' }}>Task</th>
-                <th style={{ padding: '0.5rem' }}>Condition</th>
-                <th style={{ padding: '0.5rem' }}>Hits</th>
-                <th style={{ padding: '0.5rem' }} />
+              <tr>
+                <th>ID</th>
+                <th>Trigger</th>
+                <th>Target</th>
+                <th>Task</th>
+                <th>Condition</th>
+                <th>Hits</th>
+                <th />
               </tr>
             </thead>
             <tbody>
               {sorted.map((bp) => (
-                <tr
-                  key={bp.id}
-                  style={{
-                    borderBottom: '1px solid #f5f5f5',
-                    opacity: bp.enabled ? 1 : 0.6,
-                  }}
-                >
-                  <td style={{ padding: '0.5rem', fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                    {bp.id}
-                  </td>
-                  <td style={{ padding: '0.5rem', color: '#666' }}>{bp.trigger}</td>
-                  <td style={{ padding: '0.5rem', color: '#666' }}>{bp.target}</td>
-                  <td style={{ padding: '0.5rem', color: '#666' }}>{bp.task_id || '-'}</td>
-                  <td style={{ padding: '0.5rem', color: '#666' }}>{bp.condition || '-'}</td>
-                  <td style={{ padding: '0.5rem', color: '#666' }}>{bp.hit_count}</td>
-                  <td style={{ padding: '0.5rem', whiteSpace: 'nowrap' }}>
+                <tr key={bp.id} className={bp.enabled ? '' : 'disabled'}>
+                  <td className="breakpoints-table-id">{bp.id}</td>
+                  <td>{bp.trigger}</td>
+                  <td>{bp.target}</td>
+                  <td>{bp.task_id || '-'}</td>
+                  <td>{bp.condition || '-'}</td>
+                  <td>{bp.hit_count}</td>
+                  <td className="breakpoints-table-actions">
                     <button
                       onClick={() => toggleBreakpoint(bp.id)}
-                      style={{
-                        padding: '0.25rem 0.5rem',
-                        border: '1px solid #ddd',
-                        borderRadius: '4px',
-                        fontSize: '0.75rem',
-                        background: '#fff',
-                        cursor: 'pointer',
-                        marginRight: '0.5rem',
-                      }}
+                      className="breakpoints-table-btn"
                     >
                       {bp.enabled ? 'Disable' : 'Enable'}
                     </button>
                     <button
                       onClick={() => deleteBreakpoint(bp.id)}
-                      style={{
-                        padding: '0.25rem 0.5rem',
-                        border: '1px solid #ddd',
-                        borderRadius: '4px',
-                        fontSize: '0.75rem',
-                        background: '#fff4f4',
-                        cursor: 'pointer',
-                        color: '#c62828',
-                      }}
+                      className="breakpoints-table-btn breakpoints-table-btn-delete"
                     >
                       Delete
                     </button>
@@ -368,4 +302,3 @@ export default function BreakpointsPanel({ projectDir }: Props) {
     </div>
   )
 }
-

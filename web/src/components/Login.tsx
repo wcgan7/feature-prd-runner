@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import './Login.css'
 
 interface Props {
   onLoginSuccess: (token: string, username: string) => void
@@ -39,51 +40,16 @@ export default function Login({ onLoginSuccess }: Props) {
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '100vh',
-        background: '#f5f5f5',
-      }}
-    >
-      <div
-        style={{
-          background: '#fff',
-          padding: '2rem',
-          borderRadius: '8px',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          width: '100%',
-          maxWidth: '400px',
-        }}
-      >
-        <h1 style={{ marginBottom: '0.5rem', fontSize: '1.5rem' }}>Feature PRD Runner</h1>
-        <p style={{ marginBottom: '2rem', color: '#666', fontSize: '0.875rem' }}>
-          Sign in to access the dashboard
-        </p>
+    <div className="login-container">
+      <div className="login-card">
+        <h1 className="login-title">Feature PRD Runner</h1>
+        <p className="login-subtitle">Sign in to access the dashboard</p>
 
-        {error && (
-          <div
-            style={{
-              padding: '0.75rem',
-              marginBottom: '1rem',
-              background: '#ffebee',
-              color: '#c62828',
-              borderRadius: '4px',
-              fontSize: '0.875rem',
-            }}
-          >
-            {error}
-          </div>
-        )}
+        {error && <div className="login-error">{error}</div>}
 
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '1rem' }}>
-            <label
-              htmlFor="username"
-              style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 500 }}
-            >
+          <div className="login-form-group">
+            <label htmlFor="username" className="login-label">
               Username
             </label>
             <input
@@ -93,21 +59,12 @@ export default function Login({ onLoginSuccess }: Props) {
               onChange={(e) => setUsername(e.target.value)}
               required
               autoFocus
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '0.875rem',
-              }}
+              className="login-input"
             />
           </div>
 
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label
-              htmlFor="password"
-              style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 500 }}
-            >
+          <div className="login-form-group">
+            <label htmlFor="password" className="login-label">
               Password
             </label>
             <input
@@ -116,45 +73,16 @@ export default function Login({ onLoginSuccess }: Props) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '0.875rem',
-              }}
+              className="login-input"
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              background: loading ? '#ccc' : '#2196f3',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              cursor: loading ? 'not-allowed' : 'pointer',
-            }}
-          >
+          <button type="submit" disabled={loading} className="login-button">
             {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
 
-        <div
-          style={{
-            marginTop: '1.5rem',
-            padding: '0.75rem',
-            background: '#f5f5f5',
-            borderRadius: '4px',
-            fontSize: '0.75rem',
-            color: '#666',
-          }}
-        >
+        <div className="login-hint">
           <strong>Default credentials (if auth enabled):</strong>
           <br />
           Username: admin

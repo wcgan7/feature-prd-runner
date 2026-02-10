@@ -449,7 +449,7 @@ describe('Integration Tests', () => {
       // First call fails
       await waitFor(() => {
         expect(
-          screen.getByRole('heading', { name: /^error$/i })
+          screen.getByRole('heading', { name: /connection error/i })
         ).toBeInTheDocument()
       })
 
