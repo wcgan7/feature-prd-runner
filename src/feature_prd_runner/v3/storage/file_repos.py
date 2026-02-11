@@ -144,7 +144,7 @@ class FileTaskRepository(TaskRepository):
                         return False
                     for dep_id in task.blocked_by:
                         dep = by_id.get(dep_id)
-                        if dep and dep.status not in terminal:
+                        if dep is None or dep.status not in terminal:
                             return False
                     repo_hint = str(task.metadata.get("repo_path") or "")
                     if repo_hint and repo_hint in repo_conflicts:

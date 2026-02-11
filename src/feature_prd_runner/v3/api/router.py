@@ -264,7 +264,7 @@ def create_v3_router(
         if target in {"ready", "in_progress"}:
             for dep_id in task.blocked_by:
                 dep = container.tasks.get(dep_id)
-                if dep and dep.status not in {"done", "cancelled"}:
+                if dep is None or dep.status not in {"done", "cancelled"}:
                     raise HTTPException(status_code=400, detail=f"Unresolved blocker: {dep_id}")
         task.status = target
         task.updated_at = now_iso()

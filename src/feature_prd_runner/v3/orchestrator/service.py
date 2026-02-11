@@ -3,19 +3,25 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
-from dataclasses import asdict
-from pathlib import Path
 from typing import Any, Optional
 
 from ..domain.models import ReviewCycle, ReviewFinding, RunRecord, Task, now_iso
 from ..events.bus import EventBus
 from ..storage.container import V3Container
+from .worker_adapter import DefaultWorkerAdapter, WorkerAdapter
 
 
 class OrchestratorService:
-    def __init__(self, container: V3Container, bus: EventBus) -> None:
+    def __init__(
+        self,
+        container: V3Container,
+        bus: EventBus,
+        *,
+        worker_adapter: WorkerAdapter | None = None,
+    ) -> None:
         self.container = container
         self.bus = bus
+        self.worker_adapter = worker_adapter or DefaultWorkerAdapter()
         self._lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -90,7 +96,7 @@ class OrchestratorService:
             terminal = {"done", "cancelled"}
             for dep_id in task.blocked_by:
                 dep = self.container.tasks.get(dep_id)
-                if dep and dep.status not in terminal:
+                if dep is None or dep.status not in terminal:
                     raise ValueError(f"Task {task_id} has unresolved blocker {dep_id}")
             task.status = "ready"
             self.container.tasks.upsert(task)
@@ -117,6 +123,34 @@ class OrchestratorService:
                 if repo_path:
                     conflicts.add(repo_path)
         return conflicts
+
+    def _role_for_task(self, task: Task) -> str:
+        cfg = self.container.config.load()
+        routing = dict(cfg.get("agent_routing") or {})
+        by_type = dict(routing.get("task_type_roles") or {})
+        default_role = str(routing.get("default_role") or "general")
+        return str(by_type.get(task.task_type) or default_role)
+
+    def _provider_override_for_role(self, role: str) -> Optional[str]:
+        cfg = self.container.config.load()
+        routing = dict(cfg.get("agent_routing") or {})
+        overrides = dict(routing.get("role_provider_overrides") or {})
+        raw = overrides.get(role)
+        return str(raw) if raw else None
+
+    def _choose_agent_for_task(self, task: Task) -> Optional[str]:
+        desired_role = self._role_for_task(task)
+        running = [agent for agent in self.container.agents.list() if agent.status == "running"]
+        exact = [agent for agent in running if agent.role == desired_role]
+        pool = exact or running
+        if not pool:
+            return None
+        pool.sort(key=lambda agent: agent.last_seen_at)
+        chosen = pool[0]
+        override_provider = self._provider_override_for_role(chosen.role)
+        if override_provider:
+            task.metadata["provider_override"] = override_provider
+        return chosen.id
 
     def _ensure_branch(self) -> Optional[str]:
         if self._run_branch:
@@ -150,30 +184,6 @@ class OrchestratorService:
         except subprocess.CalledProcessError:
             return None
 
-    def _simulated_findings(self, task: Task, attempt: int) -> list[ReviewFinding]:
-        scripted = list(task.metadata.get("scripted_findings") or [])
-        if attempt <= len(scripted) and isinstance(scripted[attempt - 1], list):
-            payload = scripted[attempt - 1]
-            findings: list[ReviewFinding] = []
-            for idx, finding in enumerate(payload):
-                if not isinstance(finding, dict):
-                    continue
-                findings.append(
-                    ReviewFinding(
-                        id=f"{task.id}-a{attempt}-{idx}",
-                        task_id=task.id,
-                        severity=str(finding.get("severity") or "medium"),
-                        category=str(finding.get("category") or "quality"),
-                        summary=str(finding.get("summary") or "Issue"),
-                        file=finding.get("file"),
-                        line=finding.get("line"),
-                        suggested_fix=finding.get("suggested_fix"),
-                        status=str(finding.get("status") or "open"),
-                    )
-                )
-            return findings
-        return []
-
     def _exceeds_quality_gate(self, task: Task, findings: list[ReviewFinding]) -> bool:
         gate = dict(task.quality_gate or {})
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
@@ -183,6 +193,46 @@ class OrchestratorService:
             sev = finding.severity if finding.severity in counts else "low"
             counts[sev] += 1
         return any(counts[sev] > int(gate.get(sev, 0)) for sev in counts)
+
+    def _run_non_review_step(self, task: Task, run: RunRecord, step: str, attempt: int = 1) -> bool:
+        result = self.worker_adapter.run_step(task=task, step=step, attempt=attempt)
+        run.steps.append({"step": step, "status": result.status, "ts": now_iso(), "summary": result.summary})
+        task.current_step = step
+        self.container.tasks.upsert(task)
+        if result.status != "ok":
+            task.status = "blocked"
+            task.error = result.summary or f"{step} failed"
+            task.current_step = step
+            self.container.tasks.upsert(task)
+            run.status = "blocked"
+            run.finished_at = now_iso()
+            run.summary = f"Blocked during {step}"
+            self.container.runs.upsert(run)
+            self.bus.emit(channel="tasks", event_type="task.blocked", entity_id=task.id, payload={"error": task.error})
+            return False
+        return True
+
+    def _findings_from_result(self, task: Task, review_attempt: int) -> list[ReviewFinding]:
+        result = self.worker_adapter.run_step(task=task, step="review", attempt=review_attempt)
+        raw_findings = list(result.findings or [])
+        findings: list[ReviewFinding] = []
+        for idx, finding in enumerate(raw_findings):
+            if not isinstance(finding, dict):
+                continue
+            findings.append(
+                ReviewFinding(
+                    id=f"{task.id}-a{review_attempt}-{idx}",
+                    task_id=task.id,
+                    severity=str(finding.get("severity") or "medium"),
+                    category=str(finding.get("category") or "quality"),
+                    summary=str(finding.get("summary") or "Issue"),
+                    file=finding.get("file"),
+                    line=finding.get("line"),
+                    suggested_fix=finding.get("suggested_fix"),
+                    status=str(finding.get("status") or "open"),
+                )
+            )
+        return findings
 
     def _execute_task(self, task: Task) -> None:
         run = RunRecord(task_id=task.id, status="in_progress", started_at=now_iso(), branch=self._ensure_branch())
@@ -195,13 +245,18 @@ class OrchestratorService:
         task.run_ids.append(run.id)
         task.current_step = "plan"
         task.status = "in_progress"
+        task.current_agent_id = self._choose_agent_for_task(task)
         self.container.tasks.upsert(task)
-        self.bus.emit(channel="tasks", event_type="task.started", entity_id=task.id, payload={"run_id": run.id})
+        self.bus.emit(
+            channel="tasks",
+            event_type="task.started",
+            entity_id=task.id,
+            payload={"run_id": run.id, "agent_id": task.current_agent_id},
+        )
 
         for base_step in ["plan", "implement", "verify"]:
-            run.steps.append({"step": base_step, "status": "ok", "ts": now_iso()})
-            task.current_step = base_step
-            self.container.tasks.upsert(task)
+            if not self._run_non_review_step(task, run, base_step, attempt=1):
+                return
 
         review_attempt = 0
         review_passed = False
@@ -210,7 +265,7 @@ class OrchestratorService:
             review_attempt += 1
             task.current_step = "review"
             self.container.tasks.upsert(task)
-            findings = self._simulated_findings(task, review_attempt)
+            findings = self._findings_from_result(task, review_attempt)
             open_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
             for finding in findings:
                 if finding.status == "open" and finding.severity in open_counts:
@@ -239,10 +294,10 @@ class OrchestratorService:
                 break
 
             for fix_step in ["implement_fix", "verify"]:
-                run.steps.append({"step": fix_step, "status": "ok", "ts": now_iso()})
-                task.current_step = fix_step
                 task.retry_count += 1
                 self.container.tasks.upsert(task)
+                if not self._run_non_review_step(task, run, fix_step, attempt=review_attempt):
+                    return
 
         if not review_passed:
             task.status = "blocked"
@@ -278,7 +333,12 @@ class OrchestratorService:
         self.container.runs.upsert(run)
 
 
-def create_orchestrator(container: V3Container, bus: EventBus) -> OrchestratorService:
-    orchestrator = OrchestratorService(container, bus)
+def create_orchestrator(
+    container: V3Container,
+    bus: EventBus,
+    *,
+    worker_adapter: WorkerAdapter | None = None,
+) -> OrchestratorService:
+    orchestrator = OrchestratorService(container, bus, worker_adapter=worker_adapter)
     orchestrator.ensure_worker()
     return orchestrator

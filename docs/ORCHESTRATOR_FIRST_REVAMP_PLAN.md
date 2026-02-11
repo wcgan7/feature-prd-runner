@@ -395,3 +395,42 @@ Review findings and fixes:
 
 Outstanding for future phases:
 - Scheduler sophistication (aging/concurrency strategy tuning) and deeper worker integration are covered in Phase 2.
+
+### Phase 2 (Orchestrator Engine) - Complete
+
+Status: `COMPLETE`
+
+Completed:
+- Implemented orchestrator service with:
+  - scheduler tick loop,
+  - atomic claim flow through repository lock,
+  - repo conflict guard,
+  - concurrency cap enforcement,
+  - task-specific run API path.
+- Added execution worker adapter abstraction (`WorkerAdapter`) with default deterministic adapter.
+- Implemented implementation/review refinement loop:
+  - `plan -> implement -> verify -> review`,
+  - when findings exceed quality gate, loop `implement_fix -> verify -> review`,
+  - cap attempts, then mark task `blocked`.
+- Implemented single run branch + per-task commits:
+  - one branch per orchestrator run lifecycle,
+  - task-level commits with task-stamped commit messages.
+- Implemented agent role routing:
+  - task-type to role mapping via config,
+  - role-level provider override injection into task metadata.
+
+Testing completed:
+- Added and passed `tests/test_v3_orchestrator_phase2.py` (6 tests):
+  - review-loop retry until findings clear,
+  - review-attempt cap to blocked,
+  - role routing + provider override,
+  - single run branch + per-task commit ordering,
+  - scheduler priority/dependency/repo-conflict behavior,
+  - scheduler concurrency cap behavior.
+
+Review findings and fixes:
+- Gap found: dependency checks treated missing blockers as resolved.
+  - Fix: missing blocker now considered unresolved in claim, transition, and explicit run paths.
+
+Outstanding for future phases:
+- Frontend route-shell rewrite, Create Work modal, and v3-only UI flows are covered in Phase 3.
