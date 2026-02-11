@@ -2,15 +2,18 @@
 
 An AI engineering orchestrator that coordinates multiple specialized agents to execute software development tasks — from feature implementation to bug fixes, refactors, security audits, and more.
 
-Built on a dynamic task engine, configurable pipeline templates, and real-time collaboration features, it goes beyond single-agent PRD execution to provide a full-stack platform for AI-assisted engineering.
+**Two interfaces, one platform:**
+
+- **Web Dashboard** — the primary interface for orchestrating agents, managing tasks on a Kanban board, monitoring progress in real time, reviewing code, and collaborating with AI agents. Full feature parity with the CLI.
+- **CLI** — the PRD execution engine. Feed it a PRD and a project directory; it plans, implements, verifies, reviews, and commits autonomously. Also provides operational commands for debugging, diagnostics, and worker management.
 
 ## Table of Contents
 
 - [Getting Started](#getting-started)
 - [How It Works](#how-it-works)
+- [Web Dashboard](#web-dashboard)
 - [Language Support](#language-support)
 - [CLI Reference](#cli-reference)
-- [Web Dashboard](#web-dashboard)
 - [Architecture](#architecture)
 - [Multi-Agent Orchestration](#multi-agent-orchestration)
 - [Pipeline Templates](#pipeline-templates)
@@ -27,57 +30,62 @@ Built on a dynamic task engine, configurable pipeline templates, and real-time c
 ### Requirements
 
 - Python 3.10+
+- Node.js 18+ (for the web dashboard)
 - Codex CLI installed and authenticated
 - Git installed; a configured `origin` remote if you want automatic pushes
 
 ### Install
 
-From this repo:
-
 ```bash
+# Backend
 python -m pip install -e .
+
+# Frontend
+cd web && npm install
 ```
 
-If you prefer `uv` (install `uv` first via `brew install uv`, `pipx install uv`, or `python -m pip install uv`):
+If you prefer `uv`:
 
 ```bash
 uv pip install -e .
 ```
 
-### Quick Start (in your target project)
-
-The `example/` folder in this repository contains a starter `AGENTS.md` and a sample PRD.
-
-1) Add an `AGENTS.md` to your project root (recommended)
+### Launch the Web Dashboard
 
 ```bash
-cp /path/to/feature-prd-runner/example/AGENTS.md /path/to/your/project/AGENTS.md
+# Terminal 1 — start the backend
+feature-prd-runner server --port 8080
+
+# Terminal 2 — start the frontend
+cd web && npm run dev
 ```
 
-2) Write a PRD (example provided in this repo)
+Open http://localhost:3000 to access the dashboard. From there you can create tasks, spawn agents, monitor runs, review code, and control the full orchestration pipeline.
+
+### Run via CLI
+
+The `example/` folder contains a starter `AGENTS.md` and a sample PRD.
 
 ```bash
-mkdir -p /path/to/your/project/docs
-cp /path/to/feature-prd-runner/example/test_feature_prd.md /path/to/your/project/docs/feature_prd.md
+# 1. Set up your project
+cp example/AGENTS.md /path/to/your/project/AGENTS.md
+cp example/test_feature_prd.md /path/to/your/project/docs/feature_prd.md
+
+# 2. Run the coordinator
+feature-prd-runner --project-dir /path/to/your/project \
+  --prd-file /path/to/your/project/docs/feature_prd.md
 ```
 
-3) Run the coordinator
+Alternative invocations:
 
 ```bash
-feature-prd-runner --project-dir /path/to/your/project --prd-file /path/to/your/project/docs/feature_prd.md
-```
-
-If you prefer module invocation:
-
-```bash
+# Module invocation
 python -m feature_prd_runner.runner --project-dir . --prd-file ./docs/feature_prd.md
 ```
 
-If you prefer calling the Python API:
-
 ```python
+# Python API
 from pathlib import Path
-
 from feature_prd_runner.orchestrator import run_feature_prd
 
 run_feature_prd(project_dir=Path("."), prd_path=Path("./docs/feature_prd.md"))
@@ -87,24 +95,109 @@ run_feature_prd(project_dir=Path("."), prd_path=Path("./docs/feature_prd.md"))
 
 ## How It Works
 
-The runner core is a FSM with these steps:
+You give the runner a PRD (product requirements document) and a project directory. It breaks the PRD into phases, then drives each phase through a pipeline of AI-powered steps — planning, implementing, verifying, reviewing, and committing — with no manual intervention required (or as much human oversight as you want).
 
-1. `PLAN`: derive phases from PRD + repo context.
-2. For each phase:
-   - `PLAN_IMPL`: write a per-phase implementation plan JSON (including allowed files).
-   - `IMPLEMENT`: run Codex and enforce the plan allowlist.
-   - `VERIFY`: run your configured command (tests/lint) and capture logs.
-   - `REVIEW`: run a structured review against acceptance criteria and evidence.
-   - `COMMIT`: commit and push to `origin` when clean.
+### Execution Pipeline
 
-Note: the `COMMIT` step runs `git commit` and `git push -u origin <branch>` by default. Use
-`--no-commit` and/or `--no-push` to disable those behaviors.
+```
+PRD + Repo ──→ PLAN ──→ For each phase:
+                         ┌─────────────────────────────────────────┐
+                         │ PLAN_IMPL → IMPLEMENT → VERIFY → REVIEW │──→ COMMIT
+                         └────────────────────┬────────────────────┘
+                                              │ review fails
+                                              ↓
+                                         back to IMPLEMENT
+                                     (with review feedback)
+```
 
-Each step writes progress to durable files for easy resume. Verification evidence is
-recorded and fed into review prompts to avoid "not evidenced" failures.
+| Step | What happens |
+|------|-------------|
+| **PLAN** | Derive phases from PRD + repo context |
+| **PLAN_IMPL** | Write a per-phase implementation plan JSON (including allowed files) |
+| **IMPLEMENT** | Run the AI worker (Codex, Ollama, etc.) and enforce the plan allowlist |
+| **VERIFY** | Run your configured commands — tests, lint, typecheck, format |
+| **REVIEW** | Structured review against acceptance criteria and verification evidence |
+| **COMMIT** | Commit and push to `origin` when clean |
 
-If a review returns blocking issues, the runner routes back to `IMPLEMENT` with an
-"address review issues" banner and the implicated files.
+### Key Capabilities
+
+- **Multi-agent orchestration** — 6 specialized agent types (implementer, reviewer, tester, researcher, architect, debugger) work together, with automatic task assignment and agent-to-agent handoff. See [Multi-Agent Orchestration](#multi-agent-orchestration).
+- **Parallel execution** — Independent phases run concurrently when `--parallel` is enabled, with dependency-aware batch scheduling. See [Parallel Execution](#parallel-execution).
+- **Human-in-the-loop** — Four collaboration modes from full autopilot to review-only. Steer running workers, send corrections, approve/reject at gates. See [Collaboration & HITL](#collaboration--hitl).
+- **Worker routing** — Route different pipeline steps to different AI backends (Codex for implementation, Ollama for reviews). See [Configuration](#configuration).
+- **Durable state & auto-resume** — Every step writes progress to `.prd_runner/`. Stop and resume anytime; blocked tasks auto-resume on next startup.
+- **Web dashboard** — Full-featured React UI with Kanban board, agent controls, real-time logs, and every CLI command available in the browser. See [Web Dashboard](#web-dashboard).
+- **6 languages** — Python, TypeScript, Next.js, JavaScript, Go, Rust with auto-detection. See [Language Support](#language-support).
+
+---
+
+## Web Dashboard
+
+The web dashboard is the primary interface for the full orchestration platform. It provides real-time monitoring, agent management, task collaboration, and every CLI operation — all in the browser. See [Getting Started](#launch-the-web-dashboard) for launch instructions.
+
+### Dashboard Components
+
+| Component | Description |
+|-----------|-------------|
+| **RunDashboard** | Main view with run status, progress, and controls |
+| **KanbanBoard** | Drag-drop task board with slide-over detail view |
+| **AgentCard** | Agent panel with stream, controls, and overview subcomponents |
+| **CommandPalette** | Cmd+K fuzzy search across tasks, agents, and actions |
+| **NotificationCenter** | Real-time notification feed |
+| **PhaseTimeline** | Visual phase progress with dependencies |
+| **DependencyGraph** | Task dependency visualization |
+| **MetricsPanel** | API usage, costs, timing, code change metrics |
+| **CostBreakdown** | Per-agent and per-task cost analysis |
+| **ApprovalGate** | Approve/reject interface for HITL gates |
+| **FileReview** | File-by-file diff review |
+| **InlineReview** | Line-level code commenting |
+| **ReasoningViewer** | Agent step-by-step thinking viewer |
+| **HITLModeSelector** | Mode picker (autopilot/supervised/collaborative/review_only) |
+| **FeedbackPanel** | Structured feedback form and list |
+| **ActivityTimeline** | Unified event chronology |
+| **LiveLog** | Real-time log streaming via WebSocket |
+| **BreakpointsPanel** | Breakpoint management |
+| **TaskLauncher** | Quick task creation with advanced options (language, parallelism, limits, worker) |
+| **ControlPanel** | Run control actions (retry, skip, resume, stop) |
+| **Chat** | Live collaboration messaging |
+| **ProjectSelector** | Multi-project switching |
+| **Login** | Authentication |
+| **ExplainModal** | "Why blocked?" explanation for stuck tasks |
+| **DryRunPanel** | Preview next action without writing |
+| **DoctorPanel** | System health diagnostics (git, state, schema, codex) |
+| **WorkersPanel** | Worker provider list with inline test buttons |
+| **CorrectionForm** | Structured correction sender for agent tasks |
+| **RequirementForm** | Structured requirement injector with priority |
+| **ParallelPlanView** | Execution batch swim lanes for parallel planning |
+
+### Operational API
+
+The web dashboard exposes operational endpoints that mirror CLI commands:
+
+```
+GET    /api/tasks/{id}/explain         # Why is this task blocked?
+GET    /api/tasks/{id}/inspect         # Full task state snapshot
+GET    /api/tasks/{id}/trace           # Event history for task
+GET    /api/tasks/{id}/logs            # Task-specific logs (filterable by step)
+POST   /api/tasks/{id}/correct         # Send structured correction to agent
+POST   /api/requirements               # Inject a new requirement
+GET    /api/dry-run                    # Preview next action (no writes)
+GET    /api/doctor                     # Diagnostic checks (git, state, schema)
+GET    /api/workers                    # List worker providers and routing
+POST   /api/workers/{name}/test        # Test a worker provider
+GET    /api/metrics/export             # Export metrics as CSV or HTML
+GET    /api/v2/tasks/execution-order   # Parallel execution batches
+```
+
+### Frontend Architecture
+
+- **React 18** with TypeScript and Vite
+- **Plain CSS** (no framework) with theme support (light/dark/system)
+- **WebSocket** for real-time updates (channels: runs, logs, agents, notifications)
+- **Contexts**: ThemeContext, WebSocketContext, ToastContext
+- **Testing**: Vitest + React Testing Library
+
+See [web/README.md](web/README.md) for detailed frontend setup and development instructions.
 
 ---
 
@@ -395,88 +488,6 @@ Common options:
 - `--simple-review` / `--no-simple-review`: toggle a simplified review schema.
 - `--commit` / `--no-commit`: enable/disable `git commit` in the `COMMIT` step (default: True).
 - `--push` / `--no-push`: enable/disable `git push` in the `COMMIT` step (default: True).
-
----
-
-## Web Dashboard
-
-A React/TypeScript dashboard for monitoring and controlling the orchestrator. The web UI has full feature parity with the CLI — every CLI command has a corresponding web interface.
-
-```bash
-# Start the backend server
-feature-prd-runner server --port 8080
-
-# In another terminal, start the frontend (requires Node.js 18+)
-cd web
-npm install
-npm run dev
-```
-
-Access the dashboard at http://localhost:3000
-
-### Dashboard Components
-
-| Component | Description |
-|-----------|-------------|
-| **RunDashboard** | Main view with run status, progress, and controls |
-| **KanbanBoard** | Drag-drop task board with slide-over detail view |
-| **AgentCard** | Agent panel with stream, controls, and overview subcomponents |
-| **CommandPalette** | Cmd+K fuzzy search across tasks, agents, and actions |
-| **NotificationCenter** | Real-time notification feed |
-| **PhaseTimeline** | Visual phase progress with dependencies |
-| **DependencyGraph** | Task dependency visualization |
-| **MetricsPanel** | API usage, costs, timing, code change metrics |
-| **CostBreakdown** | Per-agent and per-task cost analysis |
-| **ApprovalGate** | Approve/reject interface for HITL gates |
-| **FileReview** | File-by-file diff review |
-| **InlineReview** | Line-level code commenting |
-| **ReasoningViewer** | Agent step-by-step thinking viewer |
-| **HITLModeSelector** | Mode picker (autopilot/supervised/collaborative/review_only) |
-| **FeedbackPanel** | Structured feedback form and list |
-| **ActivityTimeline** | Unified event chronology |
-| **LiveLog** | Real-time log streaming via WebSocket |
-| **BreakpointsPanel** | Breakpoint management |
-| **TaskLauncher** | Quick task creation with advanced options (language, parallelism, limits, worker) |
-| **ControlPanel** | Run control actions (retry, skip, resume, stop) |
-| **Chat** | Live collaboration messaging |
-| **ProjectSelector** | Multi-project switching |
-| **Login** | Authentication |
-| **ExplainModal** | "Why blocked?" explanation for stuck tasks |
-| **DryRunPanel** | Preview next action without writing |
-| **DoctorPanel** | System health diagnostics (git, state, schema, codex) |
-| **WorkersPanel** | Worker provider list with inline test buttons |
-| **CorrectionForm** | Structured correction sender for agent tasks |
-| **RequirementForm** | Structured requirement injector with priority |
-| **ParallelPlanView** | Execution batch swim lanes for parallel planning |
-
-### Operational API
-
-The web dashboard exposes operational endpoints that mirror CLI commands:
-
-```
-GET    /api/tasks/{id}/explain         # Why is this task blocked?
-GET    /api/tasks/{id}/inspect         # Full task state snapshot
-GET    /api/tasks/{id}/trace           # Event history for task
-GET    /api/tasks/{id}/logs            # Task-specific logs (filterable by step)
-POST   /api/tasks/{id}/correct         # Send structured correction to agent
-POST   /api/requirements               # Inject a new requirement
-GET    /api/dry-run                    # Preview next action (no writes)
-GET    /api/doctor                     # Diagnostic checks (git, state, schema)
-GET    /api/workers                    # List worker providers and routing
-POST   /api/workers/{name}/test        # Test a worker provider
-GET    /api/metrics/export             # Export metrics as CSV or HTML
-GET    /api/v2/tasks/execution-order   # Parallel execution batches
-```
-
-### Frontend Architecture
-
-- **React 18** with TypeScript and Vite
-- **Plain CSS** (no framework) with theme support (light/dark/system)
-- **WebSocket** for real-time updates (channels: runs, logs, agents, notifications)
-- **Contexts**: ThemeContext, WebSocketContext, ToastContext
-- **Testing**: Vitest + React Testing Library
-
-See [web/README.md](web/README.md) for detailed frontend setup and development instructions.
 
 ---
 
