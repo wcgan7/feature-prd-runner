@@ -155,12 +155,19 @@ function ActivityRail({
               Phase {status?.phases_completed ?? 0}/{status?.phases_total ?? 0}
             </Typography>
           </Stack>
-          <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap' }}>
-            <Chip size="small" color="success" variant="outlined" label={`Done ${status?.tasks_done ?? 0}`} />
-            <Chip size="small" color="info" variant="outlined" label={`Running ${status?.tasks_running ?? 0}`} />
-            <Chip size="small" color="warning" variant="outlined" label={`Ready ${status?.tasks_ready ?? 0}`} />
-            <Chip size="small" color="error" variant="outlined" label={`Blocked ${status?.tasks_blocked ?? 0}`} />
-          </Stack>
+          <Box
+            sx={{
+              mt: 1.5,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+              gap: 1,
+            }}
+          >
+            <Chip size="small" color="success" variant="outlined" label={`Done ${status?.tasks_done ?? 0}`} sx={{ width: '100%' }} />
+            <Chip size="small" color="info" variant="outlined" label={`Running ${status?.tasks_running ?? 0}`} sx={{ width: '100%' }} />
+            <Chip size="small" color="warning" variant="outlined" label={`Ready ${status?.tasks_ready ?? 0}`} sx={{ width: '100%' }} />
+            <Chip size="small" color="error" variant="outlined" label={`Blocked ${status?.tasks_blocked ?? 0}`} sx={{ width: '100%' }} />
+          </Box>
           {status?.current_phase_id && (
             <Typography variant="body2" sx={{ mt: 1.5 }}>
               Current: <strong>{status.current_phase_id}</strong>
@@ -201,6 +208,21 @@ function ActivityRail({
   )
 }
 
+function ViewGuide({ title, steps }: { title: string; steps: string[] }) {
+  return (
+    <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
+      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>{title}</Typography>
+      <Stack component="ul" spacing={0.25} sx={{ m: 0, pl: 2.25 }}>
+        {steps.map((step) => (
+          <Typography key={step} component="li" variant="body2">
+            {step}
+          </Typography>
+        ))}
+      </Stack>
+    </Alert>
+  )
+}
+
 function CockpitOverview({
   status,
   currentProject,
@@ -210,6 +232,14 @@ function CockpitOverview({
 }) {
   return (
     <Stack spacing={2.5}>
+      <ViewGuide
+        title="What to do here"
+        steps={[
+          'Check Now for blockers or approvals.',
+          'Use Flow to control active execution.',
+          'Use Insights to review cost and dependency risk.',
+        ]}
+      />
       <Stack direction="row" spacing={1} alignItems="center">
         <Typography variant="h5">Overview</Typography>
         <Chip size="small" variant="outlined" label="Now / Flow / Insights" />
@@ -532,6 +562,14 @@ function AppContent() {
 
   const executionContent = (
     <Stack spacing={2.5}>
+      <ViewGuide
+        title="Execution workflow"
+        steps={[
+          'Start a run with Launch New Run.',
+          'Use Run Control for retry/skip/resume/stop.',
+          'Watch Live Log and resolve approvals or breakpoints.',
+        ]}
+      />
       <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1.5}>
         <Typography variant="h5">Execution</Typography>
         <Stack direction="row" spacing={1}>
@@ -599,6 +637,14 @@ function AppContent() {
 
   const taskContent = (
     <Stack spacing={2.5}>
+      <ViewGuide
+        title="Task workflow"
+        steps={[
+          'Filter the board to find critical or blocked items.',
+          'Open Task Detail Workbench for dependencies, logs, and interventions.',
+          'Use Save View for repeated filter sets.',
+        ]}
+      />
       <Typography variant="h5">Tasks</Typography>
       <Card>
         <CardContent>
@@ -666,12 +712,20 @@ function AppContent() {
 
   const agentsContent = (
     <Stack spacing={2.5}>
+      <ViewGuide
+        title="Agent operations"
+        steps={[
+          'Pick a collaboration mode in the left panel.',
+          'Check worker/provider health before long runs.',
+          'Use the right pane to inspect active agent activity.',
+        ]}
+      />
       <Typography variant="h5">Agents</Typography>
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 4 }}>
           <Stack spacing={2}>
-            <Card>
-              <CardContent>
+            <Card sx={{ overflow: 'visible' }}>
+              <CardContent sx={{ overflow: 'visible' }}>
                 <HITLModeSelector
                   currentMode={hitlMode}
                   onModeChange={setHitlMode}
@@ -701,6 +755,14 @@ function AppContent() {
 
   const diagnosticsContent = (
     <Stack spacing={2.5}>
+      <ViewGuide
+        title="Diagnostics workflow"
+        steps={[
+          'Run Dry Run first to preview the next action.',
+          'Run Doctor for environment/config issues.',
+          'Use metrics and cost panels to identify regressions.',
+        ]}
+      />
       <Typography variant="h5">Diagnostics</Typography>
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 6 }}>

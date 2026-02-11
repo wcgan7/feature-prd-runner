@@ -9,6 +9,7 @@ import {
   MenuItem,
   Select,
   Stack,
+  Tooltip,
   Typography,
 } from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../api'
@@ -100,47 +101,66 @@ export default function ControlPanel({ currentTaskId, currentPhaseId, status, pr
           ))}
         </Select>
       </FormControl>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+        Use this selector only for Retry. Skip/Resume ignore this value.
+      </Typography>
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={() => executeAction('retry')}
-          disabled={loading !== null || !currentTaskId}
-          className={`control-btn control-btn-retry ${loading === 'retry' ? 'loading' : ''}`}
-        >
-          {loading === 'retry' ? 'Retrying...' : 'Retry Task'}
-        </Button>
+        <Tooltip title="Restart the active task at the selected step">
+          <span>
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={() => executeAction('retry')}
+              disabled={loading !== null || !currentTaskId}
+              className={`control-btn control-btn-retry ${loading === 'retry' ? 'loading' : ''}`}
+            >
+              {loading === 'retry' ? 'Retrying...' : 'Retry Task'}
+            </Button>
+          </span>
+        </Tooltip>
 
-        <Button
-          variant="outlined"
-          color="warning"
-          onClick={() => executeAction('skip')}
-          disabled={loading !== null || !currentTaskId}
-          className={`control-btn control-btn-skip ${loading === 'skip' ? 'loading' : ''}`}
-        >
-          {loading === 'skip' ? 'Skipping...' : 'Skip Step'}
-        </Button>
+        <Tooltip title="Advance past the current step for the active task">
+          <span>
+            <Button
+              variant="outlined"
+              color="warning"
+              onClick={() => executeAction('skip')}
+              disabled={loading !== null || !currentTaskId}
+              className={`control-btn control-btn-skip ${loading === 'skip' ? 'loading' : ''}`}
+            >
+              {loading === 'skip' ? 'Skipping...' : 'Skip Step'}
+            </Button>
+          </span>
+        </Tooltip>
 
-        <Button
-          variant="outlined"
-          color="success"
-          onClick={() => executeAction('resume')}
-          disabled={loading !== null || !currentTaskId}
-          className={`control-btn control-btn-resume ${loading === 'resume' ? 'loading' : ''}`}
-        >
-          {loading === 'resume' ? 'Resuming...' : 'Resume Task'}
-        </Button>
+        <Tooltip title="Resume a paused or blocked task">
+          <span>
+            <Button
+              variant="outlined"
+              color="success"
+              onClick={() => executeAction('resume')}
+              disabled={loading !== null || !currentTaskId}
+              className={`control-btn control-btn-resume ${loading === 'resume' ? 'loading' : ''}`}
+            >
+              {loading === 'resume' ? 'Resuming...' : 'Resume Task'}
+            </Button>
+          </span>
+        </Tooltip>
 
-        <Button
-          variant="outlined"
-          color="error"
-          onClick={() => executeAction('stop')}
-          disabled={loading !== null}
-          className={`control-btn control-btn-stop ${loading === 'stop' ? 'loading' : ''}`}
-        >
-          {loading === 'stop' ? 'Stopping...' : 'Stop Run'}
-        </Button>
+        <Tooltip title="Send stop signal to the current run">
+          <span>
+            <Button
+              variant="outlined"
+              color="error"
+              onClick={() => executeAction('stop')}
+              disabled={loading !== null}
+              className={`control-btn control-btn-stop ${loading === 'stop' ? 'loading' : ''}`}
+            >
+              {loading === 'stop' ? 'Stopping...' : 'Stop Run'}
+            </Button>
+          </span>
+        </Tooltip>
       </Stack>
 
       <Typography variant="body2" color="text.secondary">

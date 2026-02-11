@@ -87,7 +87,7 @@ const HITL_SELECTOR_STYLES = `
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 50;
+  z-index: 1400;
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-md);

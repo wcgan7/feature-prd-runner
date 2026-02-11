@@ -11,6 +11,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../api'
@@ -127,9 +128,11 @@ export default function TasksPanel({ projectDir, currentTaskId }: Props) {
           onChange={(e) => setQuery(e.target.value)}
           fullWidth
         />
-        <Button variant="outlined" onClick={fetchTasks}>
-          Refresh
-        </Button>
+        <Tooltip title="Reload latest task states">
+          <Button variant="outlined" onClick={fetchTasks}>
+            Refresh
+          </Button>
+        </Tooltip>
       </Stack>
 
       {loading ? (

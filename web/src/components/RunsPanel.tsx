@@ -12,6 +12,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../api'
@@ -138,7 +139,9 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
       <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>Recent Runs</Typography>
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} justifyContent="space-between" sx={{ mb: 1.5 }}>
-        <Button onClick={fetchRuns} variant="outlined">Refresh</Button>
+        <Tooltip title="Reload recent runs">
+          <Button onClick={fetchRuns} variant="outlined">Refresh</Button>
+        </Tooltip>
         {currentRunId && (
           <Typography variant="body2" color="text.secondary">
             Active run: <Box component="span" sx={{ fontFamily: '"IBM Plex Mono", monospace' }}>{currentRunId}</Box>
@@ -189,15 +192,17 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
                     <TableCell>{run.step || '-'}</TableCell>
                     <TableCell><Chip size="small" variant="outlined" label={run.status || '-'} /></TableCell>
                     <TableCell>
-                      <Button
-                        size="small"
-                        onClick={() => {
-                          setSelectedRunId(run.run_id)
-                          void fetchRunDetail(run.run_id)
-                        }}
-                      >
-                        Details
-                      </Button>
+                      <Tooltip title="View run diagnostics and error details">
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            setSelectedRunId(run.run_id)
+                            void fetchRunDetail(run.run_id)
+                          }}
+                        >
+                          Details
+                        </Button>
+                      </Tooltip>
                     </TableCell>
                   </TableRow>
                 ))}
