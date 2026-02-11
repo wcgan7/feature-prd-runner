@@ -344,3 +344,54 @@ Project registry:
 - Git model: single orchestrator run branch with task-level commits.
 - Quick Action: ephemeral by default, explicit promotion to task.
 - CLI direction: UI-first minimal CLI.
+
+## Implementation Progress Log
+
+### Execution Rules Applied
+
+- Working mode: `implement -> document -> test -> review -> fix -> repeat` per phase.
+- Commit policy: one commit per completed phase + final consolidation commit.
+- Runtime strategy: move production wiring to v3 modules; keep legacy code only as non-wired reference during migration.
+
+### Phase 1 (Core Backend v3) - Complete
+
+Status: `COMPLETE`
+
+Completed:
+- Added new canonical backend package: `src/feature_prd_runner/v3/`.
+- Implemented v3 domain types for tasks, runs, review cycles/findings, agents, quick actions.
+- Implemented repository interfaces and file-backed implementations with lock + atomic writes.
+- Implemented v3 state bootstrap/cutover:
+  - archives legacy `.prd_runner` to `.prd_runner_legacy_<timestamp>` on first v3 launch when legacy state is detected.
+  - initializes `.prd_runner/v3/` and `schema_version: 3` config.
+- Implemented v3 event bus + websocket publisher with v3 channels:
+  - `tasks`, `queue`, `agents`, `review`, `quick_actions`, `notifications`, `system`.
+- Implemented v3 API router (`/api/v3/*`) for:
+  - projects (list/pin/unpin),
+  - tasks CRUD/board/dependencies/run/retry/cancel/transition,
+  - PRD import preview/commit/job,
+  - quick actions + promote,
+  - review queue + approve/request-changes,
+  - orchestrator status/control,
+  - agents list/spawn/pause/resume/terminate.
+- Rewired FastAPI runtime to v3-only API and v3 websocket hub endpoint.
+
+Testing completed:
+- Added and passed `tests/test_v3_backend_phase1.py` (8 tests):
+  - cutover archival + schema init,
+  - dependency guard,
+  - quick action promotion singleton behavior,
+  - project pin validation + persistence,
+  - PRD preview/commit dependency chain creation,
+  - claim-lock single-claim guarantee under concurrency,
+  - transition valid/invalid edge enforcement,
+  - review queue request-changes/approve flow.
+
+Review findings and fixes:
+- Gap found: `POST /api/v3/tasks/{id}/run` could execute a different ready task.
+  - Fix: added explicit orchestrator `run_task(task_id)` path.
+- Gap found: transition endpoint accepted invalid state edges.
+  - Fix: added strict transition matrix validation.
+
+Outstanding for future phases:
+- Scheduler sophistication (aging/concurrency strategy tuning) and deeper worker integration are covered in Phase 2.
