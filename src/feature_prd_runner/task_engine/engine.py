@@ -32,7 +32,8 @@ logger = logging.getLogger(__name__)
 _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.BACKLOG: {TaskStatus.READY, TaskStatus.CANCELLED},
     TaskStatus.READY: {TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.BACKLOG, TaskStatus.CANCELLED},
-    TaskStatus.IN_PROGRESS: {TaskStatus.IN_REVIEW, TaskStatus.BLOCKED, TaskStatus.READY, TaskStatus.CANCELLED, TaskStatus.DONE},
+    # Human-review-first default: done requires in_review unless auto-approve config is enabled.
+    TaskStatus.IN_PROGRESS: {TaskStatus.IN_REVIEW, TaskStatus.BLOCKED, TaskStatus.READY, TaskStatus.CANCELLED},
     TaskStatus.IN_REVIEW: {TaskStatus.DONE, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED, TaskStatus.CANCELLED},
     TaskStatus.BLOCKED: {TaskStatus.READY, TaskStatus.CANCELLED, TaskStatus.BACKLOG},
     TaskStatus.DONE: {TaskStatus.READY},  # allow reopening
@@ -53,8 +54,9 @@ class TaskEngine:
         Path to the ``.prd_runner/`` directory.
     """
 
-    def __init__(self, state_dir: Path) -> None:
+    def __init__(self, state_dir: Path, allow_auto_approve_review: bool = False) -> None:
         self.store = TaskStore(state_dir)
+        self.allow_auto_approve_review = allow_auto_approve_review
 
     # ------------------------------------------------------------------
     # CRUD
@@ -193,12 +195,28 @@ class TaskEngine:
             if task is None:
                 return None
             # Basic transition validation
-            valid = _VALID_TRANSITIONS.get(task.status, set())
+            valid = set(_VALID_TRANSITIONS.get(task.status, set()))
+            if self.allow_auto_approve_review and task.status == TaskStatus.IN_PROGRESS:
+                valid.add(TaskStatus.DONE)
             if target not in valid:
                 raise ValueError(
                     f"Cannot transition {task.id} from {task.status.value} to {target.value}. "
                     f"Valid targets: {[s.value for s in valid]}"
                 )
+
+            # Dependency guard for frozen state machine:
+            # do not allow entering runnable states while blockers remain unresolved.
+            if target in {TaskStatus.READY, TaskStatus.IN_PROGRESS}:
+                unresolved = []
+                for dep_id in task.blocked_by:
+                    dep = tx.get(dep_id)
+                    if dep is not None and not dep.is_terminal:
+                        unresolved.append(dep_id)
+                if unresolved:
+                    raise ValueError(
+                        f"Cannot transition {task.id} to {target.value}; unresolved blockers: {unresolved}"
+                    )
+
             task.transition(target)
             # If moving to DONE, unblock dependents
             if target == TaskStatus.DONE:

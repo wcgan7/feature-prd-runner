@@ -80,6 +80,7 @@ class TaskSource(str, Enum):
     PERFORMANCE_AUDIT = "performance_audit"
     ENHANCEMENT_BRAINSTORM = "enhancement_brainstorm"
     AGENT_DISCOVERED = "agent_discovered"
+    PROMOTED_QUICK_ACTION = "promoted_quick_action"
     LEGACY_MIGRATION = "legacy_migration"
 
 

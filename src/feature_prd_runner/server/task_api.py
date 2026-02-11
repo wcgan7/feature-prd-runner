@@ -97,6 +97,13 @@ class ExecutionOrderResponse(BaseModel):
     batches: list[list[str]]
 
 
+class StateMachineResponse(BaseModel):
+    states: list[str]
+    transitions: dict[str, list[str]]
+    guards: dict[str, str]
+    defaults: dict[str, Any]
+
+
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
@@ -185,6 +192,42 @@ def create_task_router(get_engine: Any) -> APIRouter:
     ) -> ExecutionOrderResponse:
         engine = get_engine(project_dir)
         return ExecutionOrderResponse(batches=engine.get_execution_order())
+
+    @router.get("/meta/state-machine", response_model=StateMachineResponse)
+    async def get_state_machine(
+        project_dir: Optional[str] = Query(None),
+    ) -> StateMachineResponse:
+        engine = get_engine(project_dir)
+        transitions: dict[str, list[str]] = {
+            "backlog": ["ready", "cancelled"],
+            "ready": ["in_progress", "blocked", "backlog", "cancelled"],
+            "in_progress": ["in_review", "blocked", "ready", "cancelled"],
+            "in_review": ["done", "in_progress", "blocked", "cancelled"],
+            "blocked": ["ready", "cancelled", "backlog"],
+            "done": ["ready"],
+            "cancelled": ["backlog"],
+        }
+        if engine.allow_auto_approve_review:
+            transitions["in_progress"].append("done")
+        guards = {
+            "ready": "All blockers in blocked_by must be terminal before transition.",
+            "in_progress": "All blockers in blocked_by must be terminal before transition.",
+        }
+        defaults = {
+            "new_task_status": "backlog",
+            "dependency_terminal_statuses": ["done", "cancelled"],
+            "quick_action_promotion_behavior": "create_new_task",
+            "feature_pipeline_steps": ["plan", "plan_impl", "implement", "verify", "review", "commit"],
+            "human_review_required_default": not engine.allow_auto_approve_review,
+            "allow_auto_approve_review": engine.allow_auto_approve_review,
+            "auto_approve_env_var": "FEATURE_PRD_AUTO_APPROVE_REVIEW",
+        }
+        return StateMachineResponse(
+            states=list(transitions.keys()),
+            transitions=transitions,
+            guards=guards,
+            defaults=defaults,
+        )
 
     @router.post("/reorder")
     async def reorder_tasks(

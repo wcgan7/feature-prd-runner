@@ -35,6 +35,7 @@ import TasksPanel from './components/TasksPanel'
 import RunsPanel from './components/RunsPanel'
 import BreakpointsPanel from './components/BreakpointsPanel'
 import TaskLauncher from './components/TaskLauncher'
+import QuickRunsPanel from './components/QuickRunsPanel'
 import LoadingSpinner from './components/LoadingSpinner'
 import CommandPalette, { useCommandPalette, Command } from './components/CommandPalette/CommandPalette'
 import NotificationCenter from './components/NotificationCenter/NotificationCenter'
@@ -619,19 +620,34 @@ function AppContent() {
         </Grid>
         {panelState.showLiveLog && (
           <Grid size={{ xs: 12, lg: 4 }}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" sx={{ mb: 1.5 }}>Live Log</Typography>
-                {status?.run_id ? (
-                  <LiveLog runId={status.run_id} projectDir={currentProject || undefined} />
-                ) : (
-                  <Alert severity="info">Start a run to stream logs.</Alert>
-                )}
-              </CardContent>
-            </Card>
+            <Stack spacing={2}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" sx={{ mb: 1.5 }}>Live Log</Typography>
+                  {status?.run_id ? (
+                    <LiveLog runId={status.run_id} projectDir={currentProject || undefined} />
+                  ) : (
+                    <Alert severity="info">Start a run to stream logs.</Alert>
+                  )}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent>
+                  <QuickRunsPanel projectDir={currentProject || undefined} />
+                </CardContent>
+              </Card>
+            </Stack>
           </Grid>
         )}
       </Grid>
+
+      {!panelState.showLiveLog && (
+        <Card>
+          <CardContent>
+            <QuickRunsPanel projectDir={currentProject || undefined} />
+          </CardContent>
+        </Card>
+      )}
     </Stack>
   )
 
@@ -745,6 +761,20 @@ function AppContent() {
             <CardContent>
               <AgentPanel projectDir={currentProject || undefined} />
               <Divider sx={{ my: 2 }} />
+              <Alert severity="info" variant="outlined" sx={{ mb: 1.5 }}>
+                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                  What "Add Requirement" does
+                </Typography>
+                <Typography variant="body2">
+                  Sends a new product requirement into this project's task queue so agents can plan and execute it.
+                </Typography>
+                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                  Use this for new work, scope changes, or mid-run clarifications.
+                </Typography>
+                <Typography variant="body2" sx={{ mt: 0.75, fontFamily: '"IBM Plex Mono", monospace' }}>
+                  Example: Add rate-limited login attempts with audit logging and tests.
+                </Typography>
+              </Alert>
               <RequirementForm projectDir={currentProject || undefined} />
             </CardContent>
           </Card>

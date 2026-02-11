@@ -252,8 +252,7 @@ export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
                     )}
                     {task.status === 'in_progress' && (
                       <>
-                        <Button size="small" variant="outlined" onClick={() => handleTransition('in_review')}>Send to Review</Button>
-                        <Button size="small" variant="outlined" onClick={() => handleTransition('done')}>Mark Done</Button>
+                        <Button size="small" variant="outlined" onClick={() => handleTransition('in_review')}>Send to Human Review</Button>
                       </>
                     )}
                     {task.status === 'in_review' && (

@@ -41,6 +41,11 @@ from .models import (
     PhaseInfo,
     ProjectInfo,
     ProjectStatus,
+    PromoteQuickRunRequest,
+    PromoteQuickRunResponse,
+    QuickRunCreateRequest,
+    QuickRunExecuteResponse,
+    QuickRunRecord,
     RequirementRequest,
     RunDetail,
     RunInfo,
@@ -149,6 +154,32 @@ def create_app(
             "runs": state_dir / "runs",
             "artifacts": state_dir / "artifacts",
         }
+
+    def _quick_runs_path(project_dir: Path) -> Path:
+        return _get_paths(project_dir)["state_dir"] / "quick_runs.json"
+
+    def _load_quick_runs(project_dir: Path) -> list[dict[str, Any]]:
+        path = _quick_runs_path(project_dir)
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text())
+            if isinstance(data, list):
+                return [item for item in data if isinstance(item, dict)]
+            return []
+        except Exception:
+            logger.warning("Failed to read quick runs from {}", path)
+            return []
+
+    def _save_quick_runs(project_dir: Path, records: list[dict[str, Any]]) -> None:
+        path = _quick_runs_path(project_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(records, indent=2))
+
+    def _find_quick_run(project_dir: Path, quick_run_id: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        records = _load_quick_runs(project_dir)
+        target = next((r for r in records if r.get("id") == quick_run_id), None)
+        return records, target
 
     @app.get("/")
     async def root():
@@ -1702,6 +1733,166 @@ Write the generated PRD to the file: {generated_prd_path}"""
                 error=str(e),
             )
 
+    @app.post("/api/v2/quick-runs", response_model=QuickRunExecuteResponse)
+    async def create_quick_run(
+        request: QuickRunCreateRequest,
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+    ) -> QuickRunExecuteResponse:
+        """Execute a quick one-off run and store its record."""
+        from ..custom_execution import execute_custom_prompt
+
+        proj_dir = _get_project_dir(project_dir)
+        run_id = f"qrun-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{os.urandom(3).hex()}"
+        started_at = datetime.now(timezone.utc).isoformat()
+        record: dict[str, Any] = {
+            "id": run_id,
+            "prompt": request.prompt,
+            "status": "running",
+            "started_at": started_at,
+            "finished_at": None,
+            "result_summary": None,
+            "error": None,
+            "promoted_task_id": None,
+        }
+
+        records = _load_quick_runs(proj_dir)
+        records.append(record)
+        _save_quick_runs(proj_dir, records)
+
+        try:
+            context = None
+            if request.context_files:
+                context = {"files": request.context_files.split(",")}
+
+            success, error_message = execute_custom_prompt(
+                user_prompt=request.prompt,
+                project_dir=proj_dir,
+                override_agents=request.override_agents,
+                context=context,
+                shift_minutes=request.shift_minutes,
+                heartbeat_seconds=request.heartbeat_seconds,
+                heartbeat_grace_seconds=300,
+                then_continue=False,
+            )
+
+            record["status"] = "completed" if success else "failed"
+            record["finished_at"] = datetime.now(timezone.utc).isoformat()
+            record["result_summary"] = (
+                "Quick action executed successfully"
+                if success
+                else "Quick action execution failed"
+            )
+            record["error"] = None if success else error_message
+            _save_quick_runs(proj_dir, records)
+
+            return QuickRunExecuteResponse(
+                success=success,
+                message=record["result_summary"],
+                quick_run=QuickRunRecord(**record),
+                error=record["error"],
+            )
+        except Exception as e:
+            record["status"] = "failed"
+            record["finished_at"] = datetime.now(timezone.utc).isoformat()
+            record["result_summary"] = "Quick action execution failed"
+            record["error"] = str(e)
+            _save_quick_runs(proj_dir, records)
+            logger.error("Failed to execute quick run {}: {}", run_id, e)
+            return QuickRunExecuteResponse(
+                success=False,
+                message="Quick action execution failed",
+                quick_run=QuickRunRecord(**record),
+                error=str(e),
+            )
+
+    @app.get("/api/v2/quick-runs", response_model=list[QuickRunRecord])
+    async def list_quick_runs(
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+        limit: int = Query(20, ge=1, le=200),
+    ) -> list[QuickRunRecord]:
+        proj_dir = _get_project_dir(project_dir)
+        records = _load_quick_runs(proj_dir)
+        records_sorted = sorted(
+            records,
+            key=lambda item: str(item.get("started_at") or ""),
+            reverse=True,
+        )
+        return [QuickRunRecord(**item) for item in records_sorted[:limit]]
+
+    @app.get("/api/v2/quick-runs/{quick_run_id}", response_model=QuickRunRecord)
+    async def get_quick_run(
+        quick_run_id: str,
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+    ) -> QuickRunRecord:
+        proj_dir = _get_project_dir(project_dir)
+        _records, target = _find_quick_run(proj_dir, quick_run_id)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Quick run {quick_run_id} not found")
+        return QuickRunRecord(**target)
+
+    @app.post("/api/v2/quick-runs/{quick_run_id}/promote", response_model=PromoteQuickRunResponse)
+    async def promote_quick_run(
+        quick_run_id: str,
+        body: PromoteQuickRunRequest,
+        project_dir: Optional[str] = Query(None, description="Project directory path"),
+    ) -> PromoteQuickRunResponse:
+        from ..task_engine.engine import TaskEngine
+
+        proj_dir = _get_project_dir(project_dir)
+        records, target = _find_quick_run(proj_dir, quick_run_id)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Quick run {quick_run_id} not found")
+
+        if target.get("status") != "completed":
+            raise HTTPException(
+                status_code=400,
+                detail="Only completed quick runs can be promoted",
+            )
+
+        existing_task_id = target.get("promoted_task_id")
+        if isinstance(existing_task_id, str) and existing_task_id:
+            return PromoteQuickRunResponse(
+                success=True,
+                message=f"Quick run already promoted to task {existing_task_id}",
+                task_id=existing_task_id,
+                quick_run=QuickRunRecord(**target),
+            )
+
+        prompt = str(target.get("prompt") or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Quick run has no prompt to promote")
+
+        first_line = next((line.strip() for line in prompt.splitlines() if line.strip()), "Quick action follow-up")
+        title = body.title.strip() if body.title else first_line
+        if len(title) > 80:
+            title = f"{title[:77].rstrip()}..."
+
+        state_dir = proj_dir / ".prd_runner"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        engine = TaskEngine(state_dir)
+        task = engine.create_task(
+            title=title,
+            description=f"Promoted from Quick Action.\n\nOriginal prompt:\n{prompt}",
+            task_type=body.task_type,
+            priority=body.priority,
+            source="promoted_quick_action",
+            metadata={
+                "origin": "quick_action",
+                "quick_run_id": quick_run_id,
+                "promoted_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        target["promoted_task_id"] = task.id
+        _save_quick_runs(proj_dir, records)
+
+        return PromoteQuickRunResponse(
+            success=True,
+            message=f"Promoted quick run to task {task.id}",
+            task_id=task.id,
+            quick_run=QuickRunRecord(**target),
+        )
+
     @app.websocket("/ws/runs/{run_id}")
     async def websocket_run_updates(
         websocket: WebSocket,
@@ -2332,6 +2523,9 @@ Write the generated PRD to the file: {generated_prd_path}"""
     from .task_api import create_task_router
 
     _engine_cache: dict[str, _TaskEngine] = {}
+    allow_auto_approve_review = os.getenv("FEATURE_PRD_AUTO_APPROVE_REVIEW", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
     def _get_task_engine(project_dir_param: Optional[str] = None) -> _TaskEngine:
         proj = _get_project_dir(project_dir_param)
@@ -2339,7 +2533,10 @@ Write the generated PRD to the file: {generated_prd_path}"""
         state_dir.mkdir(parents=True, exist_ok=True)
         key = str(state_dir)
         if key not in _engine_cache:
-            _engine_cache[key] = _TaskEngine(state_dir)
+            _engine_cache[key] = _TaskEngine(
+                state_dir,
+                allow_auto_approve_review=allow_auto_approve_review,
+            )
         return _engine_cache[key]
 
     app.include_router(create_task_router(_get_task_engine))

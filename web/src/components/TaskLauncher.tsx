@@ -52,10 +52,13 @@ interface StartRunResponse {
   prd_path: string | null
 }
 
-interface ExecTaskResponse {
+interface QuickRunExecuteResponse {
   success: boolean
   message: string
-  run_id: string | null
+  quick_run: {
+    id: string
+    status: string
+  }
   error: string | null
 }
 
@@ -77,6 +80,9 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
   // Config for quick_task (exec)
   const [overrideAgents, setOverrideAgents] = useState(false)
   const [contextFiles, setContextFiles] = useState('')
+  const [promoteToTask, setPromoteToTask] = useState(false)
+  const [promoteTaskType, setPromoteTaskType] = useState('feature')
+  const [promoteTaskPriority, setPromoteTaskPriority] = useState('P2')
 
   // Advanced options (Batch 6)
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -98,11 +104,50 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
 
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  const buildPromotionTitle = (prompt: string): string => {
+    const firstLine = prompt
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) || 'Quick action follow-up'
+    const compact = firstLine.replace(/\s+/g, ' ')
+    return compact.length > 80 ? `${compact.slice(0, 77).trimEnd()}...` : compact
+  }
+
+  const promoteQuickActionToTask = async (quickRunId: string, prompt: string): Promise<string | null> => {
+    if (!projectDir) return null
+    const response = await fetch(buildApiUrl(`/api/v2/quick-runs/${quickRunId}/promote`, projectDir), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify({
+        title: buildPromotionTitle(prompt),
+        task_type: promoteTaskType,
+        priority: promoteTaskPriority,
+      }),
+    })
+
+    if (!response.ok) {
+      let detail = 'Failed to promote quick action to task'
+      try {
+        const data = await response.json()
+        if (data?.detail && typeof data.detail === 'string') detail = data.detail
+      } catch {
+        // ignore parse errors and keep default detail
+      }
+      throw new Error(detail)
+    }
+
+    const data = await response.json()
+    return typeof data?.task_id === 'string' ? data.task_id : null
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!content.trim()) {
-      toast.error('Please enter task description')
+      toast.error(mode === 'quick_task' ? 'Please enter quick action prompt' : 'Please enter task description')
       return
     }
 
@@ -115,8 +160,8 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
 
     try {
       if (mode === 'quick_task') {
-        // Use the exec endpoint for one-off tasks
-        const response = await fetch(buildApiUrl('/api/runs/exec', projectDir), {
+        // Use the exec endpoint for one-off actions
+        const response = await fetch(buildApiUrl('/api/v2/quick-runs', projectDir), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -130,14 +175,32 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
             heartbeat_seconds: 120,
           }),
         })
-
-        const data: ExecTaskResponse = await response.json()
+        const data = await response.json() as QuickRunExecuteResponse & { detail?: string }
+        if (!response.ok) {
+          toast.error(data.detail || data.error || data.message || 'Failed to execute action')
+          return
+        }
 
         if (data.success) {
-          toast.success('Task executed successfully!')
+          let promotedTaskId: string | null = null
+          const quickRunId = data.quick_run?.id
+          if (promoteToTask && quickRunId) {
+            try {
+              promotedTaskId = await promoteQuickActionToTask(quickRunId, content)
+            } catch (promotionErr) {
+              toast.error(`Quick action succeeded, but promotion failed: ${promotionErr}`)
+            }
+          } else if (promoteToTask && !quickRunId) {
+            toast.error('Quick action succeeded, but promotion failed: missing quick run ID')
+          }
+          if (promoteToTask && promotedTaskId) {
+            toast.success(`Quick action executed and promoted to task ${promotedTaskId}`)
+          } else {
+            toast.success('Quick action executed successfully!')
+          }
           setContent('') // Clear the input
         } else {
-          toast.error(data.error || data.message || 'Failed to execute task')
+          toast.error(data.error || data.message || 'Failed to execute action')
         }
       } else {
         // Use the run endpoint for full workflow
@@ -197,7 +260,7 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
   const getModeDescription = () => {
     switch (mode) {
       case 'quick_task':
-        return 'Execute a simple task immediately and terminate (no full workflow). Perfect for quick edits like "add folder to .gitignore".'
+        return 'Run a one-off action immediately. This does not create a board task unless you later promote it.'
       case 'quick_prompt':
         return 'Enter a brief description. An AI will generate a full PRD and run the complete workflow.'
       case 'full_prd':
@@ -231,7 +294,7 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
     <div className="task-launcher">
       <style>{TASK_LAUNCHER_STYLES}</style>
       <div className="task-launcher-header">
-        <h2>Launch New Task</h2>
+        <h2>Launch New Run</h2>
       </div>
 
       <form onSubmit={handleSubmit} className="task-launcher-form">
@@ -244,7 +307,7 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
               className={`mode-button ${mode === 'quick_task' ? 'active' : ''}`}
               onClick={() => setMode('quick_task')}
             >
-              Quick Task
+              Quick Action
             </button>
             <button
               type="button"
@@ -267,7 +330,7 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
         {/* Content Input */}
         <div className="form-section">
           <label className="form-label" htmlFor="content">
-            {mode === 'full_prd' ? 'PRD Content' : mode === 'quick_task' ? 'Task Description' : 'Feature Prompt'}
+            {mode === 'full_prd' ? 'PRD Content' : mode === 'quick_task' ? 'Action Prompt' : 'Feature Prompt'}
           </label>
           <textarea
             id="content"
@@ -280,10 +343,10 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
           />
         </div>
 
-        {/* Configuration Section for Quick Task */}
+        {/* Configuration Section for Quick Action */}
         {mode === 'quick_task' && (
           <div className="form-section config-section">
-            <h3 className="section-title">Quick Task Options</h3>
+            <h3 className="section-title">Quick Action Options</h3>
 
             <div className="form-field">
               <label className="form-label" htmlFor="contextFiles">
@@ -316,6 +379,62 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
                 </span>
               </label>
             </div>
+
+            <div className="form-field">
+              <label className="checkbox-label checkbox-label-standalone">
+                <input
+                  type="checkbox"
+                  checked={promoteToTask}
+                  onChange={(e) => setPromoteToTask(e.target.checked)}
+                  disabled={isSubmitting}
+                />
+                <span>
+                  <strong>Save result as task</strong>
+                  <br />
+                  <small>Create a board task after this quick action succeeds.</small>
+                </span>
+              </label>
+            </div>
+
+            {promoteToTask && (
+              <div className="form-row">
+                <div className="form-field">
+                  <label className="form-label" htmlFor="promoteTaskType">Task Type</label>
+                  <select
+                    id="promoteTaskType"
+                    className="form-select"
+                    value={promoteTaskType}
+                    onChange={(e) => setPromoteTaskType(e.target.value)}
+                    disabled={isSubmitting}
+                  >
+                    <option value="feature">Feature</option>
+                    <option value="bug">Bug</option>
+                    <option value="refactor">Refactor</option>
+                    <option value="research">Research</option>
+                    <option value="test">Test</option>
+                    <option value="docs">Docs</option>
+                    <option value="security">Security</option>
+                    <option value="performance">Performance</option>
+                  </select>
+                </div>
+
+                <div className="form-field">
+                  <label className="form-label" htmlFor="promoteTaskPriority">Priority</label>
+                  <select
+                    id="promoteTaskPriority"
+                    className="form-select"
+                    value={promoteTaskPriority}
+                    onChange={(e) => setPromoteTaskPriority(e.target.value)}
+                    disabled={isSubmitting}
+                  >
+                    <option value="P0">P0 - Critical</option>
+                    <option value="P1">P1 - High</option>
+                    <option value="P2">P2 - Medium</option>
+                    <option value="P3">P3 - Low</option>
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -542,7 +661,7 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
           <button type="submit" className="submit-button" disabled={isSubmitting || !content.trim()}>
             {isSubmitting
               ? mode === 'quick_task' ? 'Executing...' : 'Starting...'
-              : mode === 'quick_task' ? 'Execute Task' : 'Start Run'}
+              : mode === 'quick_task' ? 'Run Quick Action' : 'Start Run'}
           </button>
         </div>
       </form>

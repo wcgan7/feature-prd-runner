@@ -312,6 +312,55 @@ class ExecTaskResponse(BaseModel):
     error: Optional[str] = None
 
 
+class QuickRunCreateRequest(BaseModel):
+    """Request to create and execute a quick run."""
+
+    prompt: str
+    override_agents: bool = False
+    context_files: Optional[str] = None  # Comma-separated file paths
+    shift_minutes: int = 45
+    heartbeat_seconds: int = 120
+
+
+class QuickRunRecord(BaseModel):
+    """Stored quick run record."""
+
+    id: str
+    prompt: str
+    status: str  # running, completed, failed
+    started_at: str
+    finished_at: Optional[str] = None
+    result_summary: Optional[str] = None
+    error: Optional[str] = None
+    promoted_task_id: Optional[str] = None
+
+
+class QuickRunExecuteResponse(BaseModel):
+    """Response from creating/executing a quick run."""
+
+    success: bool
+    message: str
+    quick_run: QuickRunRecord
+    error: Optional[str] = None
+
+
+class PromoteQuickRunRequest(BaseModel):
+    """Request to promote a quick run into a board task."""
+
+    title: Optional[str] = None
+    task_type: str = "feature"
+    priority: str = "P2"
+
+
+class PromoteQuickRunResponse(BaseModel):
+    """Response from promoting a quick run to a task."""
+
+    success: bool
+    message: str
+    task_id: Optional[str] = None
+    quick_run: Optional[QuickRunRecord] = None
+
+
 # --- Batch 1: Explain + Inspect ---
 
 

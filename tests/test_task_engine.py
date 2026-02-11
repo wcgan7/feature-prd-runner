@@ -243,6 +243,22 @@ class TestStatusTransitions:
         with pytest.raises(ValueError, match="Cannot transition"):
             engine.transition_task(t.id, "done")
 
+    def test_in_progress_to_done_requires_review_by_default(self, engine: TaskEngine) -> None:
+        t = engine.create_task(title="Needs review")
+        engine.transition_task(t.id, "ready")
+        engine.transition_task(t.id, "in_progress")
+        with pytest.raises(ValueError, match="Cannot transition"):
+            engine.transition_task(t.id, "done")
+
+    def test_in_progress_to_done_allowed_when_auto_approve_enabled(self, state_dir: Path) -> None:
+        auto_engine = TaskEngine(state_dir, allow_auto_approve_review=True)
+        t = auto_engine.create_task(title="Auto approve")
+        auto_engine.transition_task(t.id, "ready")
+        auto_engine.transition_task(t.id, "in_progress")
+        done = auto_engine.transition_task(t.id, "done")
+        assert done is not None
+        assert done.status == TaskStatus.DONE
+
     def test_done_unblocks_dependents(self, engine: TaskEngine) -> None:
         t1 = engine.create_task(title="First")
         t2 = engine.create_task(title="Second")
@@ -264,6 +280,26 @@ class TestStatusTransitions:
         assert t2_after is not None
         assert t2_after.status == TaskStatus.READY
         assert t1.id not in t2_after.blocked_by
+
+    def test_dependency_guard_blocks_ready_transition(self, engine: TaskEngine) -> None:
+        blocker = engine.create_task(title="Blocker")
+        task = engine.create_task(title="Blocked task")
+        engine.add_dependency(task.id, blocker.id)
+
+        with pytest.raises(ValueError, match="unresolved blockers"):
+            engine.transition_task(task.id, "ready")
+
+    def test_dependency_guard_blocks_in_progress_transition(self, engine: TaskEngine) -> None:
+        blocker = engine.create_task(title="Blocker")
+        task = engine.create_task(title="Blocked task")
+        engine.transition_task(task.id, "ready")
+        engine.add_dependency(task.id, blocker.id)
+        # Force a synthetic inconsistent state (ready with unresolved blockers)
+        # to validate the explicit in_progress dependency guard path.
+        engine.update_task(task.id, {"status": "ready"})
+
+        with pytest.raises(ValueError, match="unresolved blockers"):
+            engine.transition_task(task.id, "in_progress")
 
 
 # ---------------------------------------------------------------------------

@@ -27,13 +27,13 @@ describe('TaskLauncher', () => {
   it('renders with default quick_task mode', () => {
     renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
 
-    expect(screen.getByText('Launch New Task')).toBeInTheDocument()
-    expect(screen.getByText('Quick Task')).toBeInTheDocument()
+    expect(screen.getByText('Launch New Run')).toBeInTheDocument()
+    expect(screen.getByText('Quick Action')).toBeInTheDocument()
     expect(screen.getByText('Quick Prompt')).toBeInTheDocument()
     expect(screen.getByText('Full PRD')).toBeInTheDocument()
 
     // Quick task mode should be active by default
-    const quickTaskButton = screen.getByRole('button', { name: /quick task/i })
+    const quickTaskButton = screen.getByRole('button', { name: /^quick action$/i })
     expect(quickTaskButton).toHaveClass('active')
   })
 
@@ -49,17 +49,17 @@ describe('TaskLauncher', () => {
   it('disables submit button when content is empty', () => {
     renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
 
-    const submitButton = screen.getByRole('button', { name: /execute task/i })
+    const submitButton = screen.getByRole('button', { name: /run quick action/i })
     expect(submitButton).toBeDisabled()
   })
 
   it('enables submit button when content is provided', () => {
     renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
 
-    const textarea = screen.getByLabelText(/task description/i)
+    const textarea = screen.getByLabelText(/action prompt/i)
     fireEvent.change(textarea, { target: { value: 'Test prompt' } })
 
-    const submitButton = screen.getByRole('button', { name: /execute task/i })
+    const submitButton = screen.getByRole('button', { name: /run quick action/i })
     expect(submitButton).not.toBeDisabled()
   })
 
@@ -105,6 +105,50 @@ describe('TaskLauncher', () => {
 
     // Verify input was cleared after success
     expect(textarea).toHaveValue('')
+  })
+
+  it('promotes quick action to task when enabled', async () => {
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          message: 'Quick action executed successfully',
+          quick_run: { id: 'qrun-123', status: 'completed' },
+          error: null,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          task_id: 'task-123',
+        }),
+      })
+
+    global.fetch = mockFetch
+
+    renderWithProvider(<TaskLauncher projectDir="/test/project" onRunStarted={mockOnRunStarted} />)
+
+    const textarea = screen.getByLabelText(/action prompt/i)
+    fireEvent.change(textarea, { target: { value: 'Add audit logging for API errors' } })
+
+    const promoteCheckbox = screen.getByRole('checkbox', { name: /save result as task/i })
+    fireEvent.click(promoteCheckbox)
+
+    const submitButton = screen.getByRole('button', { name: /run quick action/i })
+    fireEvent.click(submitButton)
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+    })
+
+    expect(mockFetch.mock.calls[0][0]).toContain('/api/v2/quick-runs')
+    expect(mockFetch.mock.calls[1][0]).toContain('/api/v2/quick-runs/qrun-123/promote')
+
+    const promoteBody = JSON.parse(mockFetch.mock.calls[1][1].body)
+    expect(promoteBody.title).toContain('Add audit logging for API errors')
+    expect(promoteBody.task_type).toBe('feature')
+    expect(promoteBody.priority).toBe('P2')
   })
 
   it('handles API errors gracefully', async () => {
