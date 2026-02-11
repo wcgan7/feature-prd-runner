@@ -434,3 +434,40 @@ Review findings and fixes:
 
 Outstanding for future phases:
 - Frontend route-shell rewrite, Create Work modal, and v3-only UI flows are covered in Phase 3.
+
+### Phase 3 (UI Rebuild) - Complete
+
+Status: `COMPLETE`
+
+Completed:
+- Replaced monolithic app shell with route-driven orchestrator-first UI:
+  - `Board` (default landing),
+  - `Execution`,
+  - `Review Queue`,
+  - `Agents`,
+  - `Settings`.
+- Implemented single `Create Work` modal with required tabs:
+  - `Create Task`,
+  - `Import PRD` (preview -> commit),
+  - `Quick Action` (explicitly labeled ephemeral).
+- Implemented board-first workbench and v3 API data binding.
+- Implemented project management in settings:
+  - discovered + pinned project listing,
+  - manual absolute path pin with non-git override option,
+  - selected project persistence in local storage.
+- Wired realtime updates through websocket subscription to v3 channels.
+- Added new dedicated UI stylesheet (`orchestrator.css`) for revamp layout and responsive behavior.
+
+Testing completed:
+- Updated and passed frontend app tests:
+  - `web/src/App.defaultView.test.tsx`,
+  - `web/src/App.accessibility.test.tsx`.
+- Verified frontend production compile/build:
+  - `npm --prefix web run build` passed.
+
+Review findings and fixes:
+- Gap found: test ambiguity on duplicate `Create Work` and `Create Task` button labels.
+  - Fix: updated tests to use explicit `getAllByRole` assertions where duplicate labels are intentional.
+
+Outstanding for future phases:
+- Stabilization pass to align docs/CLI contracts and run combined backend/frontend verification is covered in Phase 4.
