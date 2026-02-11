@@ -2520,6 +2520,7 @@ Write the generated PRD to the file: {generated_prd_path}"""
     # V2 Task Engine API
     # ------------------------------------------------------------------
     from ..task_engine.engine import TaskEngine as _TaskEngine
+    from .import_api import create_import_router
     from .task_api import create_task_router
 
     _engine_cache: dict[str, _TaskEngine] = {}
@@ -2540,6 +2541,7 @@ Write the generated PRD to the file: {generated_prd_path}"""
         return _engine_cache[key]
 
     app.include_router(create_task_router(_get_task_engine))
+    app.include_router(create_import_router(_get_task_engine))
 
     # ------------------------------------------------------------------
     # V2 Agent Pool API

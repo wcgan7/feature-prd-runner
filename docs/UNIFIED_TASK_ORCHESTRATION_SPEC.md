@@ -187,7 +187,7 @@ Implemented event APIs:
 - [x] Add `POST /api/v2/tasks/{id}/run`.
 - [x] Add retry/cancel endpoints and policies.
 - [x] Persist runtime step/task events from pipeline execution.
-- [ ] Add PRD import preview/commit endpoints.
+- [x] Add PRD import preview/commit endpoints.
 - [x] Add quick-run promote endpoint.
 
 ### Frontend
