@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Optional
@@ -84,6 +85,9 @@ class TaskStore:
         self._store_path = state_dir / STORE_FILENAME
         self._lock_path = state_dir / LOCK_FILENAME
         self._lock = FileLock(self._lock_path)
+        # File locks protect across processes; this lock protects multi-thread
+        # callers inside the same process from racing task transactions.
+        self._thread_lock = threading.RLock()
 
     # -- internal helpers ---------------------------------------------------
 
@@ -107,24 +111,27 @@ class TaskStore:
                 task.status = TaskStatus.IN_PROGRESS
                 # automatically saved on exit
         """
-        with self._lock:
-            tasks = self._load()
-            tx = _TaskTx(tasks)
-            yield tx
-            if tx.dirty:
-                self._save(tx.tasks)
+        with self._thread_lock:
+            with self._lock:
+                tasks = self._load()
+                tx = _TaskTx(tasks)
+                yield tx
+                if tx.dirty:
+                    self._save(tx.tasks)
 
     def read_snapshot(self) -> list[Task]:
         """Return a read-only snapshot (no lock held after return)."""
-        with self._lock:
-            return self._load()
+        with self._thread_lock:
+            with self._lock:
+                return self._load()
 
     def get_one(self, task_id: str) -> Optional[Task]:
         """Convenience: fetch a single task without holding the lock."""
-        with self._lock:
-            for t in self._load():
-                if t.id == task_id:
-                    return t
+        with self._thread_lock:
+            with self._lock:
+                for t in self._load():
+                    if t.id == task_id:
+                        return t
         return None
 
 

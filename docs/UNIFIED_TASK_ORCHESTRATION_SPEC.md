@@ -199,11 +199,11 @@ Implemented event APIs:
 - [x] Add blocked-task explainers and unblock shortcuts.
 
 ### Testing
-- [ ] E2E: create task -> ready -> orchestrator claim -> done.
-- [ ] E2E: PRD import graph executes in dependency order.
-- [ ] E2E: quick action does not create board task unless promoted.
-- [ ] Concurrency test: no dual-claim for same task.
-- [ ] A11y pass across Tasks/Execution/Agents.
+- [x] E2E: create task -> ready -> orchestrator claim -> done.
+- [x] E2E: PRD import graph executes in dependency order.
+- [x] E2E: quick action does not create board task unless promoted.
+- [x] Concurrency test: no dual-claim for same task.
+- [x] A11y pass across Tasks/Execution/Agents.
 
 ## 11) Open Decisions
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import pytest
 from pathlib import Path
 
@@ -333,6 +334,39 @@ class TestClaimTask:
         engine.transition_task(task.id, "in_review")
         with pytest.raises(ValueError, match="awaiting human review"):
             engine.claim_task(task.id)
+
+    def test_concurrent_claim_allows_only_one_winner(self, engine: TaskEngine) -> None:
+        task = engine.create_task(title="Single claimant task")
+        engine.transition_task(task.id, "ready")
+
+        barrier = threading.Barrier(2)
+        results: list[str] = []
+        errors: list[str] = []
+
+        def _claim(claimer: str) -> None:
+            barrier.wait()
+            try:
+                claimed = engine.claim_task(task.id, claimer=claimer)
+                if claimed is not None:
+                    results.append(claimer)
+            except Exception as exc:
+                errors.append(str(exc))
+
+        t1 = threading.Thread(target=_claim, args=("agent-a",))
+        t2 = threading.Thread(target=_claim, args=("agent-b",))
+        t1.start()
+        t2.start()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+        assert len(results) == 1
+        assert len(errors) == 1
+        assert "already in progress" in errors[0]
+
+        fetched = engine.get_task(task.id)
+        assert fetched is not None
+        assert fetched.status == TaskStatus.IN_PROGRESS
+        assert fetched.current_agent_id == results[0]
 
 
 class TestRetryCancelAndEvents:
