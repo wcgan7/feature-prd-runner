@@ -9,6 +9,8 @@ An AI engineering orchestrator that coordinates multiple specialized agents to e
 
 ## Table of Contents
 
+- [Revamp Plan](#revamp-plan)
+- [Documentation Map](#documentation-map)
 - [Getting Started](#getting-started)
 - [How It Works](#how-it-works)
 - [Web Dashboard](#web-dashboard)
@@ -22,6 +24,16 @@ An AI engineering orchestrator that coordinates multiple specialized agents to e
 - [Configuration](#configuration)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## Revamp Plan
+
+The orchestrator-first big-bang revamp blueprint is documented in [`docs/ORCHESTRATOR_FIRST_REVAMP_PLAN.md`](docs/ORCHESTRATOR_FIRST_REVAMP_PLAN.md).
+
+## Documentation Map
+
+For cleaned, status-labeled documentation (current vs legacy vs historical), see [`docs/README.md`](docs/README.md).
 
 ---
 
@@ -369,7 +381,7 @@ feature-prd-runner exec "Add logging" --context-files "src/auth.py,src/api.py"
 - Emergency hotfixes
 - Administrative changes
 
-See [docs/CUSTOM_EXECUTION.md](docs/CUSTOM_EXECUTION.md) for full documentation.
+See [docs/archive/legacy/CUSTOM_EXECUTION.md](docs/archive/legacy/CUSTOM_EXECUTION.md) for legacy runtime documentation.
 
 **Custom prompt before run** — use `--custom-prompt` to run one standalone worker prompt before the main loop:
 
@@ -403,7 +415,7 @@ feature-prd-runner logs phase-1
 feature-prd-runner logs phase-1 --step verify --lines 200
 ```
 
-Errors include root cause analysis, files involved, actionable suggestions with commands, and quick fixes. See [docs/DEBUGGING.md](docs/DEBUGGING.md) for full documentation.
+Errors include root cause analysis, files involved, actionable suggestions with commands, and quick fixes. See [docs/archive/legacy/DEBUGGING.md](docs/archive/legacy/DEBUGGING.md) for legacy runtime documentation.
 
 ### Parallel Execution
 
@@ -436,7 +448,7 @@ phases:
     deps: ["api-endpoints", "frontend-components"]  # Depends on both
 ```
 
-The parallel executor detects circular dependencies, uses topological sort to create execution batches, and tracks progress for all running phases. See [docs/PARALLEL_EXECUTION.md](docs/PARALLEL_EXECUTION.md) for full documentation.
+The parallel executor detects circular dependencies, uses topological sort to create execution batches, and tracks progress for all running phases. See [docs/archive/legacy/PARALLEL_EXECUTION.md](docs/archive/legacy/PARALLEL_EXECUTION.md) for legacy runtime documentation.
 
 ### Interactive Mode & Steering
 
@@ -461,7 +473,7 @@ feature-prd-runner approve --feedback "Looks good"
 feature-prd-runner reject --reason "Need more tests first"
 ```
 
-See [docs/HUMAN_IN_THE_LOOP.md](docs/HUMAN_IN_THE_LOOP.md) for comprehensive documentation.
+See [docs/archive/legacy/HUMAN_IN_THE_LOOP.md](docs/archive/legacy/HUMAN_IN_THE_LOOP.md) for legacy runtime documentation.
 
 ### CLI Options
 

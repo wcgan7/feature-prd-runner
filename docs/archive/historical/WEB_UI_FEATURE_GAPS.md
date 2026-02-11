@@ -1,5 +1,9 @@
 # Web UI Feature Gaps
 
+> **Status (2026-02-11):** Historical point-in-time gap tracker (v2 transition period).
+> **Current direction:** [`ORCHESTRATOR_FIRST_REVAMP_PLAN.md`](../../ORCHESTRATOR_FIRST_REVAMP_PLAN.md)
+> **Docs index:** [`README.md`](README.md)
+
 CLI features that are not yet available through the web dashboard.
 Tracked here so we can implement them incrementally.
 

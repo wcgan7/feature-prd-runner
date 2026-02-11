@@ -1,5 +1,9 @@
 # Verification Loop Efficiency Review
 
+> **Status (2026-02-11):** Historical implementation review for a specific optimization pass.
+> **Current direction:** [`ORCHESTRATOR_FIRST_REVAMP_PLAN.md`](../../ORCHESTRATOR_FIRST_REVAMP_PLAN.md)
+> **Docs index:** [`README.md`](README.md)
+
 This document identifies inefficiencies in the verification-to-implementation retry loop and proposes improvements.
 
 ---

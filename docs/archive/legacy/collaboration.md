@@ -1,5 +1,9 @@
 # Human-AI Collaboration (Phase C)
 
+> **Status (2026-02-11):** Legacy runtime guide for the pre-v3 architecture.
+> **Current direction:** [`ORCHESTRATOR_FIRST_REVAMP_PLAN.md`](../../ORCHESTRATOR_FIRST_REVAMP_PLAN.md)
+> **Docs index:** [`README.md`](README.md)
+
 This document describes the Phase C human-AI collaboration features that enable rich, bidirectional interaction between humans and agents during task execution. These features go beyond the basic HITL steering and approval gates (see [HUMAN_IN_THE_LOOP.md](HUMAN_IN_THE_LOOP.md)) to provide inline code review, structured feedback, agent reasoning transparency, and real-time collaboration tooling.
 
 ## Overview

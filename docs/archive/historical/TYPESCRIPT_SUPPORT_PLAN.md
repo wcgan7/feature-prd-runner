@@ -1,5 +1,9 @@
 # TypeScript Support Implementation Plan
 
+> **Status (2026-02-11):** Historical implementation plan for earlier language support work.
+> **Current direction:** [`ORCHESTRATOR_FIRST_REVAMP_PLAN.md`](../../ORCHESTRATOR_FIRST_REVAMP_PLAN.md)
+> **Docs index:** [`README.md`](README.md)
+
 This document outlines the plan to extend the Feature PRD Runner to support TypeScript projects in addition to the current Python-focused implementation.
 
 ## Current State Analysis

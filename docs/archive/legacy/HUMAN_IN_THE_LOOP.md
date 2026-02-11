@@ -1,5 +1,9 @@
 # Human-in-the-Loop Control
 
+> **Status (2026-02-11):** Legacy runtime guide for the pre-v3 architecture.
+> **Current direction:** [`ORCHESTRATOR_FIRST_REVAMP_PLAN.md`](../../ORCHESTRATOR_FIRST_REVAMP_PLAN.md)
+> **Docs index:** [`README.md`](README.md)
+
 This document describes the human-in-the-loop features that enable active steering, approval gates, and bidirectional communication with running workers.
 
 ## Overview
