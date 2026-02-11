@@ -72,6 +72,9 @@ def _preview_payload(tasks: list[Task], prd_title: Optional[str] = None) -> dict
 class PrdImportPreviewRequest(BaseModel):
     prd_content: Optional[str] = None
     prd_path: Optional[str] = None
+    granularity: str = "balanced"  # coarse | balanced | fine
+    auto_ready: bool = False
+    max_parallelism_hint: Optional[int] = None
 
 
 class PrdImportPreviewResponse(BaseModel):
@@ -85,6 +88,9 @@ class PrdImportCommitRequest(BaseModel):
     prd_path: Optional[str] = None
     created_by: Optional[str] = None
     initial_status: str = "backlog"
+    granularity: str = "balanced"  # coarse | balanced | fine
+    auto_ready: bool = False
+    max_parallelism_hint: Optional[int] = None
 
 
 class PrdImportCommitResponse(BaseModel):
@@ -100,6 +106,7 @@ class PrdImportJobResponse(BaseModel):
 
 def create_import_router(get_engine: Any) -> APIRouter:
     router = APIRouter(prefix="/api/v2/import", tags=["import-v2"])
+    valid_granularity = {"coarse", "balanced", "fine"}
 
     def _state_dir(engine: TaskEngine) -> Path:
         state_dir = getattr(engine, "_state_dir", None)
@@ -150,6 +157,8 @@ def create_import_router(get_engine: Any) -> APIRouter:
         body: PrdImportPreviewRequest,
         project_dir: Optional[str] = Query(None),
     ) -> PrdImportPreviewResponse:
+        if body.granularity not in valid_granularity:
+            raise HTTPException(status_code=400, detail="granularity must be coarse|balanced|fine")
         if not (body.prd_content and body.prd_content.strip()) and not body.prd_path:
             raise HTTPException(status_code=400, detail="Provide prd_content or prd_path")
 
@@ -180,6 +189,9 @@ def create_import_router(get_engine: Any) -> APIRouter:
             "request": {
                 "prd_path": str(path) if path else None,
                 "used_inline_content": bool(content),
+                "granularity": body.granularity,
+                "auto_ready": body.auto_ready,
+                "max_parallelism_hint": body.max_parallelism_hint,
             },
             "preview": preview,
         }
@@ -191,8 +203,11 @@ def create_import_router(get_engine: Any) -> APIRouter:
         body: PrdImportCommitRequest,
         project_dir: Optional[str] = Query(None),
     ) -> PrdImportCommitResponse:
+        if body.granularity not in valid_granularity:
+            raise HTTPException(status_code=400, detail="granularity must be coarse|balanced|fine")
         engine = get_engine(project_dir)
-        if body.initial_status not in {TaskStatus.BACKLOG.value, TaskStatus.READY.value}:
+        desired_initial_status = TaskStatus.READY.value if body.auto_ready else body.initial_status
+        if desired_initial_status not in {TaskStatus.BACKLOG.value, TaskStatus.READY.value}:
             raise HTTPException(status_code=400, detail="initial_status must be 'backlog' or 'ready'")
 
         jobs = _load_jobs(engine)
@@ -233,6 +248,9 @@ def create_import_router(get_engine: Any) -> APIRouter:
                 "request": {
                     "prd_path": str(path) if path else None,
                     "used_inline_content": bool(content),
+                    "granularity": body.granularity,
+                    "auto_ready": body.auto_ready,
+                    "max_parallelism_hint": body.max_parallelism_hint,
                 },
                 "preview": preview,
             }
@@ -293,7 +311,7 @@ def create_import_router(get_engine: Any) -> APIRouter:
                 dependency_count += 1
 
         # 3) Optionally place runnable roots in READY.
-        if body.initial_status == TaskStatus.READY.value:
+        if desired_initial_status == TaskStatus.READY.value:
             for src_id, raw in source_task_payload.items():
                 if raw.get("blocked_by"):
                     continue
@@ -311,7 +329,10 @@ def create_import_router(get_engine: Any) -> APIRouter:
             "created_task_ids": created_ids,
             "created_count": len(created_ids),
             "dependency_count": dependency_count,
-            "initial_status": body.initial_status,
+            "initial_status": desired_initial_status,
+            "auto_ready": body.auto_ready,
+            "granularity": body.granularity,
+            "max_parallelism_hint": body.max_parallelism_hint,
         }
         jobs[job_id] = job
         _save_jobs(engine, jobs)

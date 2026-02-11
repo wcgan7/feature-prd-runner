@@ -79,6 +79,11 @@ class TestTaskCRUD:
         assert resp.json()["task"]["title"] == "New"
         assert resp.json()["task"]["priority"] == "P0"
 
+        events_resp = await client.get(f"/api/v2/tasks/{task_id}/events")
+        assert events_resp.status_code == 200
+        event_types = [evt["type"] for evt in events_resp.json()["events"]]
+        assert "task.updated" in event_types
+
     async def test_delete(self, client: AsyncClient) -> None:
         resp = await client.post("/api/v2/tasks", json={"title": "To delete"})
         task_id = resp.json()["task"]["id"]

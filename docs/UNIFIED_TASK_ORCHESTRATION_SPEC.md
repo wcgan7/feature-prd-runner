@@ -1,6 +1,6 @@
 # Unified Task Orchestration Spec
 
-Status: Draft (implementation baseline)
+Status: Implemented
 Owner: Core platform (backend + web)
 Last updated: 2026-02-11
 

@@ -207,7 +207,10 @@ class TaskEngine:
                     pass
 
         with self.store.transaction() as tx:
-            return tx.update(task_id, changes)
+            task = tx.update(task_id, changes)
+            if task is not None:
+                self._emit_event("task.updated", task, fields=sorted(changes.keys()))
+            return task
 
     def delete_task(self, task_id: str) -> bool:
         """Soft-delete a task (set status=cancelled).

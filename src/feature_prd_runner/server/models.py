@@ -330,6 +330,7 @@ class QuickRunRecord(BaseModel):
     status: str  # running, completed, failed
     started_at: str
     finished_at: Optional[str] = None
+    logs_ref: Optional[str] = None
     result_summary: Optional[str] = None
     error: Optional[str] = None
     promoted_task_id: Optional[str] = None

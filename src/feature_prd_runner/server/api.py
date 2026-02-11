@@ -1795,6 +1795,7 @@ Write the generated PRD to the file: {generated_prd_path}"""
             "status": "running",
             "started_at": started_at,
             "finished_at": None,
+            "logs_ref": f"/api/v2/quick-runs/{run_id}/events",
             "result_summary": None,
             "error": None,
             "promoted_task_id": None,

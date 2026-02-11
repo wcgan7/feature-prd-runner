@@ -108,6 +108,39 @@ class TestPrdImportApi:
         payload = resp.json()
         assert payload["created_count"] >= 3
 
+    async def test_import_controls_are_persisted_and_auto_ready_is_applied(self, client: AsyncClient) -> None:
+        preview_resp = await client.post(
+            "/api/v2/import/prd/preview",
+            json={
+                "prd_content": SAMPLE_PRD,
+                "granularity": "fine",
+                "auto_ready": True,
+                "max_parallelism_hint": 3,
+            },
+        )
+        assert preview_resp.status_code == 200
+        job_id = preview_resp.json()["job_id"]
+
+        commit_resp = await client.post(
+            "/api/v2/import/prd/commit",
+            json={
+                "job_id": job_id,
+                "auto_ready": True,
+                "granularity": "fine",
+                "max_parallelism_hint": 3,
+            },
+        )
+        assert commit_resp.status_code == 200
+
+        job_resp = await client.get(f"/api/v2/import/{job_id}")
+        assert job_resp.status_code == 200
+        job = job_resp.json()["job"]
+        assert job["request"]["granularity"] == "fine"
+        assert job["request"]["auto_ready"] is True
+        assert job["request"]["max_parallelism_hint"] == 3
+        assert job["result"]["initial_status"] == "ready"
+        assert job["result"]["auto_ready"] is True
+
     async def test_prd_import_executes_dependency_order_in_orchestrator(
         self,
         client: AsyncClient,

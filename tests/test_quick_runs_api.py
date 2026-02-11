@@ -43,6 +43,7 @@ class TestQuickRunPromotionFlow:
         quick_run_id = quick_run["id"]
         assert quick_payload["success"] is True
         assert quick_run["promoted_task_id"] is None
+        assert quick_run["logs_ref"] == f"/api/v2/quick-runs/{quick_run_id}/events"
 
         tasks_resp = await client.get("/api/v2/tasks")
         assert tasks_resp.status_code == 200
