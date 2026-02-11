@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { buildApiUrl, buildAuthHeaders } from '../api'
+import { useToast } from '../contexts/ToastContext'
+import './ControlPanel.css'
 
 interface Props {
   currentTaskId?: string
@@ -12,8 +14,8 @@ type ControlAction = 'retry' | 'skip' | 'resume' | 'stop'
 
 export default function ControlPanel({ currentTaskId, currentPhaseId, status, projectDir }: Props) {
   const [loading, setLoading] = useState<ControlAction | null>(null)
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [selectedStep, setSelectedStep] = useState('plan_impl')
+  const toast = useToast()
 
   const steps = [
     { value: 'plan_impl', label: 'Plan Implementation' },
@@ -25,12 +27,11 @@ export default function ControlPanel({ currentTaskId, currentPhaseId, status, pr
 
   const executeAction = async (action: ControlAction) => {
     if (!currentTaskId && action !== 'stop') {
-      setMessage({ type: 'error', text: 'No active task to control' })
+      toast.error('No active task to control')
       return
     }
 
     setLoading(action)
-    setMessage(null)
 
     try {
       const body: any = {
@@ -50,15 +51,12 @@ export default function ControlPanel({ currentTaskId, currentPhaseId, status, pr
       const data = await response.json()
 
       if (data.success) {
-        setMessage({ type: 'success', text: data.message || `${action} completed successfully` })
+        toast.success(data.message || `${action} completed successfully`)
       } else {
-        setMessage({ type: 'error', text: data.message || `${action} failed` })
+        toast.error(data.message || `${action} failed`)
       }
     } catch (err) {
-      setMessage({
-        type: 'error',
-        text: err instanceof Error ? err.message : 'Failed to execute action',
-      })
+      toast.error(err instanceof Error ? err.message : 'Failed to execute action')
     } finally {
       setLoading(null)
     }
@@ -70,56 +68,30 @@ export default function ControlPanel({ currentTaskId, currentPhaseId, status, pr
 
       {/* Status Display */}
       {currentTaskId && (
-        <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f5f5f5', borderRadius: '4px' }}>
-          <div style={{ fontSize: '0.875rem', color: '#666' }}>
+        <div className="control-panel-status">
+          <div className="control-panel-status-item">
             <strong>Current Task:</strong> {currentTaskId}
           </div>
           {currentPhaseId && (
-            <div style={{ fontSize: '0.875rem', color: '#666', marginTop: '0.25rem' }}>
+            <div className="control-panel-status-item">
               <strong>Phase:</strong> {currentPhaseId}
             </div>
           )}
           {status && (
-            <div style={{ fontSize: '0.875rem', color: '#666', marginTop: '0.25rem' }}>
+            <div className="control-panel-status-item">
               <strong>Status:</strong> {status}
             </div>
           )}
         </div>
       )}
 
-      {/* Message Display */}
-      {message && (
-        <div
-          style={{
-            padding: '0.75rem',
-            marginBottom: '1rem',
-            borderRadius: '4px',
-            backgroundColor: message.type === 'success' ? '#e8f5e9' : '#ffebee',
-            color: message.type === 'success' ? '#2e7d32' : '#c62828',
-            border: `1px solid ${message.type === 'success' ? '#4caf50' : '#f44336'}`,
-          }}
-        >
-          {message.text}
-        </div>
-      )}
-
       {/* Step Selector for Retry */}
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem', color: '#333' }}>
-          Retry from step:
-        </label>
+      <div className="control-panel-step-selector">
+        <label className="control-panel-label">Retry from step:</label>
         <select
           value={selectedStep}
           onChange={(e) => setSelectedStep(e.target.value)}
-          style={{
-            width: '100%',
-            padding: '0.5rem',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            backgroundColor: '#fff',
-            cursor: 'pointer',
-          }}
+          className="control-panel-select"
         >
           {steps.map((step) => (
             <option key={step.value} value={step.value}>
@@ -130,21 +102,11 @@ export default function ControlPanel({ currentTaskId, currentPhaseId, status, pr
       </div>
 
       {/* Control Buttons */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+      <div className="control-panel-buttons">
         <button
           onClick={() => executeAction('retry')}
           disabled={loading !== null || !currentTaskId}
-          style={{
-            padding: '0.75rem',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: loading !== null || !currentTaskId ? 'not-allowed' : 'pointer',
-            backgroundColor: loading === 'retry' ? '#1976d2' : '#2196f3',
-            color: '#fff',
-            opacity: loading !== null || !currentTaskId ? 0.6 : 1,
-          }}
+          className={`control-btn control-btn-retry ${loading === 'retry' ? 'loading' : ''}`}
         >
           {loading === 'retry' ? 'Retrying...' : 'Retry Task'}
         </button>
@@ -152,17 +114,7 @@ export default function ControlPanel({ currentTaskId, currentPhaseId, status, pr
         <button
           onClick={() => executeAction('skip')}
           disabled={loading !== null || !currentTaskId}
-          style={{
-            padding: '0.75rem',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: loading !== null || !currentTaskId ? 'not-allowed' : 'pointer',
-            backgroundColor: loading === 'skip' ? '#f57c00' : '#ff9800',
-            color: '#fff',
-            opacity: loading !== null || !currentTaskId ? 0.6 : 1,
-          }}
+          className={`control-btn control-btn-skip ${loading === 'skip' ? 'loading' : ''}`}
         >
           {loading === 'skip' ? 'Skipping...' : 'Skip Step'}
         </button>
@@ -170,17 +122,7 @@ export default function ControlPanel({ currentTaskId, currentPhaseId, status, pr
         <button
           onClick={() => executeAction('resume')}
           disabled={loading !== null || !currentTaskId}
-          style={{
-            padding: '0.75rem',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: loading !== null || !currentTaskId ? 'not-allowed' : 'pointer',
-            backgroundColor: loading === 'resume' ? '#388e3c' : '#4caf50',
-            color: '#fff',
-            opacity: loading !== null || !currentTaskId ? 0.6 : 1,
-          }}
+          className={`control-btn control-btn-resume ${loading === 'resume' ? 'loading' : ''}`}
         >
           {loading === 'resume' ? 'Resuming...' : 'Resume Task'}
         </button>
@@ -188,26 +130,16 @@ export default function ControlPanel({ currentTaskId, currentPhaseId, status, pr
         <button
           onClick={() => executeAction('stop')}
           disabled={loading !== null}
-          style={{
-            padding: '0.75rem',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: loading !== null ? 'not-allowed' : 'pointer',
-            backgroundColor: loading === 'stop' ? '#c62828' : '#f44336',
-            color: '#fff',
-            opacity: loading !== null ? 0.6 : 1,
-          }}
+          className={`control-btn control-btn-stop ${loading === 'stop' ? 'loading' : ''}`}
         >
           {loading === 'stop' ? 'Stopping...' : 'Stop Run'}
         </button>
       </div>
 
       {/* Help Text */}
-      <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#f5f5f5', borderRadius: '4px', fontSize: '0.75rem', color: '#666' }}>
+      <div className="control-panel-help">
         <strong>Controls:</strong>
-        <ul style={{ margin: '0.5rem 0 0 1.25rem', padding: 0 }}>
+        <ul>
           <li><strong>Retry:</strong> Restart task from selected step</li>
           <li><strong>Skip:</strong> Skip current step and move to next</li>
           <li><strong>Resume:</strong> Resume a blocked task</li>

@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { buildApiUrl, buildAuthHeaders } from '../api'
+import { useChannel } from '../contexts/WebSocketContext'
+import EmptyState from './EmptyState'
+import LoadingSpinner from './LoadingSpinner'
+import './RunsPanel.css'
 
 interface RunInfo {
   run_id: string
@@ -72,9 +76,11 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
 
   useEffect(() => {
     fetchRuns()
-    const interval = setInterval(fetchRuns, 10000)
-    return () => clearInterval(interval)
   }, [projectDir])
+
+  useChannel('runs', useCallback(() => {
+    fetchRuns()
+  }, [projectDir]))
 
   const fetchRuns = async () => {
     try {
@@ -119,86 +125,65 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
     <div className="card">
       <h2>Recent Runs</h2>
 
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button
-          onClick={fetchRuns}
-          style={{
-            padding: '0.5rem 0.75rem',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            background: '#f5f5f5',
-            cursor: 'pointer',
-          }}
-        >
+      <div className="runs-panel-header">
+        <button onClick={fetchRuns} className="runs-panel-btn">
           Refresh
         </button>
         {currentRunId && (
-          <div style={{ fontSize: '0.75rem', color: '#666' }}>
-            Active run: <span style={{ fontFamily: 'monospace' }}>{currentRunId}</span>
+          <div className="runs-panel-active-run">
+            Active run: <span className="runs-panel-active-run-id">{currentRunId}</span>
           </div>
         )}
       </div>
 
       {loading ? (
-        <div className="empty-state">
-          <p>Loading runs...</p>
-        </div>
+        <LoadingSpinner label="Loading runs..." />
       ) : error ? (
-        <div className="empty-state">
-          <p style={{ color: '#c62828' }}>Error: {error}</p>
-        </div>
+        <EmptyState
+          icon={<span>⚠️</span>}
+          title="Error loading runs"
+          description={error}
+          size="sm"
+        />
       ) : sortedRuns.length === 0 ? (
-        <div className="empty-state">
-          <p>No runs found</p>
-          <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-            Runs will appear after the first execution.
-          </p>
-        </div>
+        <EmptyState
+          icon={<span>🚀</span>}
+          title="No runs found"
+          description="Runs will appear after the first execution."
+          size="sm"
+        />
       ) : (
         <>
-          <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+          <div className="runs-panel-table-wrapper">
+            <table className="runs-panel-table">
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid #eee' }}>
-                  <th style={{ padding: '0.5rem' }}>Run</th>
-                  <th style={{ padding: '0.5rem' }}>Task</th>
-                  <th style={{ padding: '0.5rem' }}>Phase</th>
-                  <th style={{ padding: '0.5rem' }}>Step</th>
-                  <th style={{ padding: '0.5rem' }}>Status</th>
-                  <th style={{ padding: '0.5rem' }} />
+                <tr>
+                  <th>Run</th>
+                  <th>Task</th>
+                  <th>Phase</th>
+                  <th>Step</th>
+                  <th>Status</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
                 {sortedRuns.map((run) => (
                   <tr
                     key={run.run_id}
-                    style={{
-                      borderBottom: '1px solid #f5f5f5',
-                      background: run.run_id === currentRunId ? '#f1f8f4' : undefined,
-                    }}
+                    className={run.run_id === currentRunId ? 'active' : ''}
                   >
-                    <td style={{ padding: '0.5rem', fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                      {run.run_id}
-                    </td>
-                    <td style={{ padding: '0.5rem', color: '#666' }}>{run.task_id || '-'}</td>
-                    <td style={{ padding: '0.5rem', color: '#666' }}>{run.phase || '-'}</td>
-                    <td style={{ padding: '0.5rem', color: '#666' }}>{run.step || '-'}</td>
-                    <td style={{ padding: '0.5rem', color: '#666' }}>{run.status || '-'}</td>
-                    <td style={{ padding: '0.5rem' }}>
+                    <td className="runs-panel-table-id">{run.run_id}</td>
+                    <td>{run.task_id || '-'}</td>
+                    <td>{run.phase || '-'}</td>
+                    <td>{run.step || '-'}</td>
+                    <td>{run.status || '-'}</td>
+                    <td>
                       <button
                         onClick={() => {
                           setSelectedRunId(run.run_id)
                           void fetchRunDetail(run.run_id)
                         }}
-                        style={{
-                          padding: '0.25rem 0.5rem',
-                          border: '1px solid #ddd',
-                          borderRadius: '4px',
-                          fontSize: '0.75rem',
-                          background: '#fff',
-                          cursor: 'pointer',
-                        }}
+                        className="runs-panel-table-btn"
                       >
                         Details
                       </button>
@@ -210,31 +195,27 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
           </div>
 
           {selectedRunId && (
-            <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#f5f5f5', borderRadius: '6px' }}>
-              <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                Run Details
-              </div>
+            <div className="runs-panel-detail">
+              <div className="runs-panel-detail-title">Run Details</div>
               {detailError ? (
-                <div style={{ color: '#c62828', fontSize: '0.875rem' }}>Error: {detailError}</div>
+                <div className="runs-panel-detail-error">Error: {detailError}</div>
               ) : runDetail ? (
                 <>
-                  <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#333' }}>
-                    {runDetail.run_id}
-                  </div>
-                  <div style={{ fontSize: '0.875rem', color: '#666', marginTop: '0.25rem' }}>
+                  <div className="runs-panel-detail-id">{runDetail.run_id}</div>
+                  <div className="runs-panel-detail-status">
                     Status: <strong>{runDetail.status}</strong>
                   </div>
                   {runDetail.last_error && (
-                    <div style={{ fontSize: '0.875rem', color: '#c62828', marginTop: '0.5rem' }}>
+                    <div className="runs-panel-detail-last-error">
                       Last error: {runDetail.last_error}
                     </div>
                   )}
-                  <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.5rem' }}>
+                  <div className="runs-panel-detail-meta">
                     Current task: {runDetail.current_task_id || '-'} • Current phase: {runDetail.current_phase_id || '-'}
                   </div>
                 </>
               ) : (
-                <div style={{ fontSize: '0.875rem', color: '#666' }}>Loading...</div>
+                <div className="runs-panel-detail-loading">Loading...</div>
               )}
             </div>
           )}
@@ -243,4 +224,3 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
     </div>
   )
 }
-

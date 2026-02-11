@@ -23,7 +23,7 @@ describe('MetricsPanel', () => {
       }),
     })
 
-    render(<MetricsPanel status={null} />)
+    render(<MetricsPanel />)
 
     await waitFor(() => {
       expect(screen.getByText(/tokens/i)).toBeInTheDocument()

@@ -1,6 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import './ApprovalGate.css'
 import { buildApiUrl, buildAuthHeaders } from '../api'
+import { useChannel } from '../contexts/WebSocketContext'
+import { useToast } from '../contexts/ToastContext'
+import EmptyState from './EmptyState'
+import LoadingSpinner from './LoadingSpinner'
 
 interface ApprovalGateInfo {
   request_id: string
@@ -27,13 +31,15 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
   const [error, setError] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState<string | null>(null)
-  const [resultMessage, setResultMessage] = useState<string | null>(null)
+  const toast = useToast()
 
   useEffect(() => {
     fetchApprovals()
-    const interval = setInterval(fetchApprovals, 5000)
-    return () => clearInterval(interval)
   }, [projectDir])
+
+  useChannel('approvals', useCallback(() => {
+    fetchApprovals()
+  }, [projectDir]))
 
   const fetchApprovals = async () => {
     try {
@@ -55,7 +61,6 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
 
   const handleRespond = async (requestId: string, approved: boolean) => {
     setSubmitting(requestId)
-    setResultMessage(null)
 
     try {
       const response = await fetch(buildApiUrl('/api/approvals/respond', projectDir), {
@@ -72,8 +77,8 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
         throw new Error(`HTTP error ${response.status}`)
       }
 
-      const data = await response.json()
-      setResultMessage(data.message)
+      await response.json()
+      toast.success(approved ? 'Approved successfully' : 'Rejected successfully')
 
       // Clear feedback for this request
       setFeedback((prev) => {
@@ -85,9 +90,7 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
       // Refresh approvals
       await fetchApprovals()
     } catch (err) {
-      setResultMessage(
-        `Error: ${err instanceof Error ? err.message : 'Failed to respond'}`
-      )
+      toast.error(err instanceof Error ? err.message : 'Failed to respond')
     } finally {
       setSubmitting(null)
     }
@@ -167,7 +170,7 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
     return (
       <div className="approval-gate">
         <h2>Pending Approvals</h2>
-        <div className="loading">Loading approvals...</div>
+        <LoadingSpinner label="Loading approvals..." />
       </div>
     )
   }
@@ -176,7 +179,12 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
     return (
       <div className="approval-gate">
         <h2>Pending Approvals</h2>
-        <div className="error">Error: {error}</div>
+        <EmptyState
+          icon={<span>⚠️</span>}
+          title="Error loading approvals"
+          description={error}
+          size="sm"
+        />
       </div>
     )
   }
@@ -185,7 +193,12 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
     return (
       <div className="approval-gate">
         <h2>Pending Approvals</h2>
-        <div className="empty-state">No pending approvals</div>
+        <EmptyState
+          icon={<span>✓</span>}
+          title="No pending approvals"
+          description="All approval gates have been resolved."
+          size="sm"
+        />
       </div>
     )
   }
@@ -196,19 +209,6 @@ const ApprovalGate = ({ projectDir }: ApprovalGateProps) => {
         Pending Approvals
         <span className="approval-count">{approvals.length}</span>
       </h2>
-
-      {resultMessage && (
-        <div className="result-message">
-          {resultMessage}
-          <button
-            onClick={() => setResultMessage(null)}
-            className="close-btn"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
-      )}
 
       <div className="approvals-list">
         {approvals.map((approval) => (

@@ -1,5 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { buildApiUrl, buildAuthHeaders } from '../api'
+import { useChannel } from '../contexts/WebSocketContext'
+import EmptyState from './EmptyState'
+import LoadingSpinner from './LoadingSpinner'
 
 interface Phase {
   id: string
@@ -48,9 +51,11 @@ export default function PhaseTimeline({ projectDir }: Props) {
 
   useEffect(() => {
     fetchPhases()
-    const interval = setInterval(fetchPhases, 5000)
-    return () => clearInterval(interval)
   }, [projectDir])
+
+  useChannel('phases', useCallback(() => {
+    fetchPhases()
+  }, [projectDir]))
 
   const fetchPhases = async () => {
     try {
@@ -73,16 +78,14 @@ export default function PhaseTimeline({ projectDir }: Props) {
       <h2>Phase Timeline</h2>
 
       {loading ? (
-        <div className="empty-state">
-          <p>Loading phases...</p>
-        </div>
+        <LoadingSpinner label="Loading phases..." />
       ) : phases.length === 0 ? (
-        <div className="empty-state">
-          <p>No phases found</p>
-          <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-            Run the planner first to generate phases
-          </p>
-        </div>
+        <EmptyState
+          icon={<span>📋</span>}
+          title="No phases found"
+          description="Run the planner first to generate phases"
+          size="sm"
+        />
       ) : (
         <div className="phase-list">
           {phases.map((phase) => (
@@ -101,11 +104,7 @@ export default function PhaseTimeline({ projectDir }: Props) {
               )}
 
               {phase.deps && phase.deps.length > 0 && (
-                <div style={{
-                  fontSize: '0.75rem',
-                  color: '#999',
-                  marginTop: '0.5rem'
-                }}>
+                <div className="phase-dependencies">
                   Dependencies: {phase.deps.join(', ')}
                 </div>
               )}

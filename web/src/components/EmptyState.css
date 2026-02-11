@@ -1,0 +1,100 @@
+/* Empty State Component Styles */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--spacing-8);
+  color: var(--color-text-muted);
+}
+
+/* Size Variants */
+.empty-state-sm {
+  padding: var(--spacing-4);
+}
+
+.empty-state-sm .empty-state-icon {
+  width: 40px;
+  height: 40px;
+  font-size: var(--text-xl);
+  margin-bottom: var(--spacing-2);
+}
+
+.empty-state-sm .empty-state-title {
+  font-size: var(--text-sm);
+  margin-bottom: var(--spacing-1);
+}
+
+.empty-state-sm .empty-state-description {
+  font-size: var(--text-xs);
+}
+
+.empty-state-md {
+  padding: var(--spacing-8);
+}
+
+.empty-state-lg {
+  padding: var(--spacing-12);
+}
+
+.empty-state-lg .empty-state-icon {
+  width: 80px;
+  height: 80px;
+  font-size: var(--text-4xl);
+  margin-bottom: var(--spacing-6);
+}
+
+.empty-state-lg .empty-state-title {
+  font-size: var(--text-xl);
+  margin-bottom: var(--spacing-3);
+}
+
+.empty-state-lg .empty-state-description {
+  font-size: var(--text-base);
+}
+
+/* Icon */
+.empty-state-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+  margin-bottom: var(--spacing-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-2xl);
+}
+
+/* Title */
+.empty-state-title {
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-secondary);
+  margin: 0;
+  margin-bottom: var(--spacing-2);
+}
+
+/* Description */
+.empty-state-description {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+  max-width: 320px;
+  line-height: var(--leading-relaxed);
+}
+
+/* Action */
+.empty-state-action {
+  margin-top: var(--spacing-6);
+}
+
+/* Bordered variant (for use inside cards) */
+.empty-state-bordered {
+  border: 2px dashed var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+}

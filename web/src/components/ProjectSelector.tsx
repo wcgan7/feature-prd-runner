@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import './ProjectSelector.css'
 
 interface Project {
   name: string
@@ -48,55 +49,36 @@ export default function ProjectSelector({ currentProject, onProjectChange }: Pro
     return project ? project.name : currentProject.split('/').pop() || 'Unknown'
   }
 
-  const getStatusColor = (status: string): string => {
+  const getStatusClass = (status: string): string => {
     switch (status.toLowerCase()) {
       case 'active':
-        return '#2196f3'
+        return 'active'
       case 'idle':
-        return '#4caf50'
+        return 'idle'
       case 'error':
-        return '#f44336'
+        return 'error'
       default:
-        return '#9e9e9e'
+        return 'default'
     }
   }
 
   if (loading) {
-    return (
-      <div style={{ padding: '0.5rem', fontSize: '0.875rem', color: '#666' }}>
-        Loading projects...
-      </div>
-    )
+    return <div className="project-selector-loading">Loading projects...</div>
   }
 
   if (projects.length === 0) {
-    return (
-      <div style={{ padding: '0.5rem', fontSize: '0.875rem', color: '#666' }}>
-        No projects found
-      </div>
-    )
+    return <div className="project-selector-empty">No projects found</div>
   }
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div className="project-selector">
       <button
         onClick={() => setShowDropdown(!showDropdown)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          padding: '0.5rem 1rem',
-          background: '#fff',
-          border: '1px solid #ddd',
-          borderRadius: '4px',
-          cursor: 'pointer',
-          fontSize: '0.875rem',
-          fontWeight: 500,
-        }}
+        className="project-selector-trigger"
       >
-        <span style={{ fontSize: '1.25rem' }}>📁</span>
+        <span className="project-selector-icon">📁</span>
         <span>{getCurrentProjectName()}</span>
-        <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem' }}>▼</span>
+        <span className="project-selector-chevron">▼</span>
       </button>
 
       {showDropdown && (
@@ -104,104 +86,40 @@ export default function ProjectSelector({ currentProject, onProjectChange }: Pro
           {/* Backdrop */}
           <div
             onClick={() => setShowDropdown(false)}
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 999,
-            }}
+            className="project-selector-backdrop"
           />
 
           {/* Dropdown */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 'calc(100% + 4px)',
-              left: 0,
-              minWidth: '300px',
-              maxWidth: '500px',
-              background: '#fff',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              zIndex: 1000,
-              maxHeight: '400px',
-              overflowY: 'auto',
-            }}
-          >
+          <div className="project-selector-dropdown">
             {projects.map((project) => (
               <div
                 key={project.path}
                 onClick={() => handleProjectSelect(project.path)}
-                style={{
-                  padding: '0.75rem',
-                  borderBottom: '1px solid #f0f0f0',
-                  cursor: 'pointer',
-                  background: project.path === currentProject ? '#f5f5f5' : '#fff',
-                  transition: 'background 0.2s',
-                }}
-                onMouseEnter={(e) => {
-                  if (project.path !== currentProject) {
-                    e.currentTarget.style.background = '#fafafa'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background =
-                    project.path === currentProject ? '#f5f5f5' : '#fff'
-                }}
+                className={`project-item ${project.path === currentProject ? 'active' : ''}`}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                      <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>
-                        {project.name}
-                      </span>
+                <div className="project-item-content">
+                  <div className="project-item-main">
+                    <div className="project-item-header">
+                      <span className="project-item-name">{project.name}</span>
                       <div
-                        style={{
-                          width: '8px',
-                          height: '8px',
-                          borderRadius: '50%',
-                          background: getStatusColor(project.status),
-                        }}
+                        className={`project-item-status ${getStatusClass(project.status)}`}
                       />
                     </div>
-                    <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>
-                      {project.path}
-                    </div>
+                    <div className="project-item-path">{project.path}</div>
                     {project.phases_total > 0 && (
-                      <div style={{ fontSize: '0.75rem', color: '#666' }}>
+                      <div className="project-item-progress">
                         {project.phases_completed} / {project.phases_total} phases completed
                       </div>
                     )}
                   </div>
                   {project.path === currentProject && (
-                    <div
-                      style={{
-                        fontSize: '0.75rem',
-                        padding: '0.25rem 0.5rem',
-                        background: '#4caf50',
-                        color: '#fff',
-                        borderRadius: '4px',
-                      }}
-                    >
-                      Active
-                    </div>
+                    <div className="project-item-badge">Active</div>
                   )}
                 </div>
               </div>
             ))}
 
-            <div
-              style={{
-                padding: '0.75rem',
-                fontSize: '0.75rem',
-                color: '#666',
-                borderTop: '1px solid #e0e0e0',
-                background: '#fafafa',
-              }}
-            >
+            <div className="project-selector-footer">
               {projects.length} project{projects.length !== 1 ? 's' : ''} found
             </div>
           </div>

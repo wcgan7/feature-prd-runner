@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { ToastProvider } from '../contexts/ToastContext'
 import ApprovalGate from './ApprovalGate'
+
+const renderWithProvider = (ui: React.ReactElement) => {
+  return render(<ToastProvider>{ui}</ToastProvider>)
+}
 
 describe('ApprovalGate', () => {
   let user: ReturnType<typeof userEvent.setup>
@@ -12,7 +17,7 @@ describe('ApprovalGate', () => {
   })
 
   it('renders loading state initially', () => {
-    render(<ApprovalGate />)
+    renderWithProvider(<ApprovalGate />)
     expect(screen.getByText(/loading approvals/i)).toBeInTheDocument()
   })
 
@@ -22,7 +27,7 @@ describe('ApprovalGate', () => {
       json: async () => [],
     })
 
-    render(<ApprovalGate />)
+    renderWithProvider(<ApprovalGate />)
 
     await waitFor(() => {
       expect(screen.getByText(/no pending approvals/i)).toBeInTheDocument()
@@ -52,7 +57,7 @@ describe('ApprovalGate', () => {
       json: async () => mockApprovals,
     })
 
-    render(<ApprovalGate />)
+    renderWithProvider(<ApprovalGate />)
 
     await waitFor(() => {
       expect(screen.getByText(/review implementation plan/i)).toBeInTheDocument()
@@ -92,7 +97,7 @@ describe('ApprovalGate', () => {
       json: async () => mockApprovals,
     })
 
-    render(<ApprovalGate />)
+    renderWithProvider(<ApprovalGate />)
 
     await waitFor(() => {
       expect(screen.getByText('2')).toBeInTheDocument()
@@ -141,7 +146,7 @@ describe('ApprovalGate', () => {
       })
     })
 
-    render(<ApprovalGate />)
+    renderWithProvider(<ApprovalGate />)
 
     await waitFor(() => {
       expect(screen.getByText(/approve this/i)).toBeInTheDocument()
@@ -194,7 +199,7 @@ describe('ApprovalGate', () => {
       })
     })
 
-    render(<ApprovalGate />)
+    renderWithProvider(<ApprovalGate />)
 
     await waitFor(() => {
       expect(screen.getByText(/approve this/i)).toBeInTheDocument()
@@ -228,7 +233,7 @@ describe('ApprovalGate', () => {
       json: async () => mockApprovals,
     })
 
-    render(<ApprovalGate />)
+    renderWithProvider(<ApprovalGate />)
 
     await waitFor(() => {
       expect(screen.getByText(/approve this/i)).toBeInTheDocument()
@@ -243,10 +248,10 @@ describe('ApprovalGate', () => {
   it('displays error message on fetch failure', async () => {
     global.fetch = vi.fn().mockRejectedValueOnce(new Error('Network error'))
 
-    render(<ApprovalGate />)
+    renderWithProvider(<ApprovalGate />)
 
     await waitFor(() => {
-      expect(screen.getByText(/error/i)).toBeInTheDocument()
+      expect(screen.getByText(/error loading approvals/i)).toBeInTheDocument()
     })
   })
 
@@ -259,7 +264,7 @@ describe('ApprovalGate', () => {
       json: async () => [],
     })
 
-    render(<ApprovalGate />)
+    renderWithProvider(<ApprovalGate />)
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(

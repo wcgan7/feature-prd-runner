@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { buildApiUrl, buildAuthHeaders } from '../api'
+import { useChannel } from '../contexts/WebSocketContext'
+import EmptyState from './EmptyState'
+import LoadingSpinner from './LoadingSpinner'
+import './TasksPanel.css'
 
 interface TaskInfo {
   id: string
@@ -54,9 +58,11 @@ export default function TasksPanel({ projectDir, currentTaskId }: Props) {
 
   useEffect(() => {
     fetchTasks()
-    const interval = setInterval(fetchTasks, 5000)
-    return () => clearInterval(interval)
   }, [projectDir])
+
+  useChannel('tasks', useCallback(() => {
+    fetchTasks()
+  }, [projectDir]))
 
   const fetchTasks = async () => {
     try {
@@ -102,54 +108,38 @@ export default function TasksPanel({ projectDir, currentTaskId }: Props) {
     <div className="card">
       <h2>Tasks</h2>
 
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="tasks-panel-header">
         <input
           type="text"
           placeholder="Filter tasks..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          style={{
-            flex: 1,
-            minWidth: '200px',
-            padding: '0.5rem',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-          }}
+          className="tasks-panel-search"
         />
-        <button
-          onClick={fetchTasks}
-          style={{
-            padding: '0.5rem 0.75rem',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '0.875rem',
-            background: '#f5f5f5',
-            cursor: 'pointer',
-          }}
-        >
+        <button onClick={fetchTasks} className="tasks-panel-btn">
           Refresh
         </button>
       </div>
 
       {loading ? (
-        <div className="empty-state">
-          <p>Loading tasks...</p>
-        </div>
+        <LoadingSpinner label="Loading tasks..." />
       ) : error ? (
-        <div className="empty-state">
-          <p style={{ color: '#c62828' }}>Error: {error}</p>
-        </div>
+        <EmptyState
+          icon={<span>⚠️</span>}
+          title="Error loading tasks"
+          description={error}
+          size="sm"
+        />
       ) : tasks.length === 0 ? (
-        <div className="empty-state">
-          <p>No tasks found</p>
-          <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
-            Generate phases to create a task queue.
-          </p>
-        </div>
+        <EmptyState
+          icon={<span>📝</span>}
+          title="No tasks found"
+          description="Generate phases to create a task queue."
+          size="sm"
+        />
       ) : (
         <>
-          <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.75rem' }}>
+          <div className="tasks-panel-summary">
             Total: {tasks.length}
             {Object.keys(counts).length > 0 && (
               <>
@@ -161,38 +151,35 @@ export default function TasksPanel({ projectDir, currentTaskId }: Props) {
             )}
           </div>
 
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+          <div className="tasks-panel-table-wrapper">
+            <table className="tasks-panel-table">
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid #eee' }}>
-                  <th style={{ padding: '0.5rem' }}>Task</th>
-                  <th style={{ padding: '0.5rem' }}>Phase</th>
-                  <th style={{ padding: '0.5rem' }}>Step</th>
-                  <th style={{ padding: '0.5rem' }}>Lifecycle</th>
-                  <th style={{ padding: '0.5rem' }}>Attempts</th>
+                <tr>
+                  <th>Task</th>
+                  <th>Phase</th>
+                  <th>Step</th>
+                  <th>Lifecycle</th>
+                  <th>Attempts</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredTasks.map((task) => (
                   <tr
                     key={task.id}
-                    style={{
-                      borderBottom: '1px solid #f5f5f5',
-                      background: task.id === currentTaskId ? '#f0f7ff' : undefined,
-                    }}
+                    className={task.id === currentTaskId ? 'active' : ''}
                   >
-                    <td style={{ padding: '0.5rem', fontWeight: 600 }}>
-                      {task.id}
+                    <td>
+                      <span className="tasks-panel-task-id">{task.id}</span>
                       {task.last_error && (
-                        <div style={{ fontSize: '0.75rem', color: '#c62828', marginTop: '0.25rem' }}>
+                        <div className="tasks-panel-task-error">
                           {task.last_error}
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: '0.5rem', color: '#666' }}>{task.phase_id || '-'}</td>
-                    <td style={{ padding: '0.5rem', color: '#666' }}>{task.step || '-'}</td>
-                    <td style={{ padding: '0.5rem', color: '#666' }}>{task.lifecycle || '-'}</td>
-                    <td style={{ padding: '0.5rem', color: '#666' }}>{task.worker_attempts}</td>
+                    <td>{task.phase_id || '-'}</td>
+                    <td>{task.step || '-'}</td>
+                    <td>{task.lifecycle || '-'}</td>
+                    <td>{task.worker_attempts}</td>
                   </tr>
                 ))}
               </tbody>
@@ -203,4 +190,3 @@ export default function TasksPanel({ projectDir, currentTaskId }: Props) {
     </div>
   )
 }
-

@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { buildApiUrl, buildAuthHeaders } from '../api'
+import { useChannel } from '../contexts/WebSocketContext'
+import './MetricsChart.css'
 
 interface RunMetrics {
   tokens_used: number
@@ -45,9 +47,11 @@ export default function MetricsChart({ projectDir }: Props) {
 
   useEffect(() => {
     fetchMetrics()
-    const interval = setInterval(fetchMetrics, 10000) // Poll every 10 seconds
-    return () => clearInterval(interval)
   }, [projectDir])
+
+  useChannel('metrics', useCallback(() => {
+    fetchMetrics()
+  }, [projectDir]))
 
   const fetchMetrics = async () => {
     try {
@@ -79,7 +83,7 @@ export default function MetricsChart({ projectDir }: Props) {
         <h2>Metrics Visualization</h2>
         <div className="empty-state">
           <p>No metrics data available for visualization</p>
-          <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
+          <p className="metrics-chart-empty-subtitle">
             Charts will appear once runs generate metrics
           </p>
         </div>
@@ -92,12 +96,12 @@ export default function MetricsChart({ projectDir }: Props) {
     {
       name: 'Added',
       lines: metrics.lines_added,
-      fill: '#4caf50',
+      fill: '#22c55e',
     },
     {
       name: 'Removed',
       lines: metrics.lines_removed,
-      fill: '#f44336',
+      fill: '#ef4444',
     },
   ]
 
@@ -106,12 +110,12 @@ export default function MetricsChart({ projectDir }: Props) {
     {
       name: 'Completed',
       value: metrics.phases_completed,
-      fill: '#4caf50',
+      fill: '#22c55e',
     },
     {
       name: 'Remaining',
       value: metrics.phases_total - metrics.phases_completed,
-      fill: '#e0e0e0',
+      fill: '#e5e7eb',
     },
   ]
 
@@ -142,19 +146,17 @@ export default function MetricsChart({ projectDir }: Props) {
     return `${secs}s`
   }
 
-  const COLORS = ['#4caf50', '#e0e0e0']
+  const COLORS = ['#22c55e', '#e5e7eb']
 
   return (
     <div className="card">
       <h2>Metrics Visualization</h2>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', marginTop: '1rem' }}>
+      <div className="metrics-chart-container">
         {/* Phase Progress Pie Chart */}
         {metrics.phases_total > 0 && (
-          <div>
-            <h3 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem', color: '#666' }}>
-              Phase Progress
-            </h3>
+          <div className="metrics-chart-section">
+            <h3>Phase Progress</h3>
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie
@@ -167,14 +169,14 @@ export default function MetricsChart({ projectDir }: Props) {
                   fill="#8884d8"
                   dataKey="value"
                 >
-                  {phaseProgressData.map((entry, index) => (
+                  {phaseProgressData.map((_entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
                 <Tooltip />
               </PieChart>
             </ResponsiveContainer>
-            <div style={{ textAlign: 'center', marginTop: '0.5rem', fontSize: '0.875rem', color: '#666' }}>
+            <div className="metrics-chart-caption">
               {metrics.phases_completed} of {metrics.phases_total} phases completed
             </div>
           </div>
@@ -182,10 +184,8 @@ export default function MetricsChart({ projectDir }: Props) {
 
         {/* Code Changes Bar Chart */}
         {(metrics.lines_added > 0 || metrics.lines_removed > 0) && (
-          <div>
-            <h3 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem', color: '#666' }}>
-              Code Changes
-            </h3>
+          <div className="metrics-chart-section">
+            <h3>Code Changes</h3>
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={codeChangesData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -205,10 +205,8 @@ export default function MetricsChart({ projectDir }: Props) {
 
         {/* Usage Metrics Bar Chart */}
         {metrics.api_calls > 0 && (
-          <div>
-            <h3 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem', color: '#666' }}>
-              Usage Metrics
-            </h3>
+          <div className="metrics-chart-section">
+            <h3>Usage Metrics</h3>
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={usageData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -216,32 +214,32 @@ export default function MetricsChart({ projectDir }: Props) {
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="value" fill="#2196f3" />
+                <Bar dataKey="value" fill="#3b82f6" />
               </BarChart>
             </ResponsiveContainer>
           </div>
         )}
 
         {/* Summary Stats */}
-        <div style={{ padding: '1rem', background: '#f5f5f5', borderRadius: '4px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1rem' }}>
+        <div className="metrics-summary">
+          <div className="metrics-summary-grid">
             <div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#333' }}>
+              <div className="metrics-summary-item-value">
                 ${metrics.estimated_cost_usd.toFixed(2)}
               </div>
-              <div style={{ fontSize: '0.75rem', color: '#666' }}>Estimated Cost</div>
+              <div className="metrics-summary-item-label">Estimated Cost</div>
             </div>
             <div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#333' }}>
+              <div className="metrics-summary-item-value">
                 {formatTime(metrics.wall_time_seconds)}
               </div>
-              <div style={{ fontSize: '0.75rem', color: '#666' }}>Wall Time</div>
+              <div className="metrics-summary-item-label">Wall Time</div>
             </div>
             <div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#333' }}>
+              <div className="metrics-summary-item-value">
                 {metrics.files_changed}
               </div>
-              <div style={{ fontSize: '0.75rem', color: '#666' }}>Files Changed</div>
+              <div className="metrics-summary-item-label">Files Changed</div>
             </div>
           </div>
         </div>
