@@ -10,6 +10,8 @@ describe('Integration Tests', () => {
     vi.clearAllMocks()
     // Reset localStorage
     global.localStorage.clear()
+    // Integration flows in this suite validate execution-surface components.
+    global.localStorage.setItem('feature-prd-runner-view', 'execution')
     user = userEvent.setup()
   })
 

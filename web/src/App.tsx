@@ -95,6 +95,7 @@ const STORAGE_KEY_TOKEN = 'feature-prd-runner-auth-token'
 const STORAGE_KEY_USERNAME = 'feature-prd-runner-username'
 const STORAGE_KEY_VIEW = 'feature-prd-runner-view'
 const STORAGE_KEY_TASK_TAB = 'feature-prd-runner-task-tab'
+const STORAGE_KEY_VIEW_MIGRATION = 'feature-prd-runner-view-default-v2'
 
 const navSections: AppNavSection[] = [
   { id: 'overview', label: 'Overview', description: 'Current run health and priorities' },
@@ -103,6 +104,12 @@ const navSections: AppNavSection[] = [
   { id: 'agents', label: 'Agents', description: 'Agent orchestration and worker capacity' },
   { id: 'diagnostics', label: 'Diagnostics', description: 'Dry-run, doctor, cost, and metrics' },
 ]
+
+const cockpitViews: CockpitView[] = ['overview', 'execution', 'tasks', 'agents', 'diagnostics']
+
+function isCockpitView(value: string | null): value is CockpitView {
+  return value !== null && cockpitViews.includes(value as CockpitView)
+}
 
 const dashboardLayoutConfig: DashboardLayoutConfig = {
   now: ['run_dashboard', 'approval_gate', 'file_review'],
@@ -324,7 +331,12 @@ function AppContent() {
   const [currentProject, setCurrentProject] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY_PROJECT))
   const [activeView, setActiveView] = useState<CockpitView>(() => {
     const stored = localStorage.getItem(STORAGE_KEY_VIEW) as CockpitView | null
-    return stored || 'overview'
+    if (stored === 'overview' && !localStorage.getItem(STORAGE_KEY_VIEW_MIGRATION)) {
+      localStorage.setItem(STORAGE_KEY_VIEW_MIGRATION, '1')
+      return 'tasks'
+    }
+    if (isCockpitView(stored)) return stored
+    return 'tasks'
   })
   const [taskTab, setTaskTab] = useState<TaskDetailTab>(() => {
     const stored = localStorage.getItem(STORAGE_KEY_TASK_TAB) as TaskDetailTab | null
@@ -566,14 +578,17 @@ function AppContent() {
       <ViewGuide
         title="Execution workflow"
         steps={[
-          'Start a run with Launch New Run.',
-          'Use Run Control for retry/skip/resume/stop.',
-          'Watch Live Log and resolve approvals or breakpoints.',
+          'Check Run Snapshot first to see current run state and blockers.',
+          'Use Run Controls to retry, skip, resume, or stop.',
+          'Use Queue Monitor and Live Log to track active execution.',
         ]}
       />
-      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1.5}>
-        <Typography variant="h5">Execution</Typography>
-        <Stack direction="row" spacing={1}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1.5} useFlexGap flexWrap="wrap">
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Typography variant="h5">Execution</Typography>
+          <Chip size="small" variant="outlined" color={statusSummary.color} label={statusSummary.label} />
+        </Stack>
+        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
           <Button
             variant={panelState.showLauncher ? 'outlined' : 'contained'}
             onClick={() => setPanelState((prev) => ({ ...prev, showLauncher: !prev.showLauncher }))}
@@ -597,23 +612,58 @@ function AppContent() {
         </Card>
       )}
 
+      <Card>
+        <CardContent>
+          <Typography variant="h6" sx={{ mb: 1.5 }}>Run Snapshot</Typography>
+          <RunDashboard status={status} />
+        </CardContent>
+      </Card>
+
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: panelState.showLiveLog ? 8 : 12 }}>
           <Stack spacing={2}>
             <Card>
               <CardContent>
+                <Typography variant="h6" sx={{ mb: 1.5 }}>Run Controls</Typography>
                 <ControlPanel
                   currentTaskId={status?.current_task_id}
                   currentPhaseId={status?.current_phase_id}
                   status={status?.status}
                   projectDir={currentProject || undefined}
                 />
-                <Divider sx={{ my: 2 }} />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" sx={{ mb: 1.5 }}>Approvals and Review</Typography>
                 <ApprovalGate projectDir={currentProject || undefined} />
                 <Divider sx={{ my: 2 }} />
                 <FileReview taskId={status?.current_task_id} projectDir={currentProject || undefined} />
-                <Divider sx={{ my: 2 }} />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" sx={{ mb: 1.5 }}>Breakpoints</Typography>
                 <BreakpointsPanel projectDir={currentProject || undefined} />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" sx={{ mb: 1.5 }}>Queue Monitor</Typography>
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, xl: 6 }}>
+                    <TasksPanel
+                      projectDir={currentProject || undefined}
+                      currentTaskId={status?.current_task_id}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, xl: 6 }}>
+                    <RunsPanel
+                      projectDir={currentProject || undefined}
+                      currentRunId={status?.run_id}
+                    />
+                  </Grid>
+                </Grid>
               </CardContent>
             </Card>
           </Stack>
