@@ -1,4 +1,4 @@
-import './LoadingSpinner.css'
+import { Box, CircularProgress, Typography } from '@mui/material'
 
 interface Props {
   size?: 'sm' | 'md' | 'lg'
@@ -7,16 +7,20 @@ interface Props {
 }
 
 export default function LoadingSpinner({ size = 'md', className = '', label }: Props) {
-  const sizeClass = {
-    sm: 'loading-spinner-sm',
-    md: '',
-    lg: 'loading-spinner-lg',
+  const sizeValue = {
+    sm: 16,
+    md: 24,
+    lg: 40,
   }[size]
 
   return (
-    <div className={`loading-spinner-container ${className}`}>
-      <div className={`loading-spinner ${sizeClass}`} role="status" aria-label={label || 'Loading'} />
-      {label && <span className="loading-spinner-label">{label}</span>}
-    </div>
+    <Box className={className} sx={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+      <CircularProgress size={sizeValue} thickness={4} role="status" aria-label={label || 'Loading'} />
+      {label && (
+        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+          {label}
+        </Typography>
+      )}
+    </Box>
   )
 }

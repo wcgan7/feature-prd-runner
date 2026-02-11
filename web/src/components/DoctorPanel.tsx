@@ -1,6 +1,6 @@
 import { useState } from 'react'
+import { Alert, Box, Button, Chip, Paper, Stack, Typography } from '@mui/material'
 import { fetchDoctor } from '../api'
-import './DoctorPanel.css'
 
 interface Props {
   projectDir?: string
@@ -38,51 +38,98 @@ export default function DoctorPanel({ projectDir }: Props) {
   }
 
   return (
-    <div className="card doctor-panel">
-      <div className="doctor-trigger">
-        <h2>System Check</h2>
-        <button className="btn btn-primary" onClick={handleDoctor} disabled={loading}>
+    <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
+      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6">System Check</Typography>
+        <Button variant="contained" onClick={handleDoctor} disabled={loading} size="small">
           {loading ? 'Checking...' : 'Run Doctor'}
-        </button>
-      </div>
+        </Button>
+      </Box>
 
-      {error && <div className="doctor-messages errors"><p>{error}</p></div>}
+      {error && <Alert severity="error">{error}</Alert>}
 
       {result && (
         <>
-          <div className="doctor-checks">
+          <Stack spacing={1}>
             {Object.entries(result.checks).map(([name, check]) => (
-              <div className="doctor-check" key={name}>
-                <span className={`doctor-check-icon ${check.status}`}>
+              <Box
+                key={name}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1.5,
+                  p: 1,
+                  borderRadius: 1,
+                  fontSize: '0.85rem',
+                  bgcolor: 'action.hover',
+                  border: 1,
+                  borderColor: 'divider',
+                }}
+              >
+                <Box
+                  sx={{
+                    fontSize: '1rem',
+                    flexShrink: 0,
+                    color: {
+                      pass: 'success.main',
+                      fail: 'error.main',
+                      skip: 'text.disabled',
+                    }[check.status] || 'text.primary',
+                  }}
+                >
                   {STATUS_ICON[check.status] || '?'}
-                </span>
-                <span className="doctor-check-name">{name}</span>
-                <span className="doctor-check-detail">
+                </Box>
+                <Typography variant="body2" sx={{ fontWeight: 500, minWidth: 100 }}>
+                  {name}
+                </Typography>
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                   {check.path || check.command || check.reason || ''}
-                </span>
-              </div>
+                </Typography>
+              </Box>
             ))}
-          </div>
+          </Stack>
 
           {result.warnings.length > 0 && (
-            <div className="doctor-messages warnings">
-              <h4>Warnings</h4>
-              <ul>{result.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
-            </div>
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                Warnings
+              </Typography>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                {result.warnings.map((w, i) => (
+                  <li key={i}>
+                    <Typography variant="body2" sx={{ color: 'warning.dark' }}>
+                      {w}
+                    </Typography>
+                  </li>
+                ))}
+              </ul>
+            </Box>
           )}
 
           {result.errors.length > 0 && (
-            <div className="doctor-messages errors">
-              <h4>Errors</h4>
-              <ul>{result.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
-            </div>
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                Errors
+              </Typography>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                {result.errors.map((e, i) => (
+                  <li key={i}>
+                    <Typography variant="body2" sx={{ color: 'error.main' }}>
+                      {e}
+                    </Typography>
+                  </li>
+                ))}
+              </ul>
+            </Box>
           )}
 
-          <div className={`doctor-summary ${result.exit_code === 0 ? 'pass' : 'fail'}`}>
-            {result.exit_code === 0 ? 'All checks passed' : `${result.errors.length} error(s) found`}
-          </div>
+          <Chip
+            label={result.exit_code === 0 ? 'All checks passed' : `${result.errors.length} error(s) found`}
+            color={result.exit_code === 0 ? 'success' : 'error'}
+            sx={{ mt: 2, borderRadius: 1 }}
+          />
         </>
       )}
-    </div>
+    </Paper>
   )
 }

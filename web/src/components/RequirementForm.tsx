@@ -1,6 +1,6 @@
 import { useState } from 'react'
+import { Alert, Box, Button, MenuItem, Paper, TextField, Typography } from '@mui/material'
 import { sendRequirement } from '../api'
-import './RequirementForm.css'
 
 interface Props {
   projectDir?: string
@@ -37,37 +37,60 @@ export default function RequirementForm({ projectDir, onSent }: Props) {
   }
 
   return (
-    <form className="requirement-form" onSubmit={handleSubmit}>
-      <h4>Add Requirement</h4>
-      <textarea
+    <Paper
+      component="form"
+      onSubmit={handleSubmit}
+      variant="outlined"
+      sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 1.5, mb: 1 }}
+    >
+      <Typography variant="subtitle2" sx={{ color: 'primary.main', fontWeight: 600 }}>
+        Add Requirement
+      </Typography>
+
+      <TextField
         value={requirement}
         onChange={(e) => setRequirement(e.target.value)}
         placeholder="Describe the requirement..."
         disabled={sending}
+        multiline
+        minRows={3}
+        size="small"
       />
-      <div className="requirement-form-row">
-        <input
+
+      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+        <TextField
           value={taskId}
           onChange={(e) => setTaskId(e.target.value)}
           placeholder="Task ID (optional)"
           disabled={sending}
+          size="small"
+          fullWidth
         />
-        <select
+        <TextField
+          select
           value={priority}
           onChange={(e) => setPriority(e.target.value as any)}
           disabled={sending}
+          size="small"
+          sx={{ minWidth: 128 }}
         >
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
-      </div>
-      {error && <div style={{ color: '#dc2626', fontSize: '0.8rem' }}>{error}</div>}
-      <div className="requirement-form-actions">
-        <button type="submit" className="btn-send" disabled={!requirement.trim() || sending}>
+          <MenuItem value="high">High</MenuItem>
+          <MenuItem value="medium">Medium</MenuItem>
+          <MenuItem value="low">Low</MenuItem>
+        </TextField>
+      </Box>
+
+      {error && (
+        <Alert severity="error" sx={{ py: 0 }}>
+          {error}
+        </Alert>
+      )}
+
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button type="submit" variant="contained" disabled={!requirement.trim() || sending} size="small">
           {sending ? 'Sending...' : 'Add Requirement'}
-        </button>
-      </div>
-    </form>
+        </Button>
+      </Box>
+    </Paper>
   )
 }

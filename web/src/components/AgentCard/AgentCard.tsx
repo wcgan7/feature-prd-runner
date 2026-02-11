@@ -3,11 +3,21 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../../api'
 import { useChannel } from '../../contexts/WebSocketContext'
 import { AgentStream } from './AgentStream'
 import { AgentControls } from './AgentControls'
-import './AgentCard.css'
 
 interface AgentData {
   id: string
@@ -130,83 +140,112 @@ export default function AgentPanel({ projectDir }: Props) {
   }
 
   return (
-    <div className="agent-panel">
-      <div className="agent-panel-header">
-        <div className="agent-panel-title-group">
-          <h2 className="agent-panel-title">Agents</h2>
-          <span className="agent-panel-stats">
+    <Box sx={{ p: 2 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+        <Stack direction="row" spacing={1} alignItems="baseline">
+          <Typography variant="h5">Agents</Typography>
+          <Typography variant="body2" color="text.secondary">
             {activeCount} active, {idleCount} idle
-          </span>
-        </div>
-        <button className="agent-spawn-btn" onClick={() => setShowSpawn(!showSpawn)}>
-          + Spawn Agent
-        </button>
-      </div>
+          </Typography>
+        </Stack>
+        <Button variant="contained" onClick={() => setShowSpawn(!showSpawn)}>
+          Spawn Agent
+        </Button>
+      </Stack>
 
       {showSpawn && (
-        <div className="agent-spawn-form">
-          <select
-            className="agent-spawn-select"
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mb: 2, p: 1.5, bgcolor: 'background.default', borderRadius: 2 }}>
+          <TextField
+            select
+            size="small"
             value={spawnRole}
             onChange={(e) => setSpawnRole(e.target.value)}
+            sx={{ minWidth: 220 }}
           >
             {agentTypes.map(t => (
-              <option key={t.role} value={t.role}>{t.display_name}</option>
+              <MenuItem key={t.role} value={t.role}>{t.display_name}</MenuItem>
             ))}
-          </select>
-          <button className="agent-spawn-confirm" onClick={handleSpawn}>Spawn</button>
-          <button className="agent-spawn-cancel" onClick={() => setShowSpawn(false)}>Cancel</button>
-        </div>
+          </TextField>
+          <Button variant="contained" color="success" onClick={handleSpawn}>Spawn</Button>
+          <Button variant="outlined" onClick={() => setShowSpawn(false)}>Cancel</Button>
+        </Stack>
       )}
 
-      <div className="agent-cards">
+      <Stack spacing={1}>
         {agents.length === 0 ? (
-          <div className="agent-empty">No agents running. Spawn one to get started.</div>
+          <Typography variant="body2" color="text.secondary" sx={{ py: 6, textAlign: 'center' }}>
+            No agents running. Spawn one to get started.
+          </Typography>
         ) : (
           agents.map(agent => (
-            <div key={agent.id} className={`agent-card status-${agent.status}`}>
-              <div className="agent-card-header" onClick={() => setExpandedAgent(
-                expandedAgent === agent.id ? null : agent.id
-              )}>
-                <span className={`agent-status-dot status-${agent.status}`}>
+            <Card
+              key={agent.id}
+              variant="outlined"
+              sx={{
+                borderLeft: '3px solid',
+                borderLeftColor: (() => {
+                  switch (agent.status) {
+                    case 'running': return 'success.main'
+                    case 'paused': return 'warning.main'
+                    case 'failed': return 'error.main'
+                    case 'idle': return 'text.disabled'
+                    default: return 'divider'
+                  }
+                })(),
+                opacity: agent.status === 'terminated' ? 0.7 : 1,
+              }}
+            >
+              <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{ cursor: 'pointer' }}
+                  onClick={() => setExpandedAgent(expandedAgent === agent.id ? null : agent.id)}
+                >
+                  <Box sx={{ minWidth: 18, textAlign: 'center', fontSize: '0.75rem' }}>
                   {statusIcon(agent.status)}
-                </span>
-                <div className="agent-card-info">
-                  <span className="agent-card-name">{agent.display_name}</span>
-                  <span className="agent-card-role">{agent.agent_type}</span>
-                </div>
-                <div className="agent-card-meta">
+                  </Box>
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{agent.display_name}</Typography>
+                    <Typography variant="caption" color="text.secondary">{agent.agent_type}</Typography>
+                  </Box>
+                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ ml: 1, flex: 1 }}>
                   {agent.task_id && (
-                    <span className="agent-card-task">{agent.task_id.slice(-8)}</span>
+                    <Chip size="small" label={agent.task_id.slice(-8)} sx={{ fontFamily: '"IBM Plex Mono", monospace' }} />
                   )}
                   {agent.current_step && (
-                    <span className="agent-card-step">{agent.current_step}</span>
+                    <Chip size="small" variant="outlined" label={agent.current_step} />
                   )}
-                </div>
-                <div className="agent-card-stats">
-                  <span className="agent-stat" title="Tokens">{(agent.tokens_used / 1000).toFixed(0)}k</span>
-                  <span className="agent-stat" title="Cost">${agent.cost_usd.toFixed(2)}</span>
-                </div>
-              </div>
+                  </Stack>
+                  <Stack direction="row" spacing={1}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontFamily: '"IBM Plex Mono", monospace' }} title="Tokens">
+                      {(agent.tokens_used / 1000).toFixed(0)}k
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontFamily: '"IBM Plex Mono", monospace' }} title="Cost">
+                      ${agent.cost_usd.toFixed(2)}
+                    </Typography>
+                  </Stack>
+                </Stack>
 
-              {expandedAgent === agent.id && (
-                <div className="agent-card-expanded">
+                {expandedAgent === agent.id && (
+                  <Box sx={{ mt: 1.25, pt: 1.25, borderTop: 1, borderColor: 'divider' }}>
                   {agent.current_file && (
-                    <div className="agent-detail-row">
-                      <span className="agent-detail-label">File:</span>
-                      <code className="agent-detail-value">{agent.current_file}</code>
-                    </div>
+                    <Stack direction="row" spacing={1} sx={{ mb: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ minWidth: 60 }}>File:</Typography>
+                      <Typography component="code" variant="body2">{agent.current_file}</Typography>
+                    </Stack>
                   )}
-                  <div className="agent-detail-row">
-                    <span className="agent-detail-label">Runtime:</span>
-                    <span className="agent-detail-value">
+                  <Stack direction="row" spacing={1} sx={{ mb: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ minWidth: 60 }}>Runtime:</Typography>
+                    <Typography variant="body2">
                       {Math.floor(agent.elapsed_seconds / 60)}m {Math.floor(agent.elapsed_seconds % 60)}s
-                    </span>
-                  </div>
-                  <div className="agent-detail-row">
-                    <span className="agent-detail-label">Retries:</span>
-                    <span className="agent-detail-value">{agent.retries}</span>
-                  </div>
+                    </Typography>
+                  </Stack>
+                  <Stack direction="row" spacing={1} sx={{ mb: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ minWidth: 60 }}>Retries:</Typography>
+                    <Typography variant="body2">{agent.retries}</Typography>
+                  </Stack>
 
                   <AgentStream outputTail={agent.output_tail} />
 
@@ -215,12 +254,13 @@ export default function AgentPanel({ projectDir }: Props) {
                     status={agent.status}
                     onAction={handleAction}
                   />
-                </div>
-              )}
-            </div>
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
           ))
         )}
-      </div>
-    </div>
+      </Stack>
+    </Box>
   )
 }

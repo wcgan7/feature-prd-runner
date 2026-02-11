@@ -3,15 +3,15 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { Box, Card, Chip, Stack, Typography } from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../../api'
-import './ActivityTimeline.css'
 
 interface ActivityEvent {
   id: string
-  type: string        // status_change | agent_output | feedback | comment | file_change
+  type: string
   timestamp: string
-  actor: string       // username or agent_id
-  actor_type: string  // "human" | "agent" | "system"
+  actor: string
+  actor_type: string
   summary: string
   details?: string
   metadata?: Record<string, any>
@@ -34,6 +34,12 @@ const EVENT_ICONS: Record<string, string> = {
   assignment: '\u{1F464}',
 }
 
+const ACTOR_COLORS: Record<string, string> = {
+  human: '#2563eb',
+  agent: '#7c3aed',
+  system: '#6b7280',
+}
+
 export default function ActivityTimeline({ taskId, projectDir }: Props) {
   const [events, setEvents] = useState<ActivityEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -41,7 +47,6 @@ export default function ActivityTimeline({ taskId, projectDir }: Props) {
 
   const fetchActivity = useCallback(async () => {
     try {
-      // Use unified timeline API endpoint
       const resp = await fetch(
         buildApiUrl(`/api/v2/collaboration/timeline/${taskId}`, projectDir),
         { headers: buildAuthHeaders() }
@@ -63,44 +68,86 @@ export default function ActivityTimeline({ taskId, projectDir }: Props) {
   }, [fetchActivity])
 
   if (loading) {
-    return <div className="timeline-loading">Loading activity...</div>
+    return <Typography className="timeline-loading" color="text.secondary">Loading activity...</Typography>
   }
 
   return (
-    <div className="activity-timeline">
-      <h3 className="timeline-title">Activity</h3>
+    <Box className="activity-timeline" sx={{ p: 1.5 }}>
+      <Typography className="timeline-title" variant="h6" sx={{ fontSize: '1rem', mb: 1.5 }}>
+        Activity
+      </Typography>
+
       {events.length === 0 ? (
-        <div className="timeline-empty">No activity recorded yet.</div>
+        <Typography className="timeline-empty" color="text.secondary">No activity recorded yet.</Typography>
       ) : (
-        <div className="timeline-events">
+        <Stack className="timeline-events" spacing={1}>
           {events.map(event => (
-            <div
+            <Card
               key={event.id}
               className={`timeline-event actor-${event.actor_type}`}
+              variant="outlined"
               onClick={() => setExpandedEvent(expandedEvent === event.id ? null : event.id)}
+              sx={{
+                p: 1,
+                cursor: 'pointer',
+                borderLeft: '3px solid',
+                borderLeftColor: ACTOR_COLORS[event.actor_type] || 'divider',
+              }}
             >
-              <div className="timeline-event-dot">
-                <span className="timeline-event-icon">
-                  {EVENT_ICONS[event.type] || '\u2022'}
-                </span>
-              </div>
-              <div className="timeline-event-content">
-                <div className="timeline-event-header">
-                  <span className="timeline-event-actor">{event.actor}</span>
-                  <span className={`timeline-event-type type-${event.type}`}>{event.type.replace('_', ' ')}</span>
-                  <span className="timeline-event-time">
-                    {new Date(event.timestamp).toLocaleTimeString()}
-                  </span>
-                </div>
-                <div className="timeline-event-summary">{event.summary}</div>
-                {expandedEvent === event.id && event.details && (
-                  <div className="timeline-event-details">{event.details}</div>
-                )}
-              </div>
-            </div>
+              <Stack direction="row" spacing={1} alignItems="flex-start">
+                <Box
+                  className="timeline-event-dot"
+                  sx={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: '50%',
+                    bgcolor: 'background.default',
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                    mt: 0.25,
+                  }}
+                >
+                  <Typography className="timeline-event-icon" variant="caption">
+                    {EVENT_ICONS[event.type] || '\u2022'}
+                  </Typography>
+                </Box>
+
+                <Box className="timeline-event-content" sx={{ minWidth: 0, flex: 1 }}>
+                  <Stack className="timeline-event-header" direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
+                    <Typography className="timeline-event-actor" variant="caption" sx={{ fontWeight: 700 }}>
+                      {event.actor}
+                    </Typography>
+                    <Chip
+                      className={`timeline-event-type type-${event.type}`}
+                      label={event.type.replace('_', ' ')}
+                      size="small"
+                      variant="outlined"
+                      sx={{ height: 20, textTransform: 'capitalize' }}
+                    />
+                    <Typography className="timeline-event-time" variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                      {new Date(event.timestamp).toLocaleTimeString()}
+                    </Typography>
+                  </Stack>
+
+                  <Typography className="timeline-event-summary" variant="body2" sx={{ mt: 0.5 }}>
+                    {event.summary}
+                  </Typography>
+
+                  {expandedEvent === event.id && event.details && (
+                    <Typography className="timeline-event-details" variant="body2" color="text.secondary" sx={{ mt: 0.75, whiteSpace: 'pre-wrap' }}>
+                      {event.details}
+                    </Typography>
+                  )}
+                </Box>
+              </Stack>
+            </Card>
           ))}
-        </div>
+        </Stack>
       )}
-    </div>
+    </Box>
   )
 }

@@ -1,4 +1,11 @@
-import './RunDashboard.css'
+import {
+  Alert,
+  Box,
+  Chip,
+  LinearProgress,
+  Stack,
+  Typography,
+} from '@mui/material'
 
 interface ProjectStatus {
   project_dir: string
@@ -22,12 +29,10 @@ interface Props {
 export default function RunDashboard({ status }: Props) {
   if (!status) {
     return (
-      <div className="card">
-        <h2>Project Overview</h2>
-        <div className="empty-state">
-          <p>No project data available</p>
-        </div>
-      </div>
+      <Box>
+        <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.25 }}>Project Overview</Typography>
+        <Typography color="text.secondary">No project data available</Typography>
+      </Box>
     )
   }
 
@@ -36,71 +41,41 @@ export default function RunDashboard({ status }: Props) {
     : 0
 
   return (
-    <div className="card">
-      <h2>Project Overview</h2>
+    <Box>
+      <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.25 }}>Project Overview</Typography>
 
-      <div className="stat-grid">
-        <div className="stat">
-          <div className="stat-value">{status.phases_completed}/{status.phases_total}</div>
-          <div className="stat-label">Phases</div>
-        </div>
+      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
+        <Chip label={`Phases ${status.phases_completed}/${status.phases_total}`} variant="outlined" />
+        <Chip label={`Done ${status.tasks_done}`} color="success" variant="outlined" />
+        <Chip label={`Running ${status.tasks_running}`} color="info" variant="outlined" />
+        <Chip label={`Ready ${status.tasks_ready}`} color="warning" variant="outlined" />
+        <Chip label={`Blocked ${status.tasks_blocked}`} color="error" variant="outlined" />
+      </Stack>
 
-        <div className="stat run-dashboard-stat-done">
-          <div className="stat-value">{status.tasks_done}</div>
-          <div className="stat-label">Done</div>
-        </div>
-
-        <div className="stat run-dashboard-stat-running">
-          <div className="stat-value">{status.tasks_running}</div>
-          <div className="stat-label">Running</div>
-        </div>
-
-        <div className="stat run-dashboard-stat-ready">
-          <div className="stat-value">{status.tasks_ready}</div>
-          <div className="stat-label">Ready</div>
-        </div>
-
-        <div className="stat run-dashboard-stat-blocked">
-          <div className="stat-value">{status.tasks_blocked}</div>
-          <div className="stat-label">Blocked</div>
-        </div>
-      </div>
-
-      <div className="run-dashboard-progress-section">
-        <div className="run-dashboard-progress-header">
-          <span>Overall Progress</span>
-          <span>{Math.round(progressPercent)}%</span>
-        </div>
-        <div className="progress-bar">
-          <div
-            className="progress-fill"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-      </div>
+      <Box sx={{ mb: 2 }}>
+        <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
+          <Typography variant="body2" color="text.secondary">Overall Progress</Typography>
+          <Typography variant="body2" color="text.secondary">{Math.round(progressPercent)}%</Typography>
+        </Stack>
+        <LinearProgress variant="determinate" value={progressPercent} />
+      </Box>
 
       {status.current_phase_id && (
-        <div className="run-dashboard-current-phase">
-          <div className="run-dashboard-current-phase-label">Current Phase</div>
-          <div className="run-dashboard-current-phase-value">{status.current_phase_id}</div>
-          {status.current_task_id && (
-            <div className="run-dashboard-current-task">
-              Task: {status.current_task_id}
-            </div>
-          )}
-        </div>
+        <Alert severity="info" sx={{ mb: 1.25 }}>
+          Current phase: <strong>{status.current_phase_id}</strong>
+          {status.current_task_id ? ` | Task: ${status.current_task_id}` : ''}
+        </Alert>
       )}
 
       {status.last_error && (
-        <div className="run-dashboard-error">
-          <div className="run-dashboard-error-label">Last Error</div>
-          <div className="run-dashboard-error-message">{status.last_error}</div>
-        </div>
+        <Alert severity="error" sx={{ mb: 1.25 }}>
+          Last error: {status.last_error}
+        </Alert>
       )}
 
-      <div className="run-dashboard-project-path">
+      <Typography variant="caption" color="text.secondary" sx={{ wordBreak: 'break-word' }}>
         Project: {status.project_dir}
-      </div>
-    </div>
+      </Typography>
+    </Box>
   )
 }

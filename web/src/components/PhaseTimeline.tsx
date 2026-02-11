@@ -1,4 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
+import {
+  Box,
+  Chip,
+  LinearProgress,
+  Stack,
+  Typography,
+} from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
 import EmptyState from './EmptyState'
@@ -74,8 +81,8 @@ export default function PhaseTimeline({ projectDir }: Props) {
   }
 
   return (
-    <div className="card">
-      <h2>Phase Timeline</h2>
+    <Box>
+      <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>Phase Timeline</Typography>
 
       {loading ? (
         <LoadingSpinner label="Loading phases..." />
@@ -87,38 +94,48 @@ export default function PhaseTimeline({ projectDir }: Props) {
           size="sm"
         />
       ) : (
-        <div className="phase-list">
+        <Stack spacing={1.25} className="phase-list">
           {phases.map((phase) => (
-            <div
+            <Box
               key={phase.id}
               className="phase-item"
               data-status={phase.status}
+              sx={{
+                border: 1,
+                borderColor: 'divider',
+                borderRadius: 1.5,
+                p: 1.25,
+                bgcolor: 'background.default',
+              }}
             >
-              <div className="phase-header">
-                <div className="phase-name">{phase.name || phase.id}</div>
-                <div className="phase-status">{phase.status}</div>
-              </div>
+              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.75 }} className="phase-header">
+                <Typography className="phase-name" fontWeight={600}>
+                  {phase.name || phase.id}
+                </Typography>
+                <Chip size="small" className="phase-status" label={phase.status || 'unknown'} variant="outlined" />
+              </Stack>
 
               {phase.description && (
-                <div className="phase-description">{phase.description}</div>
+                <Typography className="phase-description" variant="body2" color="text.secondary" sx={{ mb: 0.75 }}>
+                  {phase.description}
+                </Typography>
               )}
 
               {phase.deps && phase.deps.length > 0 && (
-                <div className="phase-dependencies">
+                <Typography className="phase-dependencies" variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
                   Dependencies: {phase.deps.join(', ')}
-                </div>
+                </Typography>
               )}
 
-              <div className="progress-bar">
-                <div
-                  className="progress-fill"
-                  style={{ width: `${phase.progress * 100}%` }}
-                />
-              </div>
-            </div>
+              <LinearProgress
+                className="progress-bar"
+                variant="determinate"
+                value={Math.max(0, Math.min(100, phase.progress * 100))}
+              />
+            </Box>
           ))}
-        </div>
+        </Stack>
       )}
-    </div>
+    </Box>
   )
 }

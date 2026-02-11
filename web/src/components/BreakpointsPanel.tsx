@@ -3,7 +3,6 @@ import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
 import EmptyState from './EmptyState'
 import LoadingSpinner from './LoadingSpinner'
-import './BreakpointsPanel.css'
 
 interface BreakpointInfo {
   id: string
@@ -52,6 +51,182 @@ const triggerOptions = [
   { value: 'before_step', label: 'Before Step' },
   { value: 'after_step', label: 'After Step' },
 ]
+
+const BREAKPOINTS_PANEL_STYLES = `
+.breakpoints-actions {
+  display: flex;
+  gap: var(--spacing-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.breakpoints-btn {
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  background: var(--color-bg-secondary);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.breakpoints-btn:hover {
+  background: var(--color-gray-200);
+}
+
+.breakpoints-btn-danger {
+  background: var(--color-error-50);
+  color: var(--color-error-700);
+}
+
+.breakpoints-btn-danger:hover:not(:disabled) {
+  background: var(--color-error-100);
+}
+
+.breakpoints-btn-danger:disabled {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.breakpoints-btn-primary {
+  background: var(--color-primary-600);
+  color: var(--color-text-inverse);
+  border-color: var(--color-primary-600);
+}
+
+.breakpoints-btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-700);
+}
+
+.breakpoints-btn-primary:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.breakpoints-error {
+  margin-top: var(--spacing-3);
+  color: var(--color-error-700);
+  font-size: var(--text-sm);
+}
+
+.breakpoints-form {
+  margin-top: var(--spacing-4);
+  padding: var(--spacing-3);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+.breakpoints-form-title {
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  margin-bottom: var(--spacing-2);
+}
+
+.breakpoints-form-row {
+  display: flex;
+  gap: var(--spacing-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.breakpoints-form-select,
+.breakpoints-form-input {
+  padding: var(--spacing-2);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  background: var(--color-bg-primary);
+}
+
+.breakpoints-form-select:focus,
+.breakpoints-form-input:focus {
+  outline: none;
+  border-color: var(--color-primary-500);
+  box-shadow: 0 0 0 3px var(--color-primary-100);
+}
+
+.breakpoints-form-input-task {
+  min-width: 180px;
+}
+
+.breakpoints-form-input-condition {
+  min-width: 260px;
+  flex: 1;
+}
+
+.breakpoints-form-hint {
+  margin-top: var(--spacing-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.breakpoints-table-wrapper {
+  overflow-x: auto;
+  margin-top: var(--spacing-4);
+}
+
+.breakpoints-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.breakpoints-table th {
+  text-align: left;
+  padding: var(--spacing-2);
+  border-bottom: 1px solid var(--color-border-default);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-secondary);
+}
+
+.breakpoints-table td {
+  padding: var(--spacing-2);
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text-secondary);
+}
+
+.breakpoints-table tr.disabled {
+  opacity: 0.6;
+}
+
+.breakpoints-table-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.breakpoints-table-actions {
+  white-space: nowrap;
+}
+
+.breakpoints-table-btn {
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  background: var(--color-bg-primary);
+  cursor: pointer;
+  margin-right: var(--spacing-2);
+  transition: all var(--transition-base);
+}
+
+.breakpoints-table-btn:hover {
+  background: var(--color-bg-secondary);
+}
+
+.breakpoints-table-btn:last-child {
+  margin-right: 0;
+}
+
+.breakpoints-table-btn-delete {
+  background: var(--color-error-50);
+  color: var(--color-error-700);
+}
+
+.breakpoints-table-btn-delete:hover {
+  background: var(--color-error-100);
+}
+`
 
 export default function BreakpointsPanel({ projectDir }: Props) {
   const [breakpoints, setBreakpoints] = useState<BreakpointInfo[]>([])
@@ -175,6 +350,7 @@ export default function BreakpointsPanel({ projectDir }: Props) {
 
   return (
     <div className="card">
+      <style>{BREAKPOINTS_PANEL_STYLES}</style>
       <h2>Breakpoints</h2>
 
       <div className="breakpoints-actions">

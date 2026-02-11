@@ -3,8 +3,22 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import { buildApiUrl, buildAuthHeaders } from '../../api'
-import './FeedbackPanel.css'
 
 interface FeedbackItem {
   id: string
@@ -40,6 +54,12 @@ const PRIORITIES = [
   { value: 'should', label: 'Should Follow' },
   { value: 'suggestion', label: 'Suggestion' },
 ]
+
+const priorityColor = (priority: string) => {
+  if (priority === 'must') return 'error.main'
+  if (priority === 'should') return 'warning.main'
+  return 'info.main'
+}
 
 export default function FeedbackPanel({ taskId, projectDir }: Props) {
   const [feedback, setFeedback] = useState<FeedbackItem[]>([])
@@ -111,104 +131,134 @@ export default function FeedbackPanel({ taskId, projectDir }: Props) {
   const addressedFeedback = feedback.filter(f => f.status === 'addressed')
 
   return (
-    <div className="feedback-panel">
-      <div className="feedback-header">
-        <h3 className="feedback-title">Feedback</h3>
-        <span className="feedback-count">{activeFeedback.length} active</span>
-        <button className="feedback-add-btn" onClick={() => setShowForm(!showForm)}>
+    <Box sx={{ p: 1.5 }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
+        <Typography variant="h6" sx={{ fontSize: '1rem' }}>Feedback</Typography>
+        <Chip size="small" label={`${activeFeedback.length} active`} variant="outlined" />
+        <Box sx={{ flex: 1 }} />
+        <Button size="small" variant="contained" onClick={() => setShowForm(!showForm)}>
           + Add Feedback
-        </button>
-      </div>
+        </Button>
+      </Stack>
 
       {showForm && (
-        <div className="feedback-form">
-          <div className="feedback-form-row">
-            <select value={formType} onChange={(e) => setFormType(e.target.value)}>
-              {FEEDBACK_TYPES.map(t => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
-            <select value={formPriority} onChange={(e) => setFormPriority(e.target.value)}>
-              {PRIORITIES.map(p => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
-          </div>
-          <input
-            className="feedback-form-input"
-            placeholder="Summary (one line)"
-            value={formSummary}
-            onChange={(e) => setFormSummary(e.target.value)}
-          />
-          <textarea
-            className="feedback-form-textarea"
-            placeholder="Details (optional)"
-            value={formDetails}
-            onChange={(e) => setFormDetails(e.target.value)}
-            rows={3}
-          />
-          <input
-            className="feedback-form-input"
-            placeholder="Target file (optional)"
-            value={formFile}
-            onChange={(e) => setFormFile(e.target.value)}
-          />
-          <div className="feedback-form-actions">
-            <button className="feedback-submit" onClick={handleSubmit} disabled={submitting}>
-              {submitting ? 'Submitting...' : 'Submit Feedback'}
-            </button>
-            <button className="feedback-cancel" onClick={() => setShowForm(false)}>Cancel</button>
-          </div>
-        </div>
+        <Card variant="outlined" sx={{ mb: 1.5 }}>
+          <CardContent sx={{ '&:last-child': { pb: 2 } }}>
+            <Stack spacing={1}>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                <TextField size="small" select value={formType} onChange={(e) => setFormType(e.target.value)} fullWidth>
+                  {FEEDBACK_TYPES.map(t => (
+                    <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>
+                  ))}
+                </TextField>
+                <TextField size="small" select value={formPriority} onChange={(e) => setFormPriority(e.target.value)} fullWidth>
+                  {PRIORITIES.map(p => (
+                    <MenuItem key={p.value} value={p.value}>{p.label}</MenuItem>
+                  ))}
+                </TextField>
+              </Stack>
+
+              <TextField
+                placeholder="Summary (one line)"
+                value={formSummary}
+                onChange={(e) => setFormSummary(e.target.value)}
+                size="small"
+                fullWidth
+              />
+              <TextField
+                placeholder="Details (optional)"
+                value={formDetails}
+                onChange={(e) => setFormDetails(e.target.value)}
+                size="small"
+                multiline
+                minRows={3}
+                fullWidth
+              />
+              <TextField
+                placeholder="Target file (optional)"
+                value={formFile}
+                onChange={(e) => setFormFile(e.target.value)}
+                size="small"
+                fullWidth
+              />
+
+              <Stack direction="row" spacing={1}>
+                <Button variant="contained" color="success" onClick={handleSubmit} disabled={submitting}>
+                  {submitting ? 'Submitting...' : 'Submit Feedback'}
+                </Button>
+                <Button variant="outlined" onClick={() => setShowForm(false)}>Cancel</Button>
+              </Stack>
+            </Stack>
+          </CardContent>
+        </Card>
       )}
 
-      <div className="feedback-list">
+      <Stack spacing={1}>
         {activeFeedback.map(fb => (
-          <div key={fb.id} className={`feedback-item priority-${fb.priority}`}>
-            <div className="feedback-item-header">
-              <span className={`feedback-type-badge type-${fb.feedback_type}`}>
-                {fb.feedback_type.replace('_', ' ')}
-              </span>
-              <span className={`feedback-priority priority-${fb.priority}`}>
-                {fb.priority}
-              </span>
-              <button className="feedback-dismiss" onClick={() => handleDismiss(fb.id)}>
-                Dismiss
-              </button>
-            </div>
-            <div className="feedback-item-summary">{fb.summary}</div>
-            {fb.details && <div className="feedback-item-details">{fb.details}</div>}
-            {fb.target_file && (
-              <div className="feedback-item-file">
-                <code>{fb.target_file}</code>
-              </div>
-            )}
-          </div>
+          <Card key={fb.id} variant="outlined" sx={{ borderLeft: '3px solid', borderLeftColor: priorityColor(fb.priority) }}>
+            <CardContent sx={{ '&:last-child': { pb: 1.5 } }}>
+              <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
+                <Chip
+                  size="small"
+                  label={fb.feedback_type.replace('_', ' ')}
+                  variant="outlined"
+                  sx={{ textTransform: 'capitalize' }}
+                />
+                <Typography
+                  variant="caption"
+                  sx={{ textTransform: 'uppercase', fontWeight: 700, color: priorityColor(fb.priority) }}
+                >
+                  {fb.priority}
+                </Typography>
+                <Box sx={{ flex: 1 }} />
+                <Button size="small" onClick={() => handleDismiss(fb.id)}>Dismiss</Button>
+              </Stack>
+
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>{fb.summary}</Typography>
+              {fb.details && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  {fb.details}
+                </Typography>
+              )}
+              {fb.target_file && (
+                <Typography component="code" variant="caption" sx={{ mt: 0.75, display: 'inline-block' }}>
+                  {fb.target_file}
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
         ))}
+
         {activeFeedback.length === 0 && !showForm && (
-          <div className="feedback-empty">No active feedback for this task.</div>
+          <Typography color="text.secondary" sx={{ textAlign: 'center', py: 3 }}>
+            No active feedback for this task.
+          </Typography>
         )}
-      </div>
+      </Stack>
 
       {addressedFeedback.length > 0 && (
-        <details className="feedback-addressed-section">
-          <summary className="feedback-addressed-toggle">
-            {addressedFeedback.length} addressed
-          </summary>
-          <div className="feedback-list">
-            {addressedFeedback.map(fb => (
-              <div key={fb.id} className="feedback-item addressed">
-                <div className="feedback-item-summary">{fb.summary}</div>
-                {fb.agent_response && (
-                  <div className="feedback-agent-response">
-                    Agent: {fb.agent_response}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </details>
+        <Accordion sx={{ mt: 1.5 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography>{addressedFeedback.length} addressed</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Stack spacing={1}>
+              {addressedFeedback.map(fb => (
+                <Card key={fb.id} variant="outlined" sx={{ opacity: 0.75 }}>
+                  <CardContent sx={{ '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{fb.summary}</Typography>
+                    {fb.agent_response && (
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                        Agent: {fb.agent_response}
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </Stack>
+          </AccordionDetails>
+        </Accordion>
       )}
-    </div>
+    </Box>
   )
 }

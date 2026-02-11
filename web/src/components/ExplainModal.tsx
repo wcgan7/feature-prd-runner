@@ -1,6 +1,15 @@
 import { useState, useEffect } from 'react'
+import {
+  Alert,
+  Box,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  Typography,
+} from '@mui/material'
+import CloseIcon from '@mui/icons-material/Close'
 import { fetchExplain } from '../api'
-import './ExplainModal.css'
 
 interface Props {
   taskId: string
@@ -25,20 +34,45 @@ export default function ExplainModal({ taskId, projectDir, onClose }: Props) {
   }, [taskId, projectDir])
 
   return (
-    <div className="explain-modal-overlay" onClick={onClose}>
-      <div className="explain-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="explain-modal-header">
-          <h3>Why is this task blocked?</h3>
-          <button className="explain-modal-close" onClick={onClose}>&times;</button>
-        </div>
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ pr: 6 }}>
+        Why is this task blocked?
+        <IconButton
+          aria-label="Close"
+          onClick={onClose}
+          sx={{ position: 'absolute', right: 10, top: 10 }}
+          size="small"
+        >
+          <CloseIcon fontSize="small" />
+        </IconButton>
+      </DialogTitle>
+      <DialogContent dividers>
         {loading ? (
-          <div className="explain-modal-loading">Loading explanation...</div>
+          <Typography color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
+            Loading explanation...
+          </Typography>
         ) : error ? (
-          <div className="explain-modal-error">{error}</div>
+          <Alert severity="error">{error}</Alert>
         ) : (
-          <div className="explain-modal-body">{explanation}</div>
+          <Box
+            component="pre"
+            sx={{
+              m: 0,
+              p: 1.5,
+              borderRadius: 1,
+              border: '1px solid',
+              borderColor: 'divider',
+              bgcolor: 'background.default',
+              whiteSpace: 'pre-wrap',
+              fontFamily: '"IBM Plex Mono", monospace',
+              fontSize: '0.85rem',
+              lineHeight: 1.6,
+            }}
+          >
+            {explanation}
+          </Box>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

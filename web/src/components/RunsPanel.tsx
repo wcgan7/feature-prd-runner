@@ -1,9 +1,23 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  Typography,
+} from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
 import EmptyState from './EmptyState'
 import LoadingSpinner from './LoadingSpinner'
-import './RunsPanel.css'
 
 interface RunInfo {
   run_id: string
@@ -117,24 +131,20 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
     }
   }
 
-  const sortedRuns = useMemo(() => {
-    return [...runs].sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
-  }, [runs])
+  const sortedRuns = useMemo(() => [...runs].sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '')), [runs])
 
   return (
-    <div className="card">
-      <h2>Recent Runs</h2>
+    <Box>
+      <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>Recent Runs</Typography>
 
-      <div className="runs-panel-header">
-        <button onClick={fetchRuns} className="runs-panel-btn">
-          Refresh
-        </button>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} justifyContent="space-between" sx={{ mb: 1.5 }}>
+        <Button onClick={fetchRuns} variant="outlined">Refresh</Button>
         {currentRunId && (
-          <div className="runs-panel-active-run">
-            Active run: <span className="runs-panel-active-run-id">{currentRunId}</span>
-          </div>
+          <Typography variant="body2" color="text.secondary">
+            Active run: <Box component="span" sx={{ fontFamily: '"IBM Plex Mono", monospace' }}>{currentRunId}</Box>
+          </Typography>
         )}
-      </div>
+      </Stack>
 
       {loading ? (
         <LoadingSpinner label="Loading runs..." />
@@ -154,73 +164,78 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
         />
       ) : (
         <>
-          <div className="runs-panel-table-wrapper">
-            <table className="runs-panel-table">
-              <thead>
-                <tr>
-                  <th>Run</th>
-                  <th>Task</th>
-                  <th>Phase</th>
-                  <th>Step</th>
-                  <th>Status</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
+          <Box sx={{ overflowX: 'auto' }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Run</TableCell>
+                  <TableCell>Task</TableCell>
+                  <TableCell>Phase</TableCell>
+                  <TableCell>Step</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 {sortedRuns.map((run) => (
-                  <tr
+                  <TableRow
                     key={run.run_id}
                     className={run.run_id === currentRunId ? 'active' : ''}
+                    sx={run.run_id === currentRunId ? { bgcolor: 'action.selected' } : undefined}
                   >
-                    <td className="runs-panel-table-id">{run.run_id}</td>
-                    <td>{run.task_id || '-'}</td>
-                    <td>{run.phase || '-'}</td>
-                    <td>{run.step || '-'}</td>
-                    <td>{run.status || '-'}</td>
-                    <td>
-                      <button
+                    <TableCell sx={{ fontFamily: 'mono', fontSize: '0.75rem' }}>{run.run_id}</TableCell>
+                    <TableCell>{run.task_id || '-'}</TableCell>
+                    <TableCell>{run.phase || '-'}</TableCell>
+                    <TableCell>{run.step || '-'}</TableCell>
+                    <TableCell><Chip size="small" variant="outlined" label={run.status || '-'} /></TableCell>
+                    <TableCell>
+                      <Button
+                        size="small"
                         onClick={() => {
                           setSelectedRunId(run.run_id)
                           void fetchRunDetail(run.run_id)
                         }}
-                        className="runs-panel-table-btn"
                       >
                         Details
-                      </button>
-                    </td>
-                  </tr>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </TableBody>
+            </Table>
+          </Box>
 
           {selectedRunId && (
-            <div className="runs-panel-detail">
-              <div className="runs-panel-detail-title">Run Details</div>
-              {detailError ? (
-                <div className="runs-panel-detail-error">Error: {detailError}</div>
-              ) : runDetail ? (
-                <>
-                  <div className="runs-panel-detail-id">{runDetail.run_id}</div>
-                  <div className="runs-panel-detail-status">
-                    Status: <strong>{runDetail.status}</strong>
-                  </div>
-                  {runDetail.last_error && (
-                    <div className="runs-panel-detail-last-error">
-                      Last error: {runDetail.last_error}
-                    </div>
-                  )}
-                  <div className="runs-panel-detail-meta">
-                    Current task: {runDetail.current_task_id || '-'} • Current phase: {runDetail.current_phase_id || '-'}
-                  </div>
-                </>
-              ) : (
-                <div className="runs-panel-detail-loading">Loading...</div>
-              )}
-            </div>
+            <Card variant="outlined" sx={{ mt: 1.5 }}>
+              <CardContent>
+                <Typography variant="subtitle2">Run Details</Typography>
+                {detailError ? (
+                  <Alert severity="error" sx={{ mt: 1 }}>
+                    Error: {detailError}
+                  </Alert>
+                ) : runDetail ? (
+                  <Stack spacing={0.75} sx={{ mt: 1 }}>
+                    <Typography variant="body2" sx={{ fontFamily: 'mono', fontSize: '0.75rem' }}>{runDetail.run_id}</Typography>
+                    <Typography variant="body2">
+                      Status: <strong>{runDetail.status}</strong>
+                    </Typography>
+                    {runDetail.last_error && (
+                      <Alert severity="error">Last error: {runDetail.last_error}</Alert>
+                    )}
+                    <Typography variant="caption" color="text.secondary">
+                      Current task: {runDetail.current_task_id || '-'} • Current phase: {runDetail.current_phase_id || '-'}
+                    </Typography>
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    Loading...
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
           )}
         </>
       )}
-    </div>
+    </Box>
   )
 }

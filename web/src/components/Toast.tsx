@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
-import './Toast.css'
+import {
+  Box,
+  IconButton,
+  Paper,
+  Typography,
+  useMediaQuery,
+  useTheme,
+} from '@mui/material'
+import { keyframes } from '@mui/system'
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info'
 
@@ -18,6 +26,30 @@ interface ToastProps {
 function Toast({ toast, onDismiss }: ToastProps) {
   const [isExiting, setIsExiting] = useState(false)
   const duration = toast.duration || 5000
+  const enterAnimation = keyframes`
+    from {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  `
+  const exitAnimation = keyframes`
+    from {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+  `
+  const progressAnimation = keyframes`
+    from { transform: scaleX(1); }
+    to { transform: scaleX(0); }
+  `
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -48,18 +80,89 @@ function Toast({ toast, onDismiss }: ToastProps) {
     }
   }
 
+  const typeStyles = {
+    success: {
+      iconBg: 'success.light',
+      iconColor: 'success.dark',
+      progressBg: 'success.main',
+      borderColor: 'success.main',
+    },
+    error: {
+      iconBg: 'error.light',
+      iconColor: 'error.dark',
+      progressBg: 'error.main',
+      borderColor: 'error.main',
+    },
+    warning: {
+      iconBg: 'warning.light',
+      iconColor: 'warning.dark',
+      progressBg: 'warning.main',
+      borderColor: 'warning.main',
+    },
+    info: {
+      iconBg: 'info.light',
+      iconColor: 'info.dark',
+      progressBg: 'info.main',
+      borderColor: 'info.main',
+    },
+  }[toast.type]
+
   return (
-    <div className={`toast toast-${toast.type} ${isExiting ? 'toast-exit' : ''}`}>
-      <div className="toast-icon">{getIcon()}</div>
-      <div className="toast-content">{toast.message}</div>
-      <button className="toast-close" onClick={handleDismiss} aria-label="Dismiss">
-        ×
-      </button>
-      <div
-        className="toast-progress"
-        style={{ animationDuration: `${duration}ms` }}
+    <Paper
+      elevation={8}
+      sx={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 1.5,
+        p: 2,
+        borderLeft: 4,
+        borderColor: typeStyles.borderColor,
+        position: 'relative',
+        overflow: 'hidden',
+        animation: `${isExiting ? exitAnimation : enterAnimation} 0.2s ${isExiting ? 'ease-in' : 'ease-out'} forwards`,
+      }}
+    >
+      <Box
+        sx={{
+          width: 24,
+          height: 24,
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '0.875rem',
+          fontWeight: 700,
+          flexShrink: 0,
+          bgcolor: typeStyles.iconBg,
+          color: typeStyles.iconColor,
+        }}
+      >
+        {getIcon()}
+      </Box>
+      <Typography variant="body2" sx={{ flex: 1, color: 'text.primary', lineHeight: 1.45 }}>
+        {toast.message}
+      </Typography>
+      <IconButton
+        size="small"
+        onClick={handleDismiss}
+        aria-label="Dismiss"
+        sx={{ color: 'text.secondary', mt: -0.5, mr: -0.75 }}
+      >
+        <span aria-hidden>×</span>
+      </IconButton>
+      <Box
+        sx={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          height: 3,
+          width: '100%',
+          transformOrigin: 'left',
+          bgcolor: typeStyles.progressBg,
+          animation: `${progressAnimation} ${duration}ms linear forwards`,
+        }}
       />
-    </div>
+    </Paper>
   )
 }
 
@@ -69,14 +172,33 @@ interface ToastContainerProps {
 }
 
 export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
+  const theme = useTheme()
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'))
+
   if (toasts.length === 0) return null
 
   return (
-    <div className="toast-container">
+    <Box
+      sx={{
+        position: 'fixed',
+        bottom: 24,
+        right: isMobile ? 16 : 24,
+        left: isMobile ? 16 : 'auto',
+        zIndex: (t) => t.zIndex.snackbar,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1.5,
+        maxWidth: isMobile ? 'none' : 400,
+        pointerEvents: 'none',
+        '& > *': {
+          pointerEvents: 'auto',
+        },
+      }}
+    >
       {toasts.map((toast) => (
         <Toast key={toast.id} toast={toast} onDismiss={onDismiss} />
       ))}
-    </div>
+    </Box>
   )
 }
 

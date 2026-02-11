@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
+  Alert,
+  Box,
+  Chip,
+  Stack,
+  Typography,
+} from '@mui/material'
+import {
   ReactFlow,
   Node,
   Edge,
@@ -14,7 +21,6 @@ import '@xyflow/react/dist/style.css'
 import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
 import EmptyState from './EmptyState'
-import './DependencyGraph.css'
 
 interface Phase {
   id: string
@@ -91,10 +97,8 @@ export default function DependencyGraph({ projectDir }: Props) {
   }
 
   const buildGraph = (phaseList: Phase[]) => {
-    // Calculate layout using a simple hierarchical approach
     const layout = calculateLayout(phaseList)
 
-    // Create nodes
     const newNodes: Node[] = phaseList.map((phase) => {
       const position = layout[phase.id] || { x: 0, y: 0 }
       const statusColor = getStatusColor(phase.status)
@@ -106,18 +110,26 @@ export default function DependencyGraph({ projectDir }: Props) {
         data: {
           status: phase.status,
           label: (
-            <div className="dependency-graph-node-label">
-              <div className="dependency-graph-node-name">
-                {phase.name || phase.id}
-              </div>
-              <div className="dependency-graph-node-status">
-                {phase.status}
-              </div>
+            <div style={{ textAlign: 'center', padding: '8px' }}>
+              <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '4px' }}>{phase.name || phase.id}</div>
+              <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.85)' }}>{phase.status}</div>
               {phase.progress > 0 && (
-                <div className="dependency-graph-node-progress">
+                <div
+                  style={{
+                    marginTop: '4px',
+                    height: '4px',
+                    background: 'rgba(255,255,255,0.3)',
+                    borderRadius: '4px',
+                    overflow: 'hidden',
+                  }}
+                >
                   <div
-                    className="dependency-graph-node-progress-fill"
-                    style={{ width: `${phase.progress * 100}%` }}
+                    style={{
+                      width: `${phase.progress * 100}%`,
+                      height: '100%',
+                      background: 'rgba(255,255,255,0.9)',
+                      transition: 'width 200ms ease',
+                    }}
                   />
                 </div>
               )}
@@ -137,7 +149,6 @@ export default function DependencyGraph({ projectDir }: Props) {
       }
     })
 
-    // Create edges from dependencies
     const newEdges: Edge[] = []
     phaseList.forEach((phase) => {
       const deps = Array.isArray(phase.deps) ? phase.deps : []
@@ -158,23 +169,14 @@ export default function DependencyGraph({ projectDir }: Props) {
   }
 
   const calculateLayout = (phaseList: Phase[]): Record<string, { x: number; y: number }> => {
-    // Simple hierarchical layout based on dependency depth
     const layout: Record<string, { x: number; y: number }> = {}
     const levels: Record<string, number> = {}
 
-    // Calculate depth for each phase
     const calculateDepth = (phaseId: string, visited = new Set<string>()): number => {
-      if (levels[phaseId] !== undefined) {
-        return levels[phaseId]
-      }
-
-      // Detect cycles
-      if (visited.has(phaseId)) {
-        return 0
-      }
+      if (levels[phaseId] !== undefined) return levels[phaseId]
+      if (visited.has(phaseId)) return 0
 
       visited.add(phaseId)
-
       const phase = phaseList.find((p) => p.id === phaseId)
       const deps = phase && Array.isArray(phase.deps) ? phase.deps : []
       if (!phase || deps.length === 0) {
@@ -187,21 +189,14 @@ export default function DependencyGraph({ projectDir }: Props) {
       return maxDepth + 1
     }
 
-    // Calculate depth for all phases
-    phaseList.forEach((phase) => {
-      calculateDepth(phase.id)
-    })
+    phaseList.forEach((phase) => calculateDepth(phase.id))
 
-    // Group phases by level
     const levelGroups: Record<number, string[]> = {}
     Object.entries(levels).forEach(([phaseId, level]) => {
-      if (!levelGroups[level]) {
-        levelGroups[level] = []
-      }
+      if (!levelGroups[level]) levelGroups[level] = []
       levelGroups[level].push(phaseId)
     })
 
-    // Position nodes
     const horizontalSpacing = 250
     const verticalSpacing = 120
 
@@ -210,7 +205,7 @@ export default function DependencyGraph({ projectDir }: Props) {
       phaseIds.forEach((phaseId, index) => {
         layout[phaseId] = {
           x: levelNum * horizontalSpacing,
-          y: index * verticalSpacing + (levelNum % 2 === 0 ? 0 : 60), // Stagger alternate levels
+          y: index * verticalSpacing + (levelNum % 2 === 0 ? 0 : 60),
         }
       })
     })
@@ -219,48 +214,49 @@ export default function DependencyGraph({ projectDir }: Props) {
   }
 
   const getStatusColor = (status: string): string => {
-    // These colors need to be hardcoded for ReactFlow nodes
-    // They should match the CSS variables in variables.css
     switch (status.toLowerCase()) {
       case 'done':
       case 'completed':
-        return '#22c55e' // --color-success-500
+        return '#22c55e'
       case 'running':
       case 'in_progress':
-        return '#3b82f6' // --color-primary-500
+        return '#3b82f6'
       case 'blocked':
       case 'failed':
-        return '#ef4444' // --color-error-500
+        return '#ef4444'
       case 'pending':
       case 'ready':
-        return '#6b7280' // --color-gray-500
+        return '#6b7280'
       default:
-        return '#6b7280' // --color-gray-500
+        return '#6b7280'
     }
   }
 
   if (phases.length === 0) {
     return (
-      <div className="card">
-        <h2>Phase Dependency Graph</h2>
+      <Box>
+        <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>Phase Dependency Graph</Typography>
         <EmptyState
           icon={<span>🔗</span>}
           title="No phases available"
           description="Dependency graph will appear once phases are defined"
           size="sm"
         />
-      </div>
+      </Box>
     )
   }
 
   return (
-    <div className="card">
-      <h2>Phase Dependency Graph</h2>
-      <div className="dependency-graph-info">
-        {phases.length} phases • Dependencies shown as arrows
-      </div>
+    <Box>
+      <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1 }}>Phase Dependency Graph</Typography>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
+        <Chip size="small" variant="outlined" label={`${phases.length} phases`} />
+        <Typography variant="caption" color="text.secondary">
+          Dependencies shown as arrows
+        </Typography>
+      </Stack>
 
-      <div className="dependency-graph-container">
+      <Box sx={{ height: 500, border: 1, borderColor: 'divider', borderRadius: 2, bgcolor: 'background.default' }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -281,31 +277,31 @@ export default function DependencyGraph({ projectDir }: Props) {
             pannable
           />
         </ReactFlow>
-      </div>
+      </Box>
 
-      <div className="dependency-graph-legend">
-        <div className="dependency-graph-legend-items">
-          <div className="dependency-graph-legend-item">
-            <div className="dependency-graph-legend-color dependency-graph-legend-color-completed" />
-            <span>Completed</span>
-          </div>
-          <div className="dependency-graph-legend-item">
-            <div className="dependency-graph-legend-color dependency-graph-legend-color-running" />
-            <span>Running</span>
-          </div>
-          <div className="dependency-graph-legend-item">
-            <div className="dependency-graph-legend-color dependency-graph-legend-color-blocked" />
-            <span>Blocked/Failed</span>
-          </div>
-          <div className="dependency-graph-legend-item">
-            <div className="dependency-graph-legend-color dependency-graph-legend-color-pending" />
-            <span>Pending/Ready</span>
-          </div>
-        </div>
-        <div className="dependency-graph-legend-help">
-          Use mouse wheel to zoom • Drag to pan • Click and drag nodes to reposition
-        </div>
-      </div>
-    </div>
+      <Box sx={{ mt: 1.5, p: 1.25, bgcolor: 'background.default', borderRadius: 2 }}>
+        <Stack direction="row" spacing={1.5} useFlexGap flexWrap="wrap">
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            <Box sx={{ width: 16, height: 16, borderRadius: 0.75, bgcolor: 'success.main' }} />
+            <Typography variant="caption">Completed</Typography>
+          </Stack>
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            <Box sx={{ width: 16, height: 16, borderRadius: 0.75, bgcolor: 'info.main' }} />
+            <Typography variant="caption">Running</Typography>
+          </Stack>
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            <Box sx={{ width: 16, height: 16, borderRadius: 0.75, bgcolor: 'error.main' }} />
+            <Typography variant="caption">Blocked/Failed</Typography>
+          </Stack>
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            <Box sx={{ width: 16, height: 16, borderRadius: 0.75, bgcolor: 'text.disabled' }} />
+            <Typography variant="caption">Pending/Ready</Typography>
+          </Stack>
+        </Stack>
+        <Alert severity="info" sx={{ mt: 1 }}>
+          Use mouse wheel to zoom, drag to pan, and drag nodes to reposition.
+        </Alert>
+      </Box>
+    </Box>
   )
 }

@@ -1,8 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import {
+  Box,
+  Chip,
+  Grid,
+  Stack,
+  Typography,
+} from '@mui/material'
+import {
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts'
 import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
-import './MetricsChart.css'
 
 interface RunMetrics {
   tokens_used: number
@@ -79,60 +97,32 @@ export default function MetricsChart({ projectDir }: Props) {
 
   if (!metrics || !hasAnyMetrics) {
     return (
-      <div className="card">
-        <h2>Metrics Visualization</h2>
-        <div className="empty-state">
-          <p>No metrics data available for visualization</p>
-          <p className="metrics-chart-empty-subtitle">
+      <Box>
+        <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>Metrics Visualization</Typography>
+        <Box className="empty-state">
+          <Typography>No metrics data available for visualization</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.875rem' }}>
             Charts will appear once runs generate metrics
-          </p>
-        </div>
-      </div>
+          </Typography>
+        </Box>
+      </Box>
     )
   }
 
-  // Prepare data for code changes chart
   const codeChangesData = [
-    {
-      name: 'Added',
-      lines: metrics.lines_added,
-      fill: '#22c55e',
-    },
-    {
-      name: 'Removed',
-      lines: metrics.lines_removed,
-      fill: '#ef4444',
-    },
+    { name: 'Added', lines: metrics.lines_added, fill: '#22c55e' },
+    { name: 'Removed', lines: metrics.lines_removed, fill: '#ef4444' },
   ]
 
-  // Prepare data for phase progress pie chart
   const phaseProgressData = [
-    {
-      name: 'Completed',
-      value: metrics.phases_completed,
-      fill: '#22c55e',
-    },
-    {
-      name: 'Remaining',
-      value: metrics.phases_total - metrics.phases_completed,
-      fill: '#e5e7eb',
-    },
+    { name: 'Completed', value: metrics.phases_completed, fill: '#22c55e' },
+    { name: 'Remaining', value: Math.max(metrics.phases_total - metrics.phases_completed, 0), fill: '#e5e7eb' },
   ]
 
-  // Prepare data for usage metrics
   const usageData = [
-    {
-      metric: 'API Calls',
-      value: metrics.api_calls,
-    },
-    {
-      metric: 'Tokens (K)',
-      value: Math.round(metrics.tokens_used / 1000),
-    },
-    {
-      metric: 'Files Changed',
-      value: metrics.files_changed,
-    },
+    { metric: 'API Calls', value: metrics.api_calls },
+    { metric: 'Tokens (K)', value: Math.round(metrics.tokens_used / 1000) },
+    { metric: 'Files Changed', value: metrics.files_changed },
   ]
 
   const formatTime = (seconds: number): string => {
@@ -140,7 +130,6 @@ export default function MetricsChart({ projectDir }: Props) {
     const hours = Math.floor(seconds / 3600)
     const minutes = Math.floor((seconds % 3600) / 60)
     const secs = Math.floor(seconds % 60)
-
     if (hours > 0) return `${hours}h ${minutes}m`
     if (minutes > 0) return `${minutes}m ${secs}s`
     return `${secs}s`
@@ -149,101 +138,91 @@ export default function MetricsChart({ projectDir }: Props) {
   const COLORS = ['#22c55e', '#e5e7eb']
 
   return (
-    <div className="card">
-      <h2>Metrics Visualization</h2>
+    <Box>
+      <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>Metrics Visualization</Typography>
 
-      <div className="metrics-chart-container">
-        {/* Phase Progress Pie Chart */}
+      <Grid container spacing={2} sx={{ mt: 0.5 }}>
         {metrics.phases_total > 0 && (
-          <div className="metrics-chart-section">
-            <h3>Phase Progress</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie
-                  data={phaseProgressData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, value }) => `${name}: ${value}`}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {phaseProgressData.map((_entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="metrics-chart-caption">
-              {metrics.phases_completed} of {metrics.phases_total} phases completed
-            </div>
-          </div>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Box sx={{ p: 1, border: 1, borderColor: 'divider', borderRadius: 1.5 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>Phase Progress</Typography>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie
+                    data={phaseProgressData}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={({ name, value }) => `${name}: ${value}`}
+                    outerRadius={80}
+                    dataKey="value"
+                  >
+                    {phaseProgressData.map((_entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 0.5 }}>
+                {metrics.phases_completed} of {metrics.phases_total} phases completed
+              </Typography>
+            </Box>
+          </Grid>
         )}
 
-        {/* Code Changes Bar Chart */}
         {(metrics.lines_added > 0 || metrics.lines_removed > 0) && (
-          <div className="metrics-chart-section">
-            <h3>Code Changes</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={codeChangesData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="lines" fill="#8884d8">
-                  {codeChangesData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Box sx={{ p: 1, border: 1, borderColor: 'divider', borderRadius: 1.5 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>Code Changes</Typography>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={codeChangesData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="lines" fill="#8884d8">
+                    {codeChangesData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
+          </Grid>
         )}
 
-        {/* Usage Metrics Bar Chart */}
         {metrics.api_calls > 0 && (
-          <div className="metrics-chart-section">
-            <h3>Usage Metrics</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={usageData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="metric" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="value" fill="#3b82f6" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Box sx={{ p: 1, border: 1, borderColor: 'divider', borderRadius: 1.5 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>Usage Metrics</Typography>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={usageData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="metric" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="value" fill="#3b82f6" />
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
+          </Grid>
         )}
+      </Grid>
 
-        {/* Summary Stats */}
-        <div className="metrics-summary">
-          <div className="metrics-summary-grid">
-            <div>
-              <div className="metrics-summary-item-value">
-                ${metrics.estimated_cost_usd.toFixed(2)}
-              </div>
-              <div className="metrics-summary-item-label">Estimated Cost</div>
-            </div>
-            <div>
-              <div className="metrics-summary-item-value">
-                {formatTime(metrics.wall_time_seconds)}
-              </div>
-              <div className="metrics-summary-item-label">Wall Time</div>
-            </div>
-            <div>
-              <div className="metrics-summary-item-value">
-                {metrics.files_changed}
-              </div>
-              <div className="metrics-summary-item-label">Files Changed</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      <Stack
+        direction="row"
+        spacing={1}
+        useFlexGap
+        flexWrap="wrap"
+        sx={{ mt: 1.5, p: 1, bgcolor: 'background.default', borderRadius: 1 }}
+      >
+        <Chip label={`Estimated Cost $${metrics.estimated_cost_usd.toFixed(2)}`} color="warning" variant="outlined" />
+        <Chip label={`Wall Time ${formatTime(metrics.wall_time_seconds)}`} color="info" variant="outlined" />
+        <Chip label={`Files Changed ${metrics.files_changed}`} variant="outlined" />
+      </Stack>
+    </Box>
   )
 }

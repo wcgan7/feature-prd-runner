@@ -3,13 +3,13 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { Box, Card, Chip, Stack, Typography } from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../../api'
 import { useChannel } from '../../contexts/WebSocketContext'
-import './ReasoningViewer.css'
 
 interface ReasoningStep {
   step_name: string
-  status: string       // pending | running | completed | failed | skipped
+  status: string
   reasoning?: string
   output?: string
   started_at?: string
@@ -29,6 +29,14 @@ interface AgentReasoning {
 interface Props {
   taskId: string
   projectDir?: string
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  pending: '#9ca3af',
+  running: '#2563eb',
+  completed: '#16a34a',
+  failed: '#dc2626',
+  skipped: '#6b7280',
 }
 
 export default function ReasoningViewer({ taskId, projectDir }: Props) {
@@ -58,7 +66,6 @@ export default function ReasoningViewer({ taskId, projectDir }: Props) {
     fetchReasoning()
   }, [fetchReasoning])
 
-  // Real-time updates via WebSocket instead of polling
   useChannel('agents', useCallback((_event: string, _data: any) => {
     fetchReasoning()
   }, [fetchReasoning]))
@@ -84,88 +91,120 @@ export default function ReasoningViewer({ taskId, projectDir }: Props) {
   }
 
   if (loading) {
-    return <div className="reasoning-loading">Loading agent reasoning...</div>
+    return <Typography className="reasoning-loading" color="text.secondary">Loading agent reasoning...</Typography>
   }
 
   if (reasonings.length === 0) {
     return (
-      <div className="reasoning-empty">
+      <Typography className="reasoning-empty" color="text.secondary">
         No agent reasoning available yet. Reasoning will appear when agents are working on this task.
-      </div>
+      </Typography>
     )
   }
 
   return (
-    <div className="reasoning-viewer">
-      <h3 className="reasoning-title">Agent Reasoning</h3>
+    <Box className="reasoning-viewer" sx={{ p: 1.5 }}>
+      <Typography className="reasoning-title" variant="h6" sx={{ fontSize: '1rem', mb: 1.5 }}>
+        Agent Reasoning
+      </Typography>
 
-      {reasonings.map(r => (
-        <div key={r.agent_id} className="reasoning-agent">
-          <div
-            className="reasoning-agent-header"
-            onClick={() => setExpandedAgent(expandedAgent === r.agent_id ? null : r.agent_id)}
-          >
-            <span className="reasoning-agent-role">{r.agent_role}</span>
-            <span className="reasoning-agent-id">{r.agent_id.slice(-8)}</span>
-            {r.current_step && (
-              <span className="reasoning-current-step">
-                {'\u25B6'} {r.current_step}
-              </span>
-            )}
-            <span className="reasoning-progress">
-              {r.steps.filter(s => s.status === 'completed').length}/{r.steps.length} steps
-            </span>
-          </div>
+      <Stack spacing={1}>
+        {reasonings.map(r => (
+          <Card key={r.agent_id} className="reasoning-agent" variant="outlined">
+            <Stack
+              className="reasoning-agent-header"
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              useFlexGap
+              flexWrap="wrap"
+              onClick={() => setExpandedAgent(expandedAgent === r.agent_id ? null : r.agent_id)}
+              sx={{ p: 1.25, cursor: 'pointer', borderBottom: 1, borderColor: 'divider' }}
+            >
+              <Typography className="reasoning-agent-role" variant="body2" sx={{ fontWeight: 700 }}>
+                {r.agent_role}
+              </Typography>
+              <Typography className="reasoning-agent-id" variant="caption" color="text.secondary" sx={{ fontFamily: '"IBM Plex Mono", monospace' }}>
+                {r.agent_id.slice(-8)}
+              </Typography>
+              {r.current_step && (
+                <Chip className="reasoning-current-step" size="small" label={`\u25B6 ${r.current_step}`} color="info" variant="outlined" />
+              )}
+              <Typography className="reasoning-progress" variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                {r.steps.filter(s => s.status === 'completed').length}/{r.steps.length} steps
+              </Typography>
+            </Stack>
 
-          {(expandedAgent === r.agent_id || reasonings.length === 1) && (
-            <div className="reasoning-steps">
-              {r.steps.map(step => {
-                const stepKey = `${r.agent_id}:${step.step_name}`
-                const isExpanded = expandedSteps.has(stepKey)
+            {(expandedAgent === r.agent_id || reasonings.length === 1) && (
+              <Stack className="reasoning-steps" spacing={0.75} sx={{ p: 1.25 }}>
+                {r.steps.map(step => {
+                  const stepKey = `${r.agent_id}:${step.step_name}`
+                  const isExpanded = expandedSteps.has(stepKey)
 
-                return (
-                  <div key={step.step_name} className={`reasoning-step status-${step.status}`}>
-                    <div
-                      className="reasoning-step-header"
-                      onClick={() => toggleStep(r.agent_id, step.step_name)}
-                    >
-                      <span className={`step-status-icon status-${step.status}`}>
-                        {getStepStatusIcon(step.status)}
-                      </span>
-                      <span className="step-name">{step.step_name}</span>
-                      {step.duration_ms !== undefined && (
-                        <span className="step-duration">
-                          {step.duration_ms < 1000
-                            ? `${step.duration_ms}ms`
-                            : `${(step.duration_ms / 1000).toFixed(1)}s`
-                          }
-                        </span>
+                  return (
+                    <Box key={step.step_name} className={`reasoning-step status-${step.status}`} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                      <Stack
+                        className="reasoning-step-header"
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        onClick={() => toggleStep(r.agent_id, step.step_name)}
+                        sx={{ p: 1, cursor: 'pointer' }}
+                      >
+                        <Typography className={`step-status-icon status-${step.status}`} sx={{ color: STATUS_COLORS[step.status] || 'text.secondary', fontSize: '0.875rem' }}>
+                          {getStepStatusIcon(step.status)}
+                        </Typography>
+                        <Typography className="step-name" variant="body2" sx={{ fontWeight: 600 }}>
+                          {step.step_name}
+                        </Typography>
+                        {step.duration_ms !== undefined && (
+                          <Typography className="step-duration" variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                            {step.duration_ms < 1000 ? `${step.duration_ms}ms` : `${(step.duration_ms / 1000).toFixed(1)}s`}
+                          </Typography>
+                        )}
+                      </Stack>
+
+                      {isExpanded && (
+                        <Box className="reasoning-step-detail" sx={{ p: 1, pt: 0, borderTop: '1px solid', borderColor: 'divider' }}>
+                          {step.reasoning && (
+                            <Box className="step-reasoning" sx={{ mb: 1 }}>
+                              <Typography className="step-detail-label" variant="caption" color="text.secondary">Reasoning</Typography>
+                              <Typography className="step-detail-content" variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{step.reasoning}</Typography>
+                            </Box>
+                          )}
+                          {step.output && (
+                            <Box className="step-output">
+                              <Typography className="step-detail-label" variant="caption" color="text.secondary">Output</Typography>
+                              <Box
+                                component="pre"
+                                className="step-detail-content step-detail-pre"
+                                sx={{
+                                  m: 0,
+                                  mt: 0.25,
+                                  p: 1,
+                                  borderRadius: 1,
+                                  bgcolor: 'background.default',
+                                  border: '1px solid',
+                                  borderColor: 'divider',
+                                  whiteSpace: 'pre-wrap',
+                                  fontFamily: '"IBM Plex Mono", monospace',
+                                  fontSize: '0.75rem',
+                                }}
+                              >
+                                {step.output}
+                              </Box>
+                            </Box>
+                          )}
+                        </Box>
                       )}
-                    </div>
-
-                    {isExpanded && (
-                      <div className="reasoning-step-detail">
-                        {step.reasoning && (
-                          <div className="step-reasoning">
-                            <div className="step-detail-label">Reasoning</div>
-                            <div className="step-detail-content">{step.reasoning}</div>
-                          </div>
-                        )}
-                        {step.output && (
-                          <div className="step-output">
-                            <div className="step-detail-label">Output</div>
-                            <pre className="step-detail-content step-detail-pre">{step.output}</pre>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
+                    </Box>
+                  )
+                })}
+              </Stack>
+            )}
+          </Card>
+        ))}
+      </Stack>
+    </Box>
   )
 }
