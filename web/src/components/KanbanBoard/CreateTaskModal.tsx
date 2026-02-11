@@ -3,8 +3,18 @@
  */
 
 import { useState } from 'react'
+import {
+  Alert,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  MenuItem,
+  Stack,
+  TextField,
+} from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../../api'
-import './KanbanBoard.css'
 
 interface Props {
   projectDir?: string
@@ -57,75 +67,79 @@ export function CreateTaskModal({ projectDir, onCreated, onClose }: Props) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>Create Task</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-        <form onSubmit={handleSubmit} className="modal-body">
-          <div className="form-group">
-            <label>Title *</label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Task title"
-              autoFocus
-              required
-            />
-          </div>
-          <div className="form-group">
-            <label>Description</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Task description..."
-              rows={4}
-            />
-          </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label>Type</label>
-              <select value={taskType} onChange={(e) => setTaskType(e.target.value)}>
-                <option value="feature">Feature</option>
-                <option value="bug">Bug</option>
-                <option value="refactor">Refactor</option>
-                <option value="research">Research</option>
-                <option value="test">Test</option>
-                <option value="docs">Docs</option>
-                <option value="security">Security</option>
-                <option value="performance">Performance</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Priority</label>
-              <select value={priority} onChange={(e) => setPriority(e.target.value)}>
-                <option value="P0">P0 - Critical</option>
-                <option value="P1">P1 - High</option>
-                <option value="P2">P2 - Medium</option>
-                <option value="P3">P3 - Low</option>
-              </select>
-            </div>
-          </div>
-          <div className="form-group">
-            <label>Labels (comma-separated)</label>
-            <input
-              type="text"
-              value={labels}
-              onChange={(e) => setLabels(e.target.value)}
-              placeholder="auth, urgent, frontend"
-            />
-          </div>
-          {error && <div className="form-error">{error}</div>}
-          <div className="modal-footer">
-            <button type="button" className="btn-cancel" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-create" disabled={saving || !title.trim()}>
-              {saving ? 'Creating...' : 'Create Task'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <Dialog open onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Create Task</DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={1.5} component="form" onSubmit={handleSubmit} id="create-task-form">
+          <TextField
+            label="Title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Task title"
+            autoFocus
+            required
+            fullWidth
+          />
+
+          <TextField
+            label="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Task description..."
+            multiline
+            minRows={4}
+            fullWidth
+          />
+
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+            <TextField
+              label="Type"
+              select
+              value={taskType}
+              onChange={(e) => setTaskType(e.target.value)}
+              fullWidth
+            >
+              <MenuItem value="feature">Feature</MenuItem>
+              <MenuItem value="bug">Bug</MenuItem>
+              <MenuItem value="refactor">Refactor</MenuItem>
+              <MenuItem value="research">Research</MenuItem>
+              <MenuItem value="test">Test</MenuItem>
+              <MenuItem value="docs">Docs</MenuItem>
+              <MenuItem value="security">Security</MenuItem>
+              <MenuItem value="performance">Performance</MenuItem>
+            </TextField>
+
+            <TextField
+              label="Priority"
+              select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+              fullWidth
+            >
+              <MenuItem value="P0">P0 - Critical</MenuItem>
+              <MenuItem value="P1">P1 - High</MenuItem>
+              <MenuItem value="P2">P2 - Medium</MenuItem>
+              <MenuItem value="P3">P3 - Low</MenuItem>
+            </TextField>
+          </Stack>
+
+          <TextField
+            label="Labels"
+            value={labels}
+            onChange={(e) => setLabels(e.target.value)}
+            placeholder="auth, urgent, frontend"
+            fullWidth
+          />
+
+          {error && <Alert severity="error">{error}</Alert>}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={saving}>Cancel</Button>
+        <Button type="submit" form="create-task-form" variant="contained" disabled={saving || !title.trim()}>
+          {saving ? 'Creating...' : 'Create Task'}
+        </Button>
+      </DialogActions>
+    </Dialog>
   )
 }

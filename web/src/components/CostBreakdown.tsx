@@ -1,4 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import {
+  Box,
+  Chip,
+  LinearProgress,
+  Stack,
+  Tab,
+  Tabs,
+  Typography,
+  Alert,
+} from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
 import EmptyState from './EmptyState'
@@ -30,7 +40,6 @@ interface TaskBoardItem {
 type TabId = 'agent' | 'task' | 'step'
 
 const PIPELINE_STEPS = ['plan', 'implement', 'verify', 'review', 'commit'] as const
-
 const BUDGET_WARNING_THRESHOLD = 0.8
 
 const normalizeAgents = (value: unknown): AgentCost[] => {
@@ -57,7 +66,6 @@ const normalizeAgents = (value: unknown): AgentCost[] => {
 const normalizeTasks = (value: unknown): TaskBoardItem[] => {
   if (!value || typeof value !== 'object') return []
 
-  // The board endpoint may return { columns: [...] } or an array directly
   let items: unknown[] = []
   if (Array.isArray(value)) {
     items = value
@@ -139,22 +147,14 @@ export default function CostBreakdown({ projectDir }: Props) {
     fetchData()
   }, [projectDir]))
 
-  // Totals
-  const totalCost = useMemo(() => {
-    return agents.reduce((sum, a) => sum + a.cost_usd, 0)
-  }, [agents])
-
-  const totalTokens = useMemo(() => {
-    return agents.reduce((sum, a) => sum + a.tokens_used, 0)
-  }, [agents])
-
+  const totalCost = useMemo(() => agents.reduce((sum, a) => sum + a.cost_usd, 0), [agents])
+  const totalTokens = useMemo(() => agents.reduce((sum, a) => sum + a.tokens_used, 0), [agents])
   const avgCostPerTask = useMemo(() => {
     if (tasks.length === 0) return 0
     const taskTotal = tasks.reduce((sum, t) => sum + t.cost_usd, 0)
     return taskTotal / tasks.length
   }, [tasks])
 
-  // Budget warnings
   const budgetWarnings = useMemo(() => {
     return agents.filter((a) => {
       if (!a.budget_usd || a.budget_usd <= 0) return false
@@ -162,14 +162,11 @@ export default function CostBreakdown({ projectDir }: Props) {
     })
   }, [agents])
 
-  // By task type aggregation
   const taskTypeBreakdown = useMemo(() => {
     const map: Record<string, { tokens: number; cost: number; count: number }> = {}
     for (const t of tasks) {
       const key = t.task_type || 'unknown'
-      if (!map[key]) {
-        map[key] = { tokens: 0, cost: 0, count: 0 }
-      }
+      if (!map[key]) map[key] = { tokens: 0, cost: 0, count: 0 }
       map[key].tokens += t.tokens_used
       map[key].cost += t.cost_usd
       map[key].count += 1
@@ -179,17 +176,12 @@ export default function CostBreakdown({ projectDir }: Props) {
       .sort((a, b) => b.cost - a.cost)
   }, [tasks])
 
-  // By step aggregation
   const stepBreakdown = useMemo(() => {
     const map: Record<string, { tokens: number; cost: number; count: number }> = {}
-    for (const step of PIPELINE_STEPS) {
-      map[step] = { tokens: 0, cost: 0, count: 0 }
-    }
+    for (const step of PIPELINE_STEPS) map[step] = { tokens: 0, cost: 0, count: 0 }
     for (const t of tasks) {
       const step = t.step || 'unknown'
-      if (!map[step]) {
-        map[step] = { tokens: 0, cost: 0, count: 0 }
-      }
+      if (!map[step]) map[step] = { tokens: 0, cost: 0, count: 0 }
       map[step].tokens += t.tokens_used
       map[step].cost += t.cost_usd
       map[step].count += 1
@@ -199,27 +191,12 @@ export default function CostBreakdown({ projectDir }: Props) {
       .sort((a, b) => b.cost - a.cost)
   }, [tasks])
 
-  // Max cost for bar chart scaling
-  const maxAgentCost = useMemo(() => {
-    return Math.max(...agents.map((a) => a.cost_usd), 0.01)
-  }, [agents])
+  const maxAgentCost = useMemo(() => Math.max(...agents.map((a) => a.cost_usd), 0.01), [agents])
+  const maxTaskTypeCost = useMemo(() => Math.max(...taskTypeBreakdown.map((t) => t.cost), 0.01), [taskTypeBreakdown])
+  const maxStepCost = useMemo(() => Math.max(...stepBreakdown.map((s) => s.cost), 0.01), [stepBreakdown])
 
-  const maxTaskTypeCost = useMemo(() => {
-    return Math.max(...taskTypeBreakdown.map((t) => t.cost), 0.01)
-  }, [taskTypeBreakdown])
-
-  const maxStepCost = useMemo(() => {
-    return Math.max(...stepBreakdown.map((s) => s.cost), 0.01)
-  }, [stepBreakdown])
-
-  const formatCost = (cost: number): string => {
-    return `$${cost.toFixed(4)}`
-  }
-
-  const formatTokens = (tokens: number): string => {
-    return tokens.toLocaleString()
-  }
-
+  const formatCost = (cost: number): string => `$${cost.toFixed(4)}`
+  const formatTokens = (tokens: number): string => tokens.toLocaleString()
   const formatDuration = (seconds: number): string => {
     if (seconds === 0) return '0s'
     const hours = Math.floor(seconds / 3600)
@@ -234,15 +211,9 @@ export default function CostBreakdown({ projectDir }: Props) {
 
   const hasData = agents.length > 0 || tasks.length > 0
 
-  const tabs: { id: TabId; label: string }[] = [
-    { id: 'agent', label: 'By Agent' },
-    { id: 'task', label: 'By Task Type' },
-    { id: 'step', label: 'By Step' },
-  ]
-
   return (
-    <div className="card">
-      <h2>Cost Breakdown</h2>
+    <Box>
+      <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>Cost Breakdown</Typography>
 
       {loading ? (
         <LoadingSpinner label="Loading cost data..." />
@@ -261,179 +232,120 @@ export default function CostBreakdown({ projectDir }: Props) {
           size="sm"
         />
       ) : (
-        <div className="cost-breakdown-content">
-          {/* Summary cards */}
-          <div className="cost-breakdown-summary">
-            <div className="cost-breakdown-summary-card">
-              <div className="cost-breakdown-summary-value">{formatCost(totalCost)}</div>
-              <div className="cost-breakdown-summary-label">Total Cost</div>
-            </div>
-            <div className="cost-breakdown-summary-card">
-              <div className="cost-breakdown-summary-value">{formatTokens(totalTokens)}</div>
-              <div className="cost-breakdown-summary-label">Total Tokens</div>
-            </div>
-            <div className="cost-breakdown-summary-card">
-              <div className="cost-breakdown-summary-value">{formatCost(avgCostPerTask)}</div>
-              <div className="cost-breakdown-summary-label">Avg Cost / Task</div>
-            </div>
-          </div>
+        <Stack spacing={1.5} className="cost-breakdown-content">
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" className="cost-breakdown-summary">
+            <Chip className="cost-breakdown-summary-card" label={`Total Cost ${formatCost(totalCost)}`} color="warning" variant="outlined" />
+            <Chip className="cost-breakdown-summary-card" label={`Total Tokens ${formatTokens(totalTokens)}`} color="info" variant="outlined" />
+            <Chip className="cost-breakdown-summary-card" label={`Avg Cost / Task ${formatCost(avgCostPerTask)}`} variant="outlined" />
+          </Stack>
 
-          {/* Budget warnings */}
           {budgetWarnings.length > 0 && (
-            <div className="cost-breakdown-warnings">
+            <Stack spacing={1} className="cost-breakdown-warnings">
               {budgetWarnings.map((agent) => (
-                <div key={agent.agent_id} className="cost-breakdown-warning">
-                  <span className="cost-breakdown-warning-icon">&#x26A0;</span>
-                  <span>
-                    <strong>{agent.name}</strong> has used{' '}
-                    {agent.budget_usd
-                      ? `${Math.round((agent.cost_usd / agent.budget_usd) * 100)}%`
-                      : 'N/A'}{' '}
-                    of its budget ({formatCost(agent.cost_usd)} / {formatCost(agent.budget_usd || 0)})
-                  </span>
-                </div>
+                <Alert key={agent.agent_id} className="cost-breakdown-warning" severity="warning">
+                  <strong>{agent.name}</strong> has used{' '}
+                  {agent.budget_usd
+                    ? `${Math.round((agent.cost_usd / agent.budget_usd) * 100)}%`
+                    : 'N/A'}{' '}
+                  of budget ({formatCost(agent.cost_usd)} / {formatCost(agent.budget_usd || 0)})
+                </Alert>
               ))}
-            </div>
+            </Stack>
           )}
 
-          {/* Tab navigation */}
-          <div className="cost-breakdown-tabs">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={`cost-breakdown-tab ${activeTab === tab.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <Tabs
+            className="cost-breakdown-tabs"
+            value={activeTab}
+            onChange={(_, value: TabId) => setActiveTab(value)}
+            variant="scrollable"
+            allowScrollButtonsMobile
+          >
+            <Tab className="cost-breakdown-tab" value="agent" label="By Agent" />
+            <Tab className="cost-breakdown-tab" value="task" label="By Task Type" />
+            <Tab className="cost-breakdown-tab" value="step" label="By Step" />
+          </Tabs>
 
-          {/* Tab content */}
-          <div className="cost-breakdown-tab-content">
+          <Box className="cost-breakdown-tab-content">
             {activeTab === 'agent' && (
-              <div className="cost-breakdown-list">
+              <Stack spacing={1} className="cost-breakdown-list">
                 {agents.length === 0 ? (
-                  <div className="cost-breakdown-empty">No agent data available</div>
+                  <Typography className="cost-breakdown-empty" color="text.secondary">No agent data available</Typography>
                 ) : (
-                  agents
-                    .slice()
-                    .sort((a, b) => b.cost_usd - a.cost_usd)
-                    .map((agent) => (
-                      <div key={agent.agent_id} className="cost-breakdown-row">
-                        <div className="cost-breakdown-row-header">
-                          <div className="cost-breakdown-row-name">
-                            <span className="cost-breakdown-agent-name">{agent.name}</span>
-                            {agent.role && (
-                              <span className="cost-breakdown-agent-role">{agent.role}</span>
-                            )}
-                          </div>
-                          <div className="cost-breakdown-row-stats">
-                            <span className="cost-breakdown-stat-tokens">
-                              {formatTokens(agent.tokens_used)} tokens
-                            </span>
-                            <span className="cost-breakdown-stat-cost">
-                              {formatCost(agent.cost_usd)}
-                            </span>
-                            <span className="cost-breakdown-stat-time">
-                              {formatDuration(agent.elapsed_seconds)}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="cost-breakdown-bar-track">
-                          <div
-                            className={`cost-breakdown-bar-fill ${
-                              agent.budget_usd && agent.cost_usd / agent.budget_usd >= BUDGET_WARNING_THRESHOLD
-                                ? 'warning'
-                                : ''
-                            }`}
-                            style={{
-                              width: `${Math.min((agent.cost_usd / maxAgentCost) * 100, 100)}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))
+                  agents.slice().sort((a, b) => b.cost_usd - a.cost_usd).map((agent) => (
+                    <Box key={agent.agent_id} className="cost-breakdown-row">
+                      <Stack direction="row" justifyContent="space-between" className="cost-breakdown-row-header" sx={{ mb: 0.5 }}>
+                        <Stack direction="row" spacing={1} className="cost-breakdown-row-name">
+                          <Typography className="cost-breakdown-agent-name" fontWeight={600}>{agent.name}</Typography>
+                          {agent.role && <Typography className="cost-breakdown-agent-role" variant="caption" color="text.secondary">{agent.role}</Typography>}
+                        </Stack>
+                        <Stack direction="row" spacing={1} className="cost-breakdown-row-stats">
+                          <Typography className="cost-breakdown-stat-tokens" variant="caption">{formatTokens(agent.tokens_used)} tokens</Typography>
+                          <Typography className="cost-breakdown-stat-cost" variant="caption">{formatCost(agent.cost_usd)}</Typography>
+                          <Typography className="cost-breakdown-stat-time" variant="caption">{formatDuration(agent.elapsed_seconds)}</Typography>
+                        </Stack>
+                      </Stack>
+                      <LinearProgress
+                        className="cost-breakdown-bar-track"
+                        variant="determinate"
+                        value={Math.min((agent.cost_usd / maxAgentCost) * 100, 100)}
+                        color={agent.budget_usd && agent.cost_usd / agent.budget_usd >= BUDGET_WARNING_THRESHOLD ? 'warning' : 'info'}
+                      />
+                    </Box>
+                  ))
                 )}
-              </div>
+              </Stack>
             )}
 
             {activeTab === 'task' && (
-              <div className="cost-breakdown-list">
+              <Stack spacing={1} className="cost-breakdown-list">
                 {taskTypeBreakdown.length === 0 ? (
-                  <div className="cost-breakdown-empty">No task data available</div>
+                  <Typography className="cost-breakdown-empty" color="text.secondary">No task data available</Typography>
                 ) : (
                   taskTypeBreakdown.map((entry) => (
-                    <div key={entry.type} className="cost-breakdown-row">
-                      <div className="cost-breakdown-row-header">
-                        <div className="cost-breakdown-row-name">
-                          <span className="cost-breakdown-type-name">{entry.type}</span>
-                          <span className="cost-breakdown-type-count">
-                            {entry.count} task{entry.count !== 1 ? 's' : ''}
-                          </span>
-                        </div>
-                        <div className="cost-breakdown-row-stats">
-                          <span className="cost-breakdown-stat-tokens">
-                            {formatTokens(entry.tokens)} tokens
-                          </span>
-                          <span className="cost-breakdown-stat-cost">
-                            {formatCost(entry.cost)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="cost-breakdown-bar-track">
-                        <div
-                          className="cost-breakdown-bar-fill"
-                          style={{
-                            width: `${Math.min((entry.cost / maxTaskTypeCost) * 100, 100)}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
+                    <Box key={entry.type} className="cost-breakdown-row">
+                      <Stack direction="row" justifyContent="space-between" className="cost-breakdown-row-header" sx={{ mb: 0.5 }}>
+                        <Stack direction="row" spacing={1} className="cost-breakdown-row-name">
+                          <Typography className="cost-breakdown-type-name" fontWeight={600}>{entry.type}</Typography>
+                          <Typography className="cost-breakdown-type-count" variant="caption" color="text.secondary">{entry.count} tasks</Typography>
+                        </Stack>
+                        <Stack direction="row" spacing={1} className="cost-breakdown-row-stats">
+                          <Typography className="cost-breakdown-stat-tokens" variant="caption">{formatTokens(entry.tokens)} tokens</Typography>
+                          <Typography className="cost-breakdown-stat-cost" variant="caption">{formatCost(entry.cost)}</Typography>
+                        </Stack>
+                      </Stack>
+                      <LinearProgress className="cost-breakdown-bar-track" variant="determinate" value={Math.min((entry.cost / maxTaskTypeCost) * 100, 100)} />
+                    </Box>
                   ))
                 )}
-              </div>
+              </Stack>
             )}
 
             {activeTab === 'step' && (
-              <div className="cost-breakdown-list">
+              <Stack spacing={1} className="cost-breakdown-list">
                 {stepBreakdown.length === 0 ? (
-                  <div className="cost-breakdown-empty">No step data available</div>
+                  <Typography className="cost-breakdown-empty" color="text.secondary">No step data available</Typography>
                 ) : (
                   stepBreakdown.map((entry) => (
-                    <div key={entry.step} className="cost-breakdown-row">
-                      <div className="cost-breakdown-row-header">
-                        <div className="cost-breakdown-row-name">
-                          <span className="cost-breakdown-step-name">{entry.step}</span>
-                          <span className="cost-breakdown-type-count">
-                            {entry.count} task{entry.count !== 1 ? 's' : ''}
-                          </span>
-                        </div>
-                        <div className="cost-breakdown-row-stats">
-                          <span className="cost-breakdown-stat-tokens">
-                            {formatTokens(entry.tokens)} tokens
-                          </span>
-                          <span className="cost-breakdown-stat-cost">
-                            {formatCost(entry.cost)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="cost-breakdown-bar-track">
-                        <div
-                          className="cost-breakdown-bar-fill"
-                          style={{
-                            width: `${Math.min((entry.cost / maxStepCost) * 100, 100)}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
+                    <Box key={entry.step} className="cost-breakdown-row">
+                      <Stack direction="row" justifyContent="space-between" className="cost-breakdown-row-header" sx={{ mb: 0.5 }}>
+                        <Stack direction="row" spacing={1} className="cost-breakdown-row-name">
+                          <Typography className="cost-breakdown-step-name" fontWeight={600}>{entry.step}</Typography>
+                          <Typography className="cost-breakdown-type-count" variant="caption" color="text.secondary">{entry.count} tasks</Typography>
+                        </Stack>
+                        <Stack direction="row" spacing={1} className="cost-breakdown-row-stats">
+                          <Typography className="cost-breakdown-stat-tokens" variant="caption">{formatTokens(entry.tokens)} tokens</Typography>
+                          <Typography className="cost-breakdown-stat-cost" variant="caption">{formatCost(entry.cost)}</Typography>
+                        </Stack>
+                      </Stack>
+                      <LinearProgress className="cost-breakdown-bar-track" variant="determinate" value={Math.min((entry.cost / maxStepCost) * 100, 100)} />
+                    </Box>
                   ))
                 )}
-              </div>
+              </Stack>
             )}
-          </div>
-        </div>
+          </Box>
+        </Stack>
       )}
-    </div>
+    </Box>
   )
 }

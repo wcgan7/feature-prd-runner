@@ -4,12 +4,21 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import {
+  Box,
+  Button,
+  Card,
+  Chip,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../../api'
 import { useChannel } from '../../contexts/WebSocketContext'
 import { TaskCard } from './TaskCard'
 import { TaskDetail } from './TaskDetail'
 import { CreateTaskModal } from './CreateTaskModal'
-import './KanbanBoard.css'
 
 interface TaskData {
   id: string
@@ -131,13 +140,10 @@ export default function KanbanBoard({ projectDir }: Props) {
     localStorage.setItem(STORAGE_KEY_SAVED_VIEWS, JSON.stringify(savedViews))
   }, [savedViews])
 
-  // ---- Keyboard shortcuts ----
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Skip when user is typing in an input/textarea
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
-        // Allow Escape to blur search input
         if (e.key === 'Escape') {
           ;(e.target as HTMLElement).blur()
         }
@@ -181,7 +187,6 @@ export default function KanbanBoard({ projectDir }: Props) {
     fetchBoard()
   }, [fetchBoard])
 
-  // Real-time updates via WebSocket
   useChannel('tasks', useCallback((_event: string, _data: any) => {
     fetchBoard()
   }, [fetchBoard]))
@@ -249,7 +254,6 @@ export default function KanbanBoard({ projectDir }: Props) {
     applyView(BUILTIN_VIEWS[0])
   }
 
-  // Filter logic
   const filteredBoard = useMemo(() => {
     if (!board?.columns) return null
     const filtered: Record<string, TaskData[]> = {}
@@ -273,118 +277,118 @@ export default function KanbanBoard({ projectDir }: Props) {
     : 0
 
   if (loading) {
-    return <div className="kanban-loading">Loading board...</div>
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 220 }}>
+        <Typography color="text.secondary">Loading board...</Typography>
+      </Box>
+    )
   }
 
   return (
-    <div className="kanban-container">
-      {/* Toolbar */}
-      <div className="kanban-toolbar">
-        <div className="kanban-toolbar-left">
-          <h2 className="kanban-title">Task Board</h2>
-          <span className="kanban-count">{totalTasks} tasks</span>
-        </div>
-        <div className="kanban-toolbar-center">
-          <input
-            ref={searchInputRef}
-            className="kanban-search"
-            type="text"
-            placeholder="Search tasks... ( / )"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <select
-            className="kanban-filter"
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-          >
-            <option value="">All types</option>
-            <option value="feature">Feature</option>
-            <option value="bug">Bug</option>
-            <option value="refactor">Refactor</option>
-            <option value="research">Research</option>
-            <option value="test">Test</option>
-            <option value="docs">Docs</option>
-          </select>
-          <select
-            className="kanban-filter"
-            value={filterPriority}
-            onChange={(e) => setFilterPriority(e.target.value)}
-          >
-            <option value="">All priorities</option>
-            <option value="P0">P0 - Critical</option>
-            <option value="P1">P1 - High</option>
-            <option value="P2">P2 - Medium</option>
-              <option value="P3">P3 - Low</option>
-            </select>
-          <select
-            className="kanban-filter"
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-          >
-            <option value="">All status</option>
-            <option value="backlog">Backlog</option>
-            <option value="ready">Ready</option>
-            <option value="in_progress">In Progress</option>
-            <option value="in_review">In Review</option>
-            <option value="blocked">Blocked</option>
-            <option value="done">Done</option>
-          </select>
-          <select
-            className="kanban-filter"
-            aria-label="Saved view"
-            value={selectedViewId}
-            onChange={(e) => {
-              const next = allViews.find((v) => v.id === e.target.value)
-              if (next) applyView(next)
-            }}
-          >
-            {allViews.map((view) => (
-              <option key={view.id} value={view.id}>{view.name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="kanban-toolbar-right">
-          <button className="kanban-btn-refresh" onClick={saveCurrentView} title="Save current filters">
-            Save View
-          </button>
-          <button className="kanban-btn-refresh" onClick={clearFilters} title="Clear filters">
-            Clear
-          </button>
-          <button className="kanban-btn-refresh" onClick={fetchBoard} title="Refresh">
-            &#x21bb;
-          </button>
-          <button className="kanban-btn-create" onClick={() => setShowCreate(true)} title="New task (N)">
-            + New Task
-          </button>
-        </div>
-      </div>
+    <Stack spacing={1} sx={{ height: '100%' }}>
+      <Card variant="outlined" sx={{ p: 1.25 }}>
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ lg: 'center' }}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Typography variant="h6">Task Board</Typography>
+            <Chip size="small" label={`${totalTasks} tasks`} variant="outlined" />
+          </Stack>
 
-      <div className="kanban-quick-actions">
-        <button className="kanban-quick-btn" onClick={() => applyView(BUILTIN_VIEWS[1])}>Blocked Only</button>
-        <button className="kanban-quick-btn" onClick={() => applyView(BUILTIN_VIEWS[2])}>Critical</button>
-        <button className="kanban-quick-btn" onClick={() => applyView(BUILTIN_VIEWS[3])}>Needs Review</button>
-      </div>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ md: 'center' }} sx={{ flex: 1, maxWidth: 820 }}>
+            <TextField
+              inputRef={searchInputRef}
+              size="small"
+              placeholder="Search tasks... ( / )"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              sx={{ minWidth: 210 }}
+            />
+            <TextField size="small" select value={filterType} onChange={(e) => setFilterType(e.target.value)} sx={{ minWidth: 130 }}>
+              <MenuItem value="">All types</MenuItem>
+              <MenuItem value="feature">Feature</MenuItem>
+              <MenuItem value="bug">Bug</MenuItem>
+              <MenuItem value="refactor">Refactor</MenuItem>
+              <MenuItem value="research">Research</MenuItem>
+              <MenuItem value="test">Test</MenuItem>
+              <MenuItem value="docs">Docs</MenuItem>
+            </TextField>
+            <TextField size="small" select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} sx={{ minWidth: 150 }}>
+              <MenuItem value="">All priorities</MenuItem>
+              <MenuItem value="P0">P0 - Critical</MenuItem>
+              <MenuItem value="P1">P1 - High</MenuItem>
+              <MenuItem value="P2">P2 - Medium</MenuItem>
+              <MenuItem value="P3">P3 - Low</MenuItem>
+            </TextField>
+            <TextField size="small" select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 145 }}>
+              <MenuItem value="">All status</MenuItem>
+              <MenuItem value="backlog">Backlog</MenuItem>
+              <MenuItem value="ready">Ready</MenuItem>
+              <MenuItem value="in_progress">In Progress</MenuItem>
+              <MenuItem value="in_review">In Review</MenuItem>
+              <MenuItem value="blocked">Blocked</MenuItem>
+              <MenuItem value="done">Done</MenuItem>
+            </TextField>
+            <TextField
+              size="small"
+              select
+              value={selectedViewId}
+              onChange={(e) => {
+                const next = allViews.find((v) => v.id === e.target.value)
+                if (next) applyView(next)
+              }}
+              sx={{ minWidth: 145 }}
+            >
+              {allViews.map((view) => (
+                <MenuItem key={view.id} value={view.id}>{view.name}</MenuItem>
+              ))}
+            </TextField>
+          </Stack>
 
-      {/* Board */}
-      <div className="kanban-board">
+          <Stack direction="row" spacing={0.75}>
+            <Button variant="outlined" onClick={saveCurrentView}>Save View</Button>
+            <Button variant="outlined" onClick={clearFilters}>Clear</Button>
+            <Button variant="outlined" onClick={fetchBoard}>Refresh</Button>
+            <Button variant="contained" onClick={() => setShowCreate(true)}>New Task</Button>
+          </Stack>
+        </Stack>
+      </Card>
+
+      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+        <Button size="small" variant="outlined" onClick={() => applyView(BUILTIN_VIEWS[1])}>Blocked Only</Button>
+        <Button size="small" variant="outlined" onClick={() => applyView(BUILTIN_VIEWS[2])}>Critical</Button>
+        <Button size="small" variant="outlined" onClick={() => applyView(BUILTIN_VIEWS[3])}>Needs Review</Button>
+      </Stack>
+
+      <Box sx={{ display: 'flex', gap: 1, flex: 1, overflowX: 'auto', pb: 0.5 }}>
         {COLUMN_ORDER.map((col) => {
           const tasks = filteredBoard?.columns[col] || []
-          const blockedTasks = col === 'ready' ? (filteredBoard?.columns['blocked'] || []) : []
+          const blockedTasks = col === 'ready' ? (filteredBoard?.columns.blocked || []) : []
           const allTasks = [...tasks, ...blockedTasks]
 
           return (
-            <div
+            <Card
               key={col}
-              className={`kanban-column ${draggedTaskId ? 'kanban-column-drop-target' : ''}`}
+              variant="outlined"
+              sx={{
+                minWidth: 250,
+                maxWidth: 340,
+                width: 320,
+                display: 'flex',
+                flexDirection: 'column',
+                bgcolor: 'background.default',
+                outline: draggedTaskId ? '2px dashed' : 'none',
+                outlineColor: draggedTaskId ? 'info.main' : 'transparent',
+              }}
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => handleDrop(col)}
             >
-              <div className="kanban-column-header">
-                <span className="kanban-column-title">{COLUMN_LABELS[col]}</span>
-                <span className="kanban-column-count">{allTasks.length}</span>
-              </div>
-              <div className="kanban-column-body">
+              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ px: 1.25, py: 1, borderBottom: 1, borderColor: 'divider' }}>
+                <Typography variant="caption" sx={{ textTransform: 'uppercase', fontWeight: 700, letterSpacing: 0.5, color: 'text.secondary' }}>
+                  {COLUMN_LABELS[col]}
+                </Typography>
+                <Chip size="small" label={allTasks.length} />
+              </Stack>
+
+              <Stack spacing={0.75} sx={{ p: 1, overflowY: 'auto', flex: 1 }}>
                 {allTasks.map((task) => (
                   <TaskCard
                     key={task.id}
@@ -395,15 +399,16 @@ export default function KanbanBoard({ projectDir }: Props) {
                   />
                 ))}
                 {allTasks.length === 0 && (
-                  <div className="kanban-empty">No tasks</div>
+                  <Typography variant="body2" color="text.disabled" sx={{ textAlign: 'center', py: 3 }}>
+                    No tasks
+                  </Typography>
                 )}
-              </div>
-            </div>
+              </Stack>
+            </Card>
           )
         })}
-      </div>
+      </Box>
 
-      {/* Task detail slide-over */}
       {selectedTask && (
         <TaskDetail
           task={selectedTask}
@@ -413,7 +418,6 @@ export default function KanbanBoard({ projectDir }: Props) {
         />
       )}
 
-      {/* Create modal */}
       {showCreate && (
         <CreateTaskModal
           projectDir={projectDir}
@@ -421,6 +425,6 @@ export default function KanbanBoard({ projectDir }: Props) {
           onClose={() => setShowCreate(false)}
         />
       )}
-    </div>
+    </Stack>
   )
 }

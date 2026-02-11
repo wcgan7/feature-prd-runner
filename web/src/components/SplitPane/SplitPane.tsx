@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import './SplitPane.css'
+import { Box } from '@mui/material'
 
 const STORAGE_KEY = 'split-pane-width'
 
@@ -114,11 +114,15 @@ export default function SplitPane({
   const rootClassName = ['split-pane', className].filter(Boolean).join(' ')
 
   return (
-    <div ref={containerRef} className={rootClassName}>
-      <div className="split-left" style={{ width: `${leftWidth}%` }}>
+    <Box ref={containerRef} className={rootClassName} sx={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
+      <Box
+        className="split-left"
+        sx={{ overflow: 'auto', height: '100%', minWidth: 0 }}
+        style={{ width: `${leftWidth}%` }}
+      >
         {left}
-      </div>
-      <div
+      </Box>
+      <Box
         className={`split-handle ${draggingRef.current ? 'split-handle-active' : ''}`}
         onMouseDown={handleMouseDown}
         role="separator"
@@ -126,10 +130,32 @@ export default function SplitPane({
         aria-valuenow={Math.round(leftWidth)}
         aria-valuemin={minLeftWidth}
         aria-valuemax={maxLeftWidth}
+        sx={{
+          flexShrink: 0,
+          width: 0.5,
+          cursor: 'col-resize',
+          bgcolor: draggingRef.current ? 'info.main' : 'transparent',
+          position: 'relative',
+          zIndex: 1,
+          transition: 'background-color 120ms ease',
+          '&:hover': { bgcolor: 'info.main' },
+          '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            left: -4,
+            right: -4,
+          },
+        }}
       />
-      <div className="split-right" style={{ width: `${100 - leftWidth}%` }}>
+      <Box
+        className="split-right"
+        sx={{ overflow: 'auto', height: '100%', minWidth: 0 }}
+        style={{ width: `${100 - leftWidth}%` }}
+      >
         {right}
-      </div>
-    </div>
+      </Box>
+    </Box>
   )
 }

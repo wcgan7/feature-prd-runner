@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import './ProjectSelector.css'
+import { Box, Chip, Paper, Typography } from '@mui/material'
 
 interface Project {
   name: string
@@ -63,68 +63,136 @@ export default function ProjectSelector({ currentProject, onProjectChange }: Pro
   }
 
   if (loading) {
-    return <div className="project-selector-loading">Loading projects...</div>
+    return (
+      <Typography variant="body2" sx={{ px: 1, color: 'text.secondary' }}>
+        Loading projects...
+      </Typography>
+    )
   }
 
   if (projects.length === 0) {
-    return <div className="project-selector-empty">No projects found</div>
+    return (
+      <Typography variant="body2" sx={{ px: 1, color: 'text.secondary' }}>
+        No projects found
+      </Typography>
+    )
   }
 
   return (
-    <div className="project-selector">
-      <button
+    <Box sx={{ position: 'relative' }}>
+      <Box
+        component="button"
         onClick={() => setShowDropdown(!showDropdown)}
-        className="project-selector-trigger"
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          px: 1.5,
+          py: 0.75,
+          border: 1,
+          borderColor: 'divider',
+          borderRadius: 1,
+          bgcolor: 'background.paper',
+          cursor: 'pointer',
+          fontSize: '0.875rem',
+          fontWeight: 500,
+          color: 'text.primary',
+          transition: 'background-color 0.2s ease, border-color 0.2s ease',
+          '&:hover': {
+            bgcolor: 'action.hover',
+            borderColor: 'text.secondary',
+          },
+        }}
       >
-        <span className="project-selector-icon">📁</span>
-        <span>{getCurrentProjectName()}</span>
-        <span className="project-selector-chevron">▼</span>
-      </button>
+        <Box component="span" sx={{ fontSize: '1rem' }}>📁</Box>
+        <Box component="span">{getCurrentProjectName()}</Box>
+        <Box component="span" sx={{ ml: 1, fontSize: '0.75rem' }}>▼</Box>
+      </Box>
 
       {showDropdown && (
         <>
-          {/* Backdrop */}
-          <div
+          <Box
             onClick={() => setShowDropdown(false)}
-            className="project-selector-backdrop"
+            sx={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: (theme) => theme.zIndex.modal - 1,
+            }}
           />
 
-          {/* Dropdown */}
-          <div className="project-selector-dropdown">
+          <Paper
+            elevation={12}
+            sx={{
+              position: 'absolute',
+              top: 'calc(100% + 6px)',
+              left: 0,
+              minWidth: 300,
+              maxWidth: 500,
+              maxHeight: 400,
+              overflowY: 'auto',
+              border: 1,
+              borderColor: 'divider',
+              zIndex: (theme) => theme.zIndex.modal,
+            }}
+          >
             {projects.map((project) => (
-              <div
+              <Box
                 key={project.path}
                 onClick={() => handleProjectSelect(project.path)}
-                className={`project-item ${project.path === currentProject ? 'active' : ''}`}
+                sx={{
+                  p: 1.5,
+                  borderBottom: 1,
+                  borderColor: 'divider',
+                  cursor: 'pointer',
+                  bgcolor: project.path === currentProject ? 'action.selected' : 'background.paper',
+                  transition: 'background-color 0.2s ease',
+                  '&:hover': {
+                    bgcolor: project.path === currentProject ? 'action.selected' : 'action.hover',
+                  },
+                }}
               >
-                <div className="project-item-content">
-                  <div className="project-item-main">
-                    <div className="project-item-header">
-                      <span className="project-item-name">{project.name}</span>
-                      <div
-                        className={`project-item-status ${getStatusClass(project.status)}`}
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <Box sx={{ flex: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        {project.name}
+                      </Typography>
+                      <Box
+                        sx={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          bgcolor: {
+                            active: 'info.main',
+                            idle: 'success.main',
+                            error: 'error.main',
+                            default: 'grey.500',
+                          }[getStatusClass(project.status)],
+                        }}
                       />
-                    </div>
-                    <div className="project-item-path">{project.path}</div>
+                    </Box>
+                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                      {project.path}
+                    </Typography>
                     {project.phases_total > 0 && (
-                      <div className="project-item-progress">
+                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                         {project.phases_completed} / {project.phases_total} phases completed
-                      </div>
+                      </Typography>
                     )}
-                  </div>
+                  </Box>
                   {project.path === currentProject && (
-                    <div className="project-item-badge">Active</div>
+                    <Chip label="Active" size="small" color="success" sx={{ height: 20 }} />
                   )}
-                </div>
-              </div>
+                </Box>
+              </Box>
             ))}
 
-            <div className="project-selector-footer">
+            <Box sx={{ p: 1.5, fontSize: '0.75rem', color: 'text.secondary', borderTop: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
               {projects.length} project{projects.length !== 1 ? 's' : ''} found
-            </div>
-          </div>
+            </Box>
+          </Paper>
         </>
       )}
-    </div>
+    </Box>
   )
 }

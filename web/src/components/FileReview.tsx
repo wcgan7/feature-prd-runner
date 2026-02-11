@@ -1,4 +1,12 @@
 import { useState, useEffect } from 'react'
+import {
+  Box,
+  Button,
+  Chip,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
 import './FileReview.css'
 import { useToast } from '../contexts/ToastContext'
 import EmptyState from './EmptyState'
@@ -40,14 +48,11 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
 
       const headers: HeadersInit = {}
       const token = localStorage.getItem('feature-prd-runner-auth-token')
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
+      if (token) headers.Authorization = `Bearer ${token}`
 
       const response = await fetch(`/api/file-changes?${params}`, { headers })
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`)
-      }
+      if (!response.ok) throw new Error(`HTTP error ${response.status}`)
+
       const data = await response.json()
       setFiles(Array.isArray(data) ? data : [])
       setError(null)
@@ -65,13 +70,9 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
       const params = new URLSearchParams()
       if (projectDir) params.append('project_dir', projectDir)
 
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      }
+      const headers: HeadersInit = { 'Content-Type': 'application/json' }
       const token = localStorage.getItem('feature-prd-runner-auth-token')
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
+      if (token) headers.Authorization = `Bearer ${token}`
 
       const response = await fetch(`/api/file-review?${params}`, {
         method: 'POST',
@@ -83,18 +84,9 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
         }),
       })
 
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`)
-      }
+      if (!response.ok) throw new Error(`HTTP error ${response.status}`)
 
-      // Update local state
-      setFiles(
-        files.map((f) =>
-          f.file_path === filePath ? { ...f, approved } : f
-        )
-      )
-
-      // Clear comment
+      setFiles(files.map((f) => (f.file_path === filePath ? { ...f, approved } : f)))
       setComments((prev) => {
         const updated = { ...prev }
         delete updated[filePath]
@@ -115,45 +107,32 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
 
   const getStatusColor = (status: string): string => {
     switch (status) {
-      case 'added':
-        return '#4caf50'
-      case 'modified':
-        return '#2196f3'
-      case 'deleted':
-        return '#f44336'
-      default:
-        return '#9e9e9e'
+      case 'added': return '#4caf50'
+      case 'modified': return '#2196f3'
+      case 'deleted': return '#f44336'
+      default: return '#9e9e9e'
     }
   }
 
   const getStatusIcon = (status: string): string => {
     switch (status) {
-      case 'added':
-        return '+'
-      case 'modified':
-        return '~'
-      case 'deleted':
-        return '-'
-      default:
-        return '?'
+      case 'added': return '+'
+      case 'modified': return '~'
+      case 'deleted': return '-'
+      default: return '?'
     }
   }
 
   const renderDiff = (diff: string) => {
     if (!diff) return <div className="no-diff">No diff available</div>
 
-    const lines = diff.split('\n')
     return (
       <div className="diff-view">
-        {lines.map((line, idx) => {
+        {diff.split('\n').map((line, idx) => {
           let className = 'diff-line'
-          if (line.startsWith('+') && !line.startsWith('+++')) {
-            className += ' addition'
-          } else if (line.startsWith('-') && !line.startsWith('---')) {
-            className += ' deletion'
-          } else if (line.startsWith('@@')) {
-            className += ' hunk'
-          }
+          if (line.startsWith('+') && !line.startsWith('+++')) className += ' addition'
+          else if (line.startsWith('-') && !line.startsWith('---')) className += ' deletion'
+          else if (line.startsWith('@@')) className += ' hunk'
 
           return (
             <div key={idx} className={className}>
@@ -168,7 +147,7 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
   if (loading) {
     return (
       <div className="file-review">
-        <h2>File Review</h2>
+        <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>File Review</Typography>
         <LoadingSpinner label="Loading file changes..." />
       </div>
     )
@@ -177,7 +156,7 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
   if (error) {
     return (
       <div className="file-review">
-        <h2>File Review</h2>
+        <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>File Review</Typography>
         <EmptyState
           icon={<span>⚠️</span>}
           title="Error loading files"
@@ -191,7 +170,7 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
   if (files.length === 0) {
     return (
       <div className="file-review">
-        <h2>File Review</h2>
+        <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>File Review</Typography>
         <EmptyState
           icon={<span>📁</span>}
           title="No file changes to review"
@@ -209,61 +188,56 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
 
   return (
     <div className="file-review">
-      <div className="review-header">
-        <h2>File Review</h2>
-        <div className="review-stats">
-          <span className="stat approved">✓ {approvedCount}</span>
-          <span className="stat rejected">✗ {rejectedCount}</span>
-          <span className="stat pending">⏳ {pendingCount}</span>
-          <span className="stat total">Total: {files.length}</span>
-        </div>
-      </div>
+      <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} className="review-header" spacing={1} sx={{ mb: 1.5 }}>
+        <Typography variant="h2" sx={{ fontSize: '1.125rem' }}>File Review</Typography>
+        <Stack direction="row" spacing={0.75} className="review-stats" useFlexGap flexWrap="wrap">
+          <Chip className="stat approved" size="small" color="success" variant="outlined" label={`✓ ${approvedCount}`} />
+          <Chip className="stat rejected" size="small" color="error" variant="outlined" label={`✗ ${rejectedCount}`} />
+          <Chip className="stat pending" size="small" color="warning" variant="outlined" label={`⏳ ${pendingCount}`} />
+          <Chip className="stat total" size="small" variant="outlined" label={`Total: ${files.length}`} />
+        </Stack>
+      </Stack>
 
       <div className="review-container">
         <div className="file-list">
           {files.map((file, idx) => (
-            <div
+            <Box
               key={file.file_path}
-              className={`file-item ${idx === selectedFile ? 'selected' : ''} ${
-                file.approved === true
-                  ? 'approved'
-                  : file.approved === false
-                  ? 'rejected'
-                  : ''
-              }`}
+              className={`file-item ${idx === selectedFile ? 'selected' : ''} ${file.approved === true ? 'approved' : file.approved === false ? 'rejected' : ''}`}
               onClick={() => setSelectedFile(idx)}
+              sx={{
+                border: 1,
+                borderColor: idx === selectedFile ? 'primary.main' : 'divider',
+                borderRadius: 1,
+                p: 1,
+                cursor: 'pointer',
+                mb: 0.75,
+                bgcolor: idx === selectedFile ? 'action.selected' : 'background.default',
+              }}
             >
-              <div className="file-status">
-                <span
-                  className="status-icon"
-                  style={{ backgroundColor: getStatusColor(file.status) }}
-                >
-                  {getStatusIcon(file.status)}
-                </span>
-              </div>
-              <div className="file-info">
-                <div className="file-name">{file.file_path}</div>
-                <div className="file-changes">
-                  <span className="additions">+{file.additions}</span>
-                  <span className="deletions">-{file.deletions}</span>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <div className="file-status">
+                  <span className="status-icon" style={{ backgroundColor: getStatusColor(file.status) }}>
+                    {getStatusIcon(file.status)}
+                  </span>
                 </div>
-              </div>
-              {file.approved !== null && (
-                <div className="review-badge">
-                  {file.approved ? '✓' : '✗'}
+                <div className="file-info" style={{ flex: 1 }}>
+                  <div className="file-name">{file.file_path}</div>
+                  <div className="file-changes">
+                    <span className="additions">+{file.additions}</span>
+                    <span className="deletions">-{file.deletions}</span>
+                  </div>
                 </div>
-              )}
-            </div>
+                {file.approved !== null && <div className="review-badge">{file.approved ? '✓' : '✗'}</div>}
+              </Stack>
+            </Box>
           ))}
         </div>
 
         <div className="file-detail">
-          <div className="detail-header">
+          <Stack direction="row" justifyContent="space-between" alignItems="center" className="detail-header" sx={{ mb: 1 }}>
             <div className="file-path-header">
-              <span
-                className="status-badge"
-                style={{ backgroundColor: getStatusColor(currentFile.status) }}
-              >
+              <span className="status-badge" style={{ backgroundColor: getStatusColor(currentFile.status) }}>
                 {currentFile.status}
               </span>
               <span className="file-path">{currentFile.file_path}</span>
@@ -272,59 +246,61 @@ const FileReview = ({ taskId, projectDir }: FileReviewProps) => {
               <span className="additions">+{currentFile.additions}</span>
               <span className="deletions">-{currentFile.deletions}</span>
             </div>
-          </div>
+          </Stack>
 
-          <div className="diff-container">
-            {renderDiff(currentFile.diff)}
-          </div>
+          <div className="diff-container">{renderDiff(currentFile.diff)}</div>
 
           <div className="review-actions">
-            <textarea
+            <TextField
               className="comment-input"
               placeholder="Add optional comment..."
               value={comments[currentFile.file_path] || ''}
-              onChange={(e) =>
-                handleCommentChange(currentFile.file_path, e.target.value)
-              }
+              onChange={(e) => handleCommentChange(currentFile.file_path, e.target.value)}
               disabled={submitting === currentFile.file_path}
-              rows={2}
+              multiline
+              minRows={2}
+              fullWidth
             />
-            <div className="action-buttons">
-              <button
+            <Stack direction="row" spacing={1} className="action-buttons" sx={{ mt: 1 }}>
+              <Button
                 className="reject-btn"
+                variant="outlined"
+                color="error"
                 onClick={() => handleReview(currentFile.file_path, false)}
                 disabled={submitting === currentFile.file_path}
               >
                 {submitting === currentFile.file_path ? 'Processing...' : '✗ Reject'}
-              </button>
-              <button
+              </Button>
+              <Button
                 className="approve-btn"
+                variant="contained"
+                color="success"
                 onClick={() => handleReview(currentFile.file_path, true)}
                 disabled={submitting === currentFile.file_path}
               >
                 {submitting === currentFile.file_path ? 'Processing...' : '✓ Approve'}
-              </button>
-            </div>
+              </Button>
+            </Stack>
           </div>
 
           <div className="navigation-buttons">
-            <button
+            <Button
               onClick={() => setSelectedFile(Math.max(0, selectedFile - 1))}
               disabled={selectedFile === 0}
+              variant="outlined"
+              size="small"
             >
               ← Previous
-            </button>
-            <span className="file-counter">
-              File {selectedFile + 1} of {files.length}
-            </span>
-            <button
-              onClick={() =>
-                setSelectedFile(Math.min(files.length - 1, selectedFile + 1))
-              }
+            </Button>
+            <span className="file-counter">File {selectedFile + 1} of {files.length}</span>
+            <Button
+              onClick={() => setSelectedFile(Math.min(files.length - 1, selectedFile + 1))}
               disabled={selectedFile === files.length - 1}
+              variant="outlined"
+              size="small"
             >
               Next →
-            </button>
+            </Button>
           </div>
         </div>
       </div>

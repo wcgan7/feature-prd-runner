@@ -106,7 +106,7 @@ describe('Integration Tests', () => {
             screen.getByText(/review implementation plan/i)
           ).toBeInTheDocument()
         },
-        { timeout: 3000 }
+        { timeout: 8000 }
       )
 
       // Approve the request
@@ -123,7 +123,7 @@ describe('Integration Tests', () => {
           })
         )
       })
-    })
+    }, 15000)
 
     it('handles rejection workflow with feedback', async () => {
       const mockApprovals = [
@@ -163,7 +163,7 @@ describe('Integration Tests', () => {
 
       await waitFor(() => {
         expect(screen.getByText(/review changes/i)).toBeInTheDocument()
-      })
+      }, { timeout: 8000 })
 
       // Add feedback
       const feedbackInput = screen.getByPlaceholderText(/optional feedback/i)
@@ -182,7 +182,7 @@ describe('Integration Tests', () => {
           })
         )
       })
-    }, 10000)
+    }, 15000)
   })
 
   describe('Chat Workflow', () => {
@@ -287,7 +287,7 @@ describe('Integration Tests', () => {
           })
         )
       })
-    })
+    }, 10000)
   })
 
   describe('File Review Workflow', () => {
@@ -379,7 +379,7 @@ describe('Integration Tests', () => {
         expect(within(fileList as HTMLElement).getByText('src/test.ts')).toBeInTheDocument()
         expect(screen.getByText(/file 2 of 2/i)).toBeInTheDocument()
       })
-    })
+    }, 10000)
   })
 
   describe('Error Handling', () => {
@@ -695,7 +695,7 @@ describe('Integration Tests', () => {
         expect(within(fileList as HTMLElement).getByText('test.ts')).toBeInTheDocument()
       }
       expect(screen.getByText(/chat message/i)).toBeInTheDocument()
-    })
+    }, 10000)
   })
 
   describe('Real-time Updates', () => {

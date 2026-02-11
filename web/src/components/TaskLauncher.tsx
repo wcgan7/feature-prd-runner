@@ -1,7 +1,44 @@
 import { useState } from 'react'
 import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useToast } from '../contexts/ToastContext'
-import './TaskLauncher.css'
+
+const TASK_LAUNCHER_STYLES = `
+.task-launcher { background: var(--color-bg-primary); border-radius: var(--radius-lg); padding: var(--spacing-6); margin-bottom: var(--spacing-6); box-shadow: var(--shadow-sm); }
+.task-launcher-header { margin-bottom: var(--spacing-6); }
+.task-launcher-header h2 { margin: 0; font-size: var(--text-2xl); font-weight: var(--font-semibold); color: var(--color-text-primary); }
+.task-launcher-form { display: flex; flex-direction: column; gap: var(--spacing-6); }
+.form-section { display: flex; flex-direction: column; gap: var(--spacing-3); }
+.section-title { margin: 0; font-size: var(--text-lg); font-weight: var(--font-semibold); color: var(--color-text-primary); }
+.form-label { font-weight: var(--font-medium); color: var(--color-text-primary); font-size: var(--text-sm); }
+.mode-toggle { display: flex; gap: var(--spacing-2); }
+.mode-toggle-three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--spacing-2); }
+.mode-button { flex: 1; padding: var(--spacing-3) var(--spacing-4); border: 2px solid var(--color-border-default); background: var(--color-bg-primary); color: var(--color-text-primary); border-radius: var(--radius-md); font-size: var(--text-sm); font-weight: var(--font-medium); cursor: pointer; transition: all var(--transition-base); }
+.mode-button:hover { background: var(--color-bg-secondary); }
+.mode-button.active { background: var(--color-primary-500); color: var(--color-text-inverse); border-color: var(--color-primary-500); }
+.mode-description { margin: 0; font-size: var(--text-sm); color: var(--color-text-secondary); line-height: var(--leading-normal); }
+.content-textarea { width: 100%; padding: var(--spacing-3); border: 2px solid var(--color-border-default); border-radius: var(--radius-md); font-family: var(--font-mono); font-size: var(--text-sm); line-height: var(--leading-relaxed); background: var(--color-bg-primary); color: var(--color-text-primary); resize: vertical; min-height: 120px; }
+.content-textarea:focus { outline: none; border-color: var(--color-primary-500); box-shadow: 0 0 0 3px var(--color-primary-100); }
+.content-textarea::placeholder { color: var(--color-text-muted); }
+.config-section { background: var(--color-bg-tertiary); padding: var(--spacing-5); border-radius: var(--radius-md); border: 1px solid var(--color-border-default); }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacing-4); }
+.form-field { display: flex; flex-direction: column; gap: var(--spacing-2); }
+.form-input, .form-select { padding: var(--spacing-2-5) var(--spacing-3); border: 2px solid var(--color-border-default); border-radius: var(--radius-md); font-size: var(--text-sm); background: var(--color-bg-primary); color: var(--color-text-primary); }
+.form-input:focus, .form-select:focus { outline: none; border-color: var(--color-primary-500); box-shadow: 0 0 0 3px var(--color-primary-100); }
+.form-input::placeholder { color: var(--color-text-muted); }
+.checkbox-group { display: flex; flex-direction: column; gap: var(--spacing-2-5); }
+.checkbox-label { display: flex; align-items: center; gap: var(--spacing-2); cursor: pointer; font-size: var(--text-sm); color: var(--color-text-primary); }
+.checkbox-label input[type='checkbox'] { width: 18px; height: 18px; cursor: pointer; flex-shrink: 0; }
+.checkbox-label-standalone { align-items: flex-start; padding: var(--spacing-3); background: var(--color-bg-primary); border: 1px solid var(--color-border-default); border-radius: var(--radius-md); }
+.checkbox-label-standalone input[type='checkbox'] { margin-top: 2px; }
+.checkbox-label-standalone small { display: block; margin-top: var(--spacing-1); color: var(--color-text-secondary); font-weight: var(--font-normal); }
+.field-hint { margin: var(--spacing-1) 0 0 0; font-size: var(--text-xs); color: var(--color-text-secondary); }
+.form-actions { display: flex; justify-content: flex-end; }
+.submit-button { padding: var(--spacing-3) var(--spacing-8); background: var(--color-primary-500); color: var(--color-text-inverse); border: none; border-radius: var(--radius-md); font-size: var(--text-base); font-weight: var(--font-semibold); cursor: pointer; transition: all var(--transition-base); }
+.submit-button:hover:not(:disabled) { background: var(--color-primary-600); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.submit-button:active:not(:disabled) { transform: translateY(0); }
+.submit-button:disabled { background: var(--color-gray-300); cursor: not-allowed; opacity: 0.6; }
+@media (max-width: 768px) { .form-row { grid-template-columns: 1fr; } .mode-toggle, .mode-toggle-three { display: flex; flex-direction: column; } .mode-button { font-size: var(--text-sm); padding: var(--spacing-3) var(--spacing-6); } .task-launcher { padding: var(--spacing-4); } }
+`
 
 interface TaskLauncherProps {
   projectDir: string | null
@@ -192,6 +229,7 @@ export default function TaskLauncher({ projectDir, onRunStarted }: TaskLauncherP
 
   return (
     <div className="task-launcher">
+      <style>{TASK_LAUNCHER_STYLES}</style>
       <div className="task-launcher-header">
         <h2>Launch New Task</h2>
       </div>

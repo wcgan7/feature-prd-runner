@@ -7,28 +7,28 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  Badge,
+  Box,
+  Button,
+  Card,
+  IconButton,
+  Stack,
+  Typography,
+} from '@mui/material'
+import NotificationsIcon from '@mui/icons-material/Notifications'
 import { useChannel } from '../../contexts/WebSocketContext'
-import './NotificationCenter.css'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 export interface Notification {
   id: string
   type: 'info' | 'success' | 'warning' | 'error'
   title: string
   message: string
-  /** ISO 8601 timestamp */
   timestamp: string
   read: boolean
 }
 
 const MAX_NOTIFICATIONS = 50
-
-// ---------------------------------------------------------------------------
-// Sound alert — short beep via Web Audio API (no external files needed)
-// ---------------------------------------------------------------------------
 
 let _audioCtx: AudioContext | null = null
 
@@ -46,7 +46,6 @@ function playNotificationSound(type: Notification['type'] = 'info') {
     oscillator.connect(gain)
     gain.connect(ctx.destination)
 
-    // Different tones for severity
     const freq = type === 'error' ? 440 : type === 'warning' ? 520 : type === 'success' ? 660 : 600
     oscillator.frequency.setValueAtTime(freq, ctx.currentTime)
     oscillator.type = 'sine'
@@ -60,16 +59,12 @@ function playNotificationSound(type: Notification['type'] = 'info') {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function typeIcon(type: Notification['type']): string {
   switch (type) {
     case 'success':
-      return '\u2713' // check mark
+      return '\u2713'
     case 'error':
-      return '\u2717' // cross mark
+      return '\u2717'
     case 'warning':
       return '!'
     case 'info':
@@ -78,9 +73,6 @@ function typeIcon(type: Notification['type']): string {
   }
 }
 
-/**
- * Return a human-friendly relative time string (e.g. "3m ago", "2h ago").
- */
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
   const seconds = Math.max(0, Math.floor(diff / 1000))
@@ -94,10 +86,6 @@ function relativeTime(iso: string): string {
   return `${days}d ago`
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export default function NotificationCenter() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [open, setOpen] = useState(false)
@@ -108,10 +96,6 @@ export default function NotificationCenter() {
       ? window.Notification.permission
       : 'denied',
   )
-
-  // -----------------------------------------------------------------------
-  // Desktop notification permission
-  // -----------------------------------------------------------------------
 
   const requestDesktopPermission = useCallback(() => {
     if (typeof window === 'undefined' || !('Notification' in window)) return
@@ -132,10 +116,6 @@ export default function NotificationCenter() {
       // Some browsers restrict Notification constructor usage
     }
   }, [])
-
-  // -----------------------------------------------------------------------
-  // WebSocket subscription
-  // -----------------------------------------------------------------------
 
   useChannel(
     'notifications',
@@ -160,10 +140,6 @@ export default function NotificationCenter() {
     ),
   )
 
-  // -----------------------------------------------------------------------
-  // Close dropdown when clicking outside
-  // -----------------------------------------------------------------------
-
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -175,15 +151,10 @@ export default function NotificationCenter() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // -----------------------------------------------------------------------
-  // Actions
-  // -----------------------------------------------------------------------
-
   const unreadCount = notifications.filter((n) => !n.read).length
 
   const handleToggle = () => {
     setOpen((prev) => !prev)
-    // Request desktop permission on first user interaction with the bell
     requestDesktopPermission()
   }
 
@@ -196,68 +167,73 @@ export default function NotificationCenter() {
     setOpen(false)
   }
 
-  // -----------------------------------------------------------------------
-  // Render
-  // -----------------------------------------------------------------------
-
   return (
-    <div className="notification-center" ref={containerRef}>
-      <button
+    <Box className="notification-center" ref={containerRef} sx={{ position: 'relative' }}>
+      <IconButton
         className="notification-bell-btn"
         onClick={handleToggle}
         aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
         aria-expanded={open}
         aria-haspopup="true"
+        size="small"
       >
-        {/* Bell icon (SVG) */}
-        <svg
-          className="notification-bell-icon"
-          width="20"
-          height="20"
-          viewBox="0 0 20 20"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-          aria-hidden="true"
+        <Badge
+          color="error"
+          overlap="circular"
+          badgeContent={
+            unreadCount > 0 ? (
+              <span className="notification-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+            ) : null
+          }
         >
-          <path
-            d="M10 2a1 1 0 0 1 1 1v.268A5.002 5.002 0 0 1 15 8v3.5l1.354 1.354a.5.5 0 0 1-.354.854H4a.5.5 0 0 1-.354-.854L5 11.5V8a5.002 5.002 0 0 1 4-4.9V3a1 1 0 0 1 1-1ZM8 15a2 2 0 1 0 4 0H8Z"
-            fill="currentColor"
-          />
-        </svg>
-
-        {unreadCount > 0 && (
-          <span className="notification-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
-        )}
-      </button>
+          <NotificationsIcon className="notification-bell-icon" fontSize="small" />
+        </Badge>
+      </IconButton>
 
       {open && (
-        <div className="notification-dropdown" role="region" aria-label="Notifications">
-          <div className="notification-dropdown-header">
-            <h3 className="notification-dropdown-title">Notifications</h3>
-            <div className="notification-dropdown-actions">
-              <button
+        <Card
+          className="notification-dropdown"
+          role="region"
+          aria-label="Notifications"
+          variant="outlined"
+          sx={{
+            position: 'absolute',
+            right: 0,
+            top: 'calc(100% + 8px)',
+            width: 360,
+            maxWidth: '80vw',
+            zIndex: (theme) => theme.zIndex.modal,
+          }}
+        >
+          <Stack className="notification-dropdown-header" direction="row" justifyContent="space-between" spacing={1} sx={{ p: 1.25, borderBottom: 1, borderColor: 'divider' }}>
+            <Typography className="notification-dropdown-title" variant="subtitle2">Notifications</Typography>
+            <Stack className="notification-dropdown-actions" direction="row" spacing={0.5}>
+              <Button
                 className={`notification-action-btn ${soundEnabled ? '' : 'notification-sound-off'}`}
+                size="small"
                 onClick={() => setSoundEnabled((prev) => !prev)}
                 title={soundEnabled ? 'Mute sound alerts' : 'Unmute sound alerts'}
                 aria-label={soundEnabled ? 'Mute notifications' : 'Unmute notifications'}
               >
                 {soundEnabled ? '\u{1F50A}' : '\u{1F507}'}
-              </button>
-              <button className="notification-action-btn" onClick={markAllRead} disabled={unreadCount === 0}>
+              </Button>
+              <Button className="notification-action-btn" size="small" onClick={markAllRead} disabled={unreadCount === 0}>
                 Mark all read
-              </button>
-              <button className="notification-action-btn" onClick={clearAll} disabled={notifications.length === 0}>
+              </Button>
+              <Button className="notification-action-btn" size="small" onClick={clearAll} disabled={notifications.length === 0}>
                 Clear all
-              </button>
-            </div>
-          </div>
+              </Button>
+            </Stack>
+          </Stack>
 
-          <div className="notification-list">
+          <Stack className="notification-list" spacing={0} sx={{ maxHeight: 360, overflowY: 'auto' }}>
             {notifications.length === 0 ? (
-              <div className="notification-empty">No notifications</div>
+              <Typography className="notification-empty" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+                No notifications
+              </Typography>
             ) : (
               notifications.map((n) => (
-                <div
+                <Box
                   key={n.id}
                   className={`notification-item ${n.read ? '' : 'notification-item-unread'} notification-item-${n.type}`}
                   onClick={() =>
@@ -265,21 +241,56 @@ export default function NotificationCenter() {
                       prev.map((item) => (item.id === n.id ? { ...item, read: true } : item)),
                     )
                   }
+                  sx={{
+                    display: 'flex',
+                    gap: 1,
+                    alignItems: 'flex-start',
+                    p: 1,
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    cursor: 'pointer',
+                    bgcolor: n.read ? 'transparent' : 'action.hover',
+                    '&:last-of-type': { borderBottom: 'none' },
+                  }}
                 >
-                  <div className={`notification-type-icon notification-type-${n.type}`}>
+                  <Box
+                    className={`notification-type-icon notification-type-${n.type}`}
+                    sx={{
+                      mt: 0.25,
+                      width: 18,
+                      height: 18,
+                      borderRadius: '50%',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '0.7rem',
+                      fontWeight: 700,
+                      color: 'common.white',
+                      bgcolor: n.type === 'error' ? 'error.main' : n.type === 'warning' ? 'warning.main' : n.type === 'success' ? 'success.main' : 'info.main',
+                      flexShrink: 0,
+                    }}
+                  >
                     {typeIcon(n.type)}
-                  </div>
-                  <div className="notification-content">
-                    <div className="notification-title">{n.title}</div>
-                    <div className="notification-message">{n.message}</div>
-                  </div>
-                  <div className="notification-time">{relativeTime(n.timestamp)}</div>
-                </div>
+                  </Box>
+
+                  <Box className="notification-content" sx={{ minWidth: 0, flex: 1 }}>
+                    <Typography className="notification-title" variant="body2" sx={{ fontWeight: 700 }}>
+                      {n.title}
+                    </Typography>
+                    <Typography className="notification-message" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                      {n.message}
+                    </Typography>
+                  </Box>
+
+                  <Typography className="notification-time" variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                    {relativeTime(n.timestamp)}
+                  </Typography>
+                </Box>
               ))
             )}
-          </div>
-        </div>
+          </Stack>
+        </Card>
       )}
-    </div>
+    </Box>
   )
 }

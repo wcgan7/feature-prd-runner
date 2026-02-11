@@ -1,6 +1,6 @@
 import { useState } from 'react'
+import { Alert, Box, Button, Stack, TextField, Typography } from '@mui/material'
 import { sendCorrection } from '../api'
-import './CorrectionForm.css'
 
 interface Props {
   taskId: string
@@ -39,34 +39,54 @@ export default function CorrectionForm({ taskId, projectDir, onSent }: Props) {
   }
 
   return (
-    <form className="correction-form" onSubmit={handleSubmit}>
-      <h4>Send Correction</h4>
-      <textarea
-        value={issue}
-        onChange={(e) => setIssue(e.target.value)}
-        placeholder="Describe the issue..."
-        disabled={sending}
-      />
-      <div className="correction-form-row">
-        <input
-          value={filePath}
-          onChange={(e) => setFilePath(e.target.value)}
-          placeholder="File path (optional)"
+    <Box
+      component="form"
+      onSubmit={handleSubmit}
+      sx={{ p: 1.25, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 1.5 }}
+    >
+      <Typography variant="subtitle2" color="error.main" sx={{ mb: 1 }}>
+        Send Correction
+      </Typography>
+
+      <Stack spacing={1}>
+        <TextField
+          value={issue}
+          onChange={(e) => setIssue(e.target.value)}
+          placeholder="Describe the issue..."
           disabled={sending}
+          multiline
+          minRows={3}
+          fullWidth
+          size="small"
         />
-        <input
-          value={suggestedFix}
-          onChange={(e) => setSuggestedFix(e.target.value)}
-          placeholder="Suggested fix (optional)"
-          disabled={sending}
-        />
-      </div>
-      {error && <div style={{ color: '#dc2626', fontSize: '0.8rem' }}>{error}</div>}
-      <div className="correction-form-actions">
-        <button type="submit" className="btn-send" disabled={!issue.trim() || sending}>
-          {sending ? 'Sending...' : 'Send Correction'}
-        </button>
-      </div>
-    </form>
+
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+          <TextField
+            value={filePath}
+            onChange={(e) => setFilePath(e.target.value)}
+            placeholder="File path (optional)"
+            disabled={sending}
+            fullWidth
+            size="small"
+          />
+          <TextField
+            value={suggestedFix}
+            onChange={(e) => setSuggestedFix(e.target.value)}
+            placeholder="Suggested fix (optional)"
+            disabled={sending}
+            fullWidth
+            size="small"
+          />
+        </Stack>
+
+        {error && <Alert severity="error">{error}</Alert>}
+
+        <Stack direction="row" justifyContent="flex-end">
+          <Button type="submit" variant="contained" color="error" disabled={!issue.trim() || sending}>
+            {sending ? 'Sending...' : 'Send Correction'}
+          </Button>
+        </Stack>
+      </Stack>
+    </Box>
   )
 }

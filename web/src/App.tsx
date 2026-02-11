@@ -58,7 +58,6 @@ import type {
   DashboardLayoutConfig,
   TaskDetailTab,
 } from './types/ui'
-import './App.css'
 
 const DryRunPanel = lazy(() => import('./components/DryRunPanel'))
 const DoctorPanel = lazy(() => import('./components/DoctorPanel'))
@@ -715,6 +714,10 @@ function AppContent() {
 
   return (
     <>
+      <Box className="sr-only" aria-live="polite" aria-atomic="true">
+        {`Run status ${statusSummary.label}`}
+      </Box>
+
       <AppShell
         title="Feature PRD Runner"
         sections={navSections}

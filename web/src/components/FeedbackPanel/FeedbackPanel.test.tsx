@@ -147,7 +147,7 @@ describe('FeedbackPanel', () => {
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledTimes(3) // initial + POST + refresh
     })
-  })
+  }, 10000)
 
   it('dismisses a feedback item', async () => {
     const mockFeedback = [

@@ -7,9 +7,20 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import {
+  Box,
+  Card,
+  CardContent,
+  Grid,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  Typography,
+} from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../../api'
 import { useChannel } from '../../contexts/WebSocketContext'
-import './AgentOverview.css'
 
 interface AgentData {
   id: string
@@ -89,79 +100,78 @@ export function AgentOverview({ projectDir }: Props) {
   }
 
   return (
-    <div className="agent-overview">
-      <h3 className="agent-overview-title">Agent Overview</h3>
+    <Box sx={{ p: 2 }}>
+      <Typography variant="h6" sx={{ mb: 1.5 }}>Agent Overview</Typography>
 
       {/* Summary cards */}
-      <div className="agent-overview-grid">
-        <div className="agent-overview-card">
-          <div className="agent-overview-card-value">{stats.total}</div>
-          <div className="agent-overview-card-label">Total Agents</div>
-        </div>
-        <div className="agent-overview-card card-running">
-          <div className="agent-overview-card-value">{stats.running}</div>
-          <div className="agent-overview-card-label">Running</div>
-        </div>
-        <div className="agent-overview-card card-idle">
-          <div className="agent-overview-card-value">{stats.idle}</div>
-          <div className="agent-overview-card-label">Idle</div>
-        </div>
-        <div className="agent-overview-card card-failed">
-          <div className="agent-overview-card-value">{stats.failed}</div>
-          <div className="agent-overview-card-label">Failed</div>
-        </div>
-        <div className="agent-overview-card">
-          <div className="agent-overview-card-value">{formatTokens(stats.totalTokens)}</div>
-          <div className="agent-overview-card-label">Total Tokens</div>
-        </div>
-        <div className="agent-overview-card">
-          <div className="agent-overview-card-value">${stats.totalCost.toFixed(2)}</div>
-          <div className="agent-overview-card-label">Total Cost</div>
-        </div>
-      </div>
+      <Grid container spacing={1.25} sx={{ mb: 2 }}>
+        {[
+          { label: 'Total Agents', value: stats.total, color: 'text.primary' },
+          { label: 'Running', value: stats.running, color: 'success.main' },
+          { label: 'Idle', value: stats.idle, color: 'text.secondary' },
+          { label: 'Failed', value: stats.failed, color: 'error.main' },
+          { label: 'Total Tokens', value: formatTokens(stats.totalTokens), color: 'text.primary' },
+          { label: 'Total Cost', value: `$${stats.totalCost.toFixed(2)}`, color: 'text.primary' },
+        ].map((item) => (
+          <Grid key={item.label} size={{ xs: 6, md: 4, lg: 2 }}>
+            <Card variant="outlined">
+              <CardContent sx={{ py: 1.25, '&:last-child': { pb: 1.25 }, textAlign: 'center' }}>
+                <Typography variant="h6" sx={{ color: item.color }}>{item.value}</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  {item.label}
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
 
       {/* Per-type breakdown */}
       {Object.keys(byType).length > 0 && (
-        <div className="agent-overview-breakdown">
-          <h4 className="agent-overview-breakdown-title">By Type</h4>
-          <table className="agent-overview-table">
-            <thead>
-              <tr>
-                <th>Role</th>
-                <th>Count</th>
-                <th>Running</th>
-                <th>Tokens</th>
-                <th>Cost</th>
-              </tr>
-            </thead>
-            <tbody>
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+            By Type
+          </Typography>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Role</TableCell>
+                <TableCell>Count</TableCell>
+                <TableCell>Running</TableCell>
+                <TableCell>Tokens</TableCell>
+                <TableCell>Cost</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {Object.entries(byType)
                 .sort(([, a], [, b]) => b.cost - a.cost)
                 .map(([type, data]) => (
-                  <tr key={type}>
-                    <td className="agent-overview-role">{type}</td>
-                    <td>{data.count}</td>
-                    <td>{data.running}</td>
-                    <td>{formatTokens(data.tokens)}</td>
-                    <td>${data.cost.toFixed(2)}</td>
-                  </tr>
+                  <TableRow key={type}>
+                    <TableCell sx={{ fontWeight: 500, textTransform: 'capitalize' }}>{type}</TableCell>
+                    <TableCell>{data.count}</TableCell>
+                    <TableCell>{data.running}</TableCell>
+                    <TableCell>{formatTokens(data.tokens)}</TableCell>
+                    <TableCell>${data.cost.toFixed(2)}</TableCell>
+                  </TableRow>
                 ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </Box>
       )}
 
       {/* Empty state */}
       {agents.length === 0 && (
-        <div className="agent-overview-empty">No agents in pool. Spawn agents to see overview stats.</div>
+        <Typography variant="body2" color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
+          No agents in pool. Spawn agents to see overview stats.
+        </Typography>
       )}
 
       {/* Uptime */}
       {stats.totalTime > 0 && (
-        <div className="agent-overview-uptime">
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'right' }}>
           Total agent uptime: {formatTime(stats.totalTime)}
-        </div>
+        </Typography>
       )}
-    </div>
+    </Box>
   )
 }

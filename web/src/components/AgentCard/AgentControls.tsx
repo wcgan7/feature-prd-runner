@@ -3,6 +3,8 @@
  * Extracted from AgentCard for independent reuse.
  */
 
+import { Button, Stack } from '@mui/material'
+
 interface AgentControlsProps {
   agentId: string
   status: string
@@ -11,18 +13,22 @@ interface AgentControlsProps {
 
 export function AgentControls({ agentId, status, onAction }: AgentControlsProps) {
   return (
-    <div className="agent-card-actions">
+    <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
       {status === 'running' && (
-        <button onClick={() => onAction(agentId, 'pause')}>Pause</button>
+        <Button size="small" variant="outlined" onClick={() => onAction(agentId, 'pause')}>
+          Pause
+        </Button>
       )}
       {status === 'paused' && (
-        <button onClick={() => onAction(agentId, 'resume')}>Resume</button>
+        <Button size="small" variant="outlined" onClick={() => onAction(agentId, 'resume')}>
+          Resume
+        </Button>
       )}
       {status !== 'terminated' && (
-        <button className="btn-danger" onClick={() => onAction(agentId, 'terminate')}>
+        <Button size="small" color="error" variant="outlined" onClick={() => onAction(agentId, 'terminate')}>
           Terminate
-        </button>
+        </Button>
       )}
-    </div>
+    </Stack>
   )
 }

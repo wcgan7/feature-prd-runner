@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import './Login.css'
+import { Alert, Box, Button, Paper, TextField, Typography } from '@mui/material'
 
 interface Props {
   onLoginSuccess: (token: string, username: string) => void
@@ -40,59 +40,82 @@ export default function Login({ onLoginSuccess }: Props) {
   }
 
   return (
-    <div className="login-container">
-      <div className="login-card">
-        <h1 className="login-title">Feature PRD Runner</h1>
-        <p className="login-subtitle">Sign in to access the dashboard</p>
+    <Box
+      sx={{
+        minHeight: '100vh',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        bgcolor: 'background.default',
+        px: 2,
+      }}
+    >
+      <Paper elevation={8} sx={{ width: '100%', maxWidth: 420, p: 4 }}>
+        <Typography variant="h4" sx={{ mb: 1, fontWeight: 700 }}>
+          Feature PRD Runner
+        </Typography>
+        <Typography variant="body2" sx={{ mb: 4, color: 'text.secondary' }}>
+          Sign in to access the dashboard
+        </Typography>
 
-        {error && <div className="login-error">{error}</div>}
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
 
         <form onSubmit={handleSubmit}>
-          <div className="login-form-group">
-            <label htmlFor="username" className="login-label">
-              Username
-            </label>
-            <input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              autoFocus
-              className="login-input"
-            />
-          </div>
+          <TextField
+            id="username"
+            type="text"
+            label="Username"
+            fullWidth
+            margin="normal"
+            size="small"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+            autoFocus
+            disabled={loading}
+          />
 
-          <div className="login-form-group">
-            <label htmlFor="password" className="login-label">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="login-input"
-            />
-          </div>
+          <TextField
+            id="password"
+            type="password"
+            label="Password"
+            fullWidth
+            margin="normal"
+            size="small"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            disabled={loading}
+          />
 
-          <button type="submit" disabled={loading} className="login-button">
+          <Button
+            type="submit"
+            variant="contained"
+            fullWidth
+            disabled={loading}
+            sx={{ mt: 2.5, py: 1 }}
+          >
             {loading ? 'Signing in...' : 'Sign in'}
-          </button>
+          </Button>
         </form>
 
-        <div className="login-hint">
-          <strong>Default credentials (if auth enabled):</strong>
-          <br />
-          Username: admin
-          <br />
-          Password: admin
-          <br />
-          <br />
-          <em>Configure via DASHBOARD_USERNAME and DASHBOARD_PASSWORD env vars</em>
-        </div>
-      </div>
-    </div>
+        <Box sx={{ mt: 3, p: 1.5, borderRadius: 1, bgcolor: 'action.hover' }}>
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            <strong>Default credentials (if auth enabled):</strong>
+            <br />
+            Username: admin
+            <br />
+            Password: admin
+            <br />
+            <br />
+            <em>Configure via DASHBOARD_USERNAME and DASHBOARD_PASSWORD env vars</em>
+          </Typography>
+        </Box>
+      </Paper>
+    </Box>
   )
 }

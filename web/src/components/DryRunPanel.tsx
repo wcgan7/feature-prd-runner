@@ -1,6 +1,6 @@
 import { useState } from 'react'
+import { Alert, Box, Button, Chip, Paper, Typography } from '@mui/material'
 import { fetchDryRun } from '../api'
-import './DryRunPanel.css'
 
 interface Props {
   projectDir?: string
@@ -37,57 +37,97 @@ export default function DryRunPanel({ projectDir }: Props) {
   }
 
   return (
-    <div className="card dry-run-panel">
-      <div className="dry-run-trigger">
-        <h2>Preview Next Action</h2>
-        <button className="btn btn-primary" onClick={handleDryRun} disabled={loading}>
+    <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
+      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6">Preview Next Action</Typography>
+        <Button variant="contained" size="small" onClick={handleDryRun} disabled={loading}>
           {loading ? 'Checking...' : 'Dry Run'}
-        </button>
-      </div>
+        </Button>
+      </Box>
 
-      {error && <div className="dry-run-errors"><p>{error}</p></div>}
+      {error && <Alert severity="error">{error}</Alert>}
 
       {result && (
-        <div className="dry-run-result">
+        <Box sx={{ bgcolor: 'action.hover', border: 1, borderColor: 'divider', borderRadius: 1, p: 2 }}>
           {result.next && (
-            <div className="dry-run-next">
-              <h4>Next Action</h4>
-              <div className="dry-run-next-card">
-                <div><strong>{result.next.action}</strong></div>
-                {result.next.task_id && <div>Task: <code>{result.next.task_id}</code></div>}
-                {result.next.step && <div>Step: <code>{result.next.step}</code></div>}
-                {result.next.description && <div>{result.next.description}</div>}
-              </div>
-            </div>
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+                Next Action
+              </Typography>
+              <Paper variant="outlined" sx={{ p: 1.5 }}>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {result.next.action}
+                </Typography>
+                {result.next.task_id && (
+                  <Typography variant="body2">
+                    Task: <code>{result.next.task_id}</code>
+                  </Typography>
+                )}
+                {result.next.step && (
+                  <Typography variant="body2">
+                    Step: <code>{result.next.step}</code>
+                  </Typography>
+                )}
+                {result.next.description && (
+                  <Typography variant="body2">{result.next.description}</Typography>
+                )}
+              </Paper>
+            </Box>
           )}
 
-          <div className="dry-run-flags">
-            <span className={`dry-run-flag ${result.would_spawn_codex ? 'active' : 'inactive'}`}>
-              {result.would_spawn_codex ? '\u2713' : '\u2717'} Spawn Codex
-            </span>
-            <span className={`dry-run-flag ${result.would_run_tests ? 'active' : 'inactive'}`}>
-              {result.would_run_tests ? '\u2713' : '\u2717'} Run Tests
-            </span>
-            <span className={`dry-run-flag ${result.would_checkout_branch ? 'active' : 'inactive'}`}>
-              {result.would_checkout_branch ? '\u2713' : '\u2717'} Checkout Branch
-            </span>
-          </div>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+            <Chip
+              size="small"
+              color={result.would_spawn_codex ? 'success' : 'default'}
+              label={`${result.would_spawn_codex ? '\u2713' : '\u2717'} Spawn Codex`}
+            />
+            <Chip
+              size="small"
+              color={result.would_run_tests ? 'success' : 'default'}
+              label={`${result.would_run_tests ? '\u2713' : '\u2717'} Run Tests`}
+            />
+            <Chip
+              size="small"
+              color={result.would_checkout_branch ? 'success' : 'default'}
+              label={`${result.would_checkout_branch ? '\u2713' : '\u2717'} Checkout Branch`}
+            />
+          </Box>
 
           {result.warnings.length > 0 && (
-            <div className="dry-run-warnings">
-              <h4>Warnings</h4>
-              <ul>{result.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
-            </div>
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                Warnings
+              </Typography>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                {result.warnings.map((w, i) => (
+                  <li key={i}>
+                    <Typography variant="body2" sx={{ color: 'warning.dark' }}>
+                      {w}
+                    </Typography>
+                  </li>
+                ))}
+              </ul>
+            </Box>
           )}
 
           {result.errors.length > 0 && (
-            <div className="dry-run-errors">
-              <h4>Errors</h4>
-              <ul>{result.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
-            </div>
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                Errors
+              </Typography>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                {result.errors.map((e, i) => (
+                  <li key={i}>
+                    <Typography variant="body2" sx={{ color: 'error.main' }}>
+                      {e}
+                    </Typography>
+                  </li>
+                ))}
+              </ul>
+            </Box>
           )}
-        </div>
+        </Box>
       )}
-    </div>
+    </Paper>
   )
 }

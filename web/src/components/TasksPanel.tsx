@@ -17,7 +17,6 @@ import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
 import EmptyState from './EmptyState'
 import LoadingSpinner from './LoadingSpinner'
-import './TasksPanel.css'
 
 interface TaskInfo {
   id: string
@@ -120,16 +119,15 @@ export default function TasksPanel({ projectDir, currentTaskId }: Props) {
     <Box>
       <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>Tasks</Typography>
 
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} className="tasks-panel-header" sx={{ mb: 1.5 }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mb: 1.5 }}>
         <TextField
           size="small"
           placeholder="Filter tasks..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="tasks-panel-search"
           fullWidth
         />
-        <Button variant="outlined" onClick={fetchTasks} className="tasks-panel-btn">
+        <Button variant="outlined" onClick={fetchTasks}>
           Refresh
         </Button>
       </Stack>
@@ -152,7 +150,7 @@ export default function TasksPanel({ projectDir, currentTaskId }: Props) {
         />
       ) : (
         <>
-          <Box className="tasks-panel-summary" sx={{ mb: 1.25 }}>
+          <Box sx={{ mb: 1.25 }}>
             <Typography variant="caption" color="text.secondary">
               Total: {tasks.length}
             </Typography>
@@ -163,8 +161,8 @@ export default function TasksPanel({ projectDir, currentTaskId }: Props) {
             </Stack>
           </Box>
 
-          <Box className="tasks-panel-table-wrapper" sx={{ overflowX: 'auto' }}>
-            <Table className="tasks-panel-table" size="small" aria-label="Task table">
+          <Box sx={{ overflowX: 'auto' }}>
+            <Table size="small" aria-label="Task table">
               <TableHead>
                 <TableRow>
                   <TableCell>Task</TableCell>
@@ -184,9 +182,9 @@ export default function TasksPanel({ projectDir, currentTaskId }: Props) {
                       sx={isActive ? { bgcolor: 'action.selected' } : undefined}
                     >
                       <TableCell>
-                        <Typography className="tasks-panel-task-id" fontWeight={600}>{task.id}</Typography>
+                        <Typography fontWeight={600}>{task.id}</Typography>
                         {task.last_error && (
-                          <Alert className="tasks-panel-task-error" severity="error" sx={{ mt: 0.5, py: 0 }}>
+                          <Alert severity="error" sx={{ mt: 0.5, py: 0 }}>
                             {task.last_error}
                           </Alert>
                         )}

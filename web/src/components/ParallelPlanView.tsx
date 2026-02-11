@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
+import { Box, Chip, Paper, Typography } from '@mui/material'
 import { fetchExecutionOrder } from '../api'
-import './ParallelPlanView.css'
 
 interface Props {
   projectDir?: string
@@ -37,42 +37,92 @@ export default function ParallelPlanView({ projectDir }: Props) {
       .finally(() => setLoading(false))
   }, [projectDir])
 
-  if (loading) return <div className="card parallel-plan-view"><h2>Parallel Execution Plan</h2><p>Loading...</p></div>
-  if (error) return <div className="card parallel-plan-view"><h2>Parallel Execution Plan</h2><p className="parallel-plan-error">{error}</p></div>
+  if (loading) {
+    return (
+      <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Parallel Execution Plan
+        </Typography>
+        <Typography variant="body2">Loading...</Typography>
+      </Paper>
+    )
+  }
+
+  if (error) {
+    return (
+      <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Parallel Execution Plan
+        </Typography>
+        <Typography variant="body2" sx={{ color: 'error.main' }}>
+          {error}
+        </Typography>
+      </Paper>
+    )
+  }
 
   if (batches.length === 0) {
     return (
-      <div className="card parallel-plan-view">
-        <h2>Parallel Execution Plan</h2>
-        <div className="parallel-plan-empty">No execution batches found</div>
-      </div>
+      <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Parallel Execution Plan
+        </Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary', textAlign: 'center', py: 4 }}>
+          No execution batches found
+        </Typography>
+      </Paper>
     )
   }
 
   return (
-    <div className="card parallel-plan-view">
-      <h2>Parallel Execution Plan</h2>
-      <div className="parallel-plan-lanes">
+    <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
+      <Typography variant="h6" sx={{ mb: 2 }}>
+        Parallel Execution Plan
+      </Typography>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         {batches.map((batch, waveIdx) => (
-          <div className="parallel-plan-lane" key={waveIdx}>
-            <div className="parallel-plan-lane-header">
-              <span className="parallel-plan-wave-badge">Wave {waveIdx + 1}</span>
-              <span className="parallel-plan-wave-count">
+          <Box
+            key={waveIdx}
+            sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5, bgcolor: 'action.hover' }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+              <Chip label={`Wave ${waveIdx + 1}`} size="small" color="primary" />
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                 {batch.length} task{batch.length !== 1 ? 's' : ''}
-              </span>
-            </div>
-            <div className="parallel-plan-tasks">
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
               {batch.map((task) => (
-                <div className="parallel-plan-task" key={task.id}>
-                  <div className="parallel-plan-task-id">{task.id.slice(-8)}</div>
-                  {task.title && <div className="parallel-plan-task-title">{task.title}</div>}
-                  {task.status && <div className="parallel-plan-task-status">{task.status}</div>}
-                </div>
+                <Paper
+                  key={task.id}
+                  variant="outlined"
+                  sx={{
+                    p: 1,
+                    fontSize: '0.8rem',
+                    minWidth: 150,
+                    flex: 1,
+                    maxWidth: 250,
+                  }}
+                >
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontFamily: 'monospace' }}>
+                    {task.id.slice(-8)}
+                  </Typography>
+                  {task.title && (
+                    <Typography variant="body2" sx={{ mt: 0.25, fontWeight: 500 }} noWrap>
+                      {task.title}
+                    </Typography>
+                  )}
+                  {task.status && (
+                    <Typography variant="caption" sx={{ mt: 0.25, display: 'block' }}>
+                      {task.status}
+                    </Typography>
+                  )}
+                </Paper>
               ))}
-            </div>
-          </div>
+            </Box>
+          </Box>
         ))}
-      </div>
-    </div>
+      </Box>
+    </Paper>
   )
 }

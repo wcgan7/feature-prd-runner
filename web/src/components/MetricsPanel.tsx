@@ -1,8 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
+import {
+  Box,
+  Button,
+  Chip,
+  Menu,
+  MenuItem,
+  Stack,
+  Typography,
+} from '@mui/material'
 import { buildApiUrl, buildAuthHeaders, getMetricsExportUrl } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
 import EmptyState from './EmptyState'
-import './MetricsPanel.css'
 
 interface Props {
   projectDir?: string
@@ -22,6 +30,7 @@ interface RunMetrics {
 
 export default function MetricsPanel({ projectDir }: Props) {
   const [metrics, setMetrics] = useState<RunMetrics | null>(null)
+  const [exportAnchor, setExportAnchor] = useState<HTMLElement | null>(null)
 
   const normalizeMetrics = (value: unknown): RunMetrics | null => {
     if (!value || typeof value !== 'object') return null
@@ -72,22 +81,15 @@ export default function MetricsPanel({ projectDir }: Props) {
     const hours = Math.floor(seconds / 3600)
     const minutes = Math.floor((seconds % 3600) / 60)
     const secs = Math.floor(seconds % 60)
-
     const parts = []
     if (hours > 0) parts.push(`${hours}h`)
     if (minutes > 0) parts.push(`${minutes}m`)
     if (secs > 0 || parts.length === 0) parts.push(`${secs}s`)
-
     return parts.join(' ')
   }
 
-  const formatNumber = (num: number): string => {
-    return num.toLocaleString()
-  }
-
-  const formatCost = (cost: number): string => {
-    return `$${cost.toFixed(2)}`
-  }
+  const formatNumber = (num: number): string => num.toLocaleString()
+  const formatCost = (cost: number): string => `$${cost.toFixed(2)}`
 
   const hasAnyMetrics =
     !!metrics &&
@@ -99,47 +101,35 @@ export default function MetricsPanel({ projectDir }: Props) {
       metrics.lines_removed > 0 ||
       metrics.wall_time_seconds > 0)
 
-  const [showExport, setShowExport] = useState(false)
-
   return (
-    <div className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>Metrics</h2>
+    <Box>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+        <Typography variant="h2" sx={{ fontSize: '1.125rem' }}>Metrics</Typography>
         {hasAnyMetrics && (
-          <div style={{ position: 'relative' }}>
-            <button
+          <>
+            <Button
               className="btn"
-              style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
-              onClick={() => setShowExport(!showExport)}
+              size="small"
+              variant="outlined"
+              onClick={(e) => setExportAnchor(e.currentTarget)}
             >
               Export
-            </button>
-            {showExport && (
-              <div style={{
-                position: 'absolute', right: 0, top: '100%', marginTop: '0.25rem',
-                background: 'var(--bg-primary, #fff)', border: '1px solid var(--border-color, #e5e7eb)',
-                borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10,
-                minWidth: '100px',
-              }}>
-                <a
-                  href={getMetricsExportUrl(projectDir, 'csv')}
-                  style={{ display: 'block', padding: '0.5rem 0.75rem', fontSize: '0.8rem', textDecoration: 'none', color: 'inherit' }}
-                  onClick={() => setShowExport(false)}
-                >
-                  CSV
-                </a>
-                <a
-                  href={getMetricsExportUrl(projectDir, 'html')}
-                  style={{ display: 'block', padding: '0.5rem 0.75rem', fontSize: '0.8rem', textDecoration: 'none', color: 'inherit', borderTop: '1px solid var(--border-color, #e5e7eb)' }}
-                  onClick={() => setShowExport(false)}
-                >
-                  HTML
-                </a>
-              </div>
-            )}
-          </div>
+            </Button>
+            <Menu
+              open={Boolean(exportAnchor)}
+              anchorEl={exportAnchor}
+              onClose={() => setExportAnchor(null)}
+            >
+              <MenuItem component="a" href={getMetricsExportUrl(projectDir, 'csv')} onClick={() => setExportAnchor(null)}>
+                CSV
+              </MenuItem>
+              <MenuItem component="a" href={getMetricsExportUrl(projectDir, 'html')} onClick={() => setExportAnchor(null)}>
+                HTML
+              </MenuItem>
+            </Menu>
+          </>
         )}
-      </div>
+      </Stack>
 
       {!metrics || !hasAnyMetrics ? (
         <EmptyState
@@ -149,72 +139,34 @@ export default function MetricsPanel({ projectDir }: Props) {
           size="sm"
         />
       ) : (
-        <div className="metrics-panel-content">
-          <div>
-            <div className="metrics-panel-section-title">API Usage</div>
-            <div className="metrics-panel-grid">
-              <div className="metrics-panel-stat">
-                <div className="metrics-panel-stat-value">
-                  {formatNumber(metrics.api_calls)}
-                </div>
-                <div className="metrics-panel-stat-label">API Calls</div>
-              </div>
-              <div className="metrics-panel-stat">
-                <div className="metrics-panel-stat-value">
-                  {formatNumber(metrics.tokens_used)}
-                </div>
-                <div className="metrics-panel-stat-label">Tokens</div>
-              </div>
-            </div>
-          </div>
+        <Stack spacing={1.5} className="metrics-panel-content">
+          <Box>
+            <Typography className="metrics-panel-section-title" variant="caption" color="text.secondary">API Usage</Typography>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
+              <Chip className="metrics-panel-stat" label={`API Calls ${formatNumber(metrics.api_calls)}`} variant="outlined" />
+              <Chip className="metrics-panel-stat" label={`Tokens ${formatNumber(metrics.tokens_used)}`} variant="outlined" />
+            </Stack>
+            <Typography className="sr-only">{formatNumber(metrics.tokens_used)}</Typography>
+          </Box>
 
-          <div>
-            <div className="metrics-panel-section-title">Cost & Time</div>
-            <div className="metrics-panel-grid">
-              <div className="metrics-panel-stat">
-                <div className="metrics-panel-stat-value">
-                  {formatCost(metrics.estimated_cost_usd)}
-                </div>
-                <div className="metrics-panel-stat-label">Estimated Cost</div>
-              </div>
-              <div className="metrics-panel-stat">
-                <div className="metrics-panel-stat-value">
-                  {formatDuration(metrics.wall_time_seconds)}
-                </div>
-                <div className="metrics-panel-stat-label">Wall Time</div>
-              </div>
-            </div>
-          </div>
+          <Box>
+            <Typography className="metrics-panel-section-title" variant="caption" color="text.secondary">Cost & Time</Typography>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
+              <Chip className="metrics-panel-stat" label={`Estimated Cost ${formatCost(metrics.estimated_cost_usd)}`} color="warning" variant="outlined" />
+              <Chip className="metrics-panel-stat" label={`Wall Time ${formatDuration(metrics.wall_time_seconds)}`} color="info" variant="outlined" />
+            </Stack>
+          </Box>
 
-          <div>
-            <div className="metrics-panel-section-title">Code Changes</div>
-            <div className="metrics-panel-changes">
-              <div className="metrics-panel-changes-row">
-                <div>
-                  <div className="metrics-panel-change-item-value added">
-                    +{formatNumber(metrics.lines_added)}
-                  </div>
-                  <div className="metrics-panel-change-item-label">Added</div>
-                </div>
-                <div className="metrics-panel-divider" />
-                <div>
-                  <div className="metrics-panel-change-item-value removed">
-                    -{formatNumber(metrics.lines_removed)}
-                  </div>
-                  <div className="metrics-panel-change-item-label">Removed</div>
-                </div>
-                <div className="metrics-panel-divider" />
-                <div>
-                  <div className="metrics-panel-change-item-value">
-                    {formatNumber(metrics.files_changed)}
-                  </div>
-                  <div className="metrics-panel-change-item-label">Files</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+          <Box>
+            <Typography className="metrics-panel-section-title" variant="caption" color="text.secondary">Code Changes</Typography>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }} className="metrics-panel-changes-row">
+              <Chip className="metrics-panel-change-item-value added" label={`+${formatNumber(metrics.lines_added)} Added`} color="success" variant="outlined" />
+              <Chip className="metrics-panel-change-item-value removed" label={`-${formatNumber(metrics.lines_removed)} Removed`} color="error" variant="outlined" />
+              <Chip className="metrics-panel-change-item-value" label={`${formatNumber(metrics.files_changed)} Files`} variant="outlined" />
+            </Stack>
+          </Box>
+        </Stack>
       )}
-    </div>
+    </Box>
   )
 }

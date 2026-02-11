@@ -18,7 +18,6 @@ import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
 import EmptyState from './EmptyState'
 import LoadingSpinner from './LoadingSpinner'
-import './RunsPanel.css'
 
 interface RunInfo {
   run_id: string
@@ -138,11 +137,11 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
     <Box>
       <Typography variant="h2" sx={{ fontSize: '1.125rem', mb: 1.5 }}>Recent Runs</Typography>
 
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} justifyContent="space-between" className="runs-panel-header" sx={{ mb: 1.5 }}>
-        <Button onClick={fetchRuns} variant="outlined" className="runs-panel-btn">Refresh</Button>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} justifyContent="space-between" sx={{ mb: 1.5 }}>
+        <Button onClick={fetchRuns} variant="outlined">Refresh</Button>
         {currentRunId && (
-          <Typography className="runs-panel-active-run" variant="body2" color="text.secondary">
-            Active run: <span className="runs-panel-active-run-id">{currentRunId}</span>
+          <Typography variant="body2" color="text.secondary">
+            Active run: <Box component="span" sx={{ fontFamily: '"IBM Plex Mono", monospace' }}>{currentRunId}</Box>
           </Typography>
         )}
       </Stack>
@@ -165,8 +164,8 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
         />
       ) : (
         <>
-          <Box className="runs-panel-table-wrapper" sx={{ overflowX: 'auto' }}>
-            <Table className="runs-panel-table" size="small">
+          <Box sx={{ overflowX: 'auto' }}>
+            <Table size="small">
               <TableHead>
                 <TableRow>
                   <TableCell>Run</TableCell>
@@ -184,7 +183,7 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
                     className={run.run_id === currentRunId ? 'active' : ''}
                     sx={run.run_id === currentRunId ? { bgcolor: 'action.selected' } : undefined}
                   >
-                    <TableCell className="runs-panel-table-id">{run.run_id}</TableCell>
+                    <TableCell sx={{ fontFamily: 'mono', fontSize: '0.75rem' }}>{run.run_id}</TableCell>
                     <TableCell>{run.task_id || '-'}</TableCell>
                     <TableCell>{run.phase || '-'}</TableCell>
                     <TableCell>{run.step || '-'}</TableCell>
@@ -196,7 +195,6 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
                           setSelectedRunId(run.run_id)
                           void fetchRunDetail(run.run_id)
                         }}
-                        className="runs-panel-table-btn"
                       >
                         Details
                       </Button>
@@ -208,28 +206,28 @@ export default function RunsPanel({ projectDir, currentRunId }: Props) {
           </Box>
 
           {selectedRunId && (
-            <Card className="runs-panel-detail" variant="outlined" sx={{ mt: 1.5 }}>
+            <Card variant="outlined" sx={{ mt: 1.5 }}>
               <CardContent>
-                <Typography className="runs-panel-detail-title" variant="subtitle2">Run Details</Typography>
+                <Typography variant="subtitle2">Run Details</Typography>
                 {detailError ? (
-                  <Alert className="runs-panel-detail-error" severity="error" sx={{ mt: 1 }}>
+                  <Alert severity="error" sx={{ mt: 1 }}>
                     Error: {detailError}
                   </Alert>
                 ) : runDetail ? (
                   <Stack spacing={0.75} sx={{ mt: 1 }}>
-                    <Typography className="runs-panel-detail-id" variant="body2">{runDetail.run_id}</Typography>
-                    <Typography className="runs-panel-detail-status" variant="body2">
+                    <Typography variant="body2" sx={{ fontFamily: 'mono', fontSize: '0.75rem' }}>{runDetail.run_id}</Typography>
+                    <Typography variant="body2">
                       Status: <strong>{runDetail.status}</strong>
                     </Typography>
                     {runDetail.last_error && (
-                      <Alert className="runs-panel-detail-last-error" severity="error">Last error: {runDetail.last_error}</Alert>
+                      <Alert severity="error">Last error: {runDetail.last_error}</Alert>
                     )}
-                    <Typography className="runs-panel-detail-meta" variant="caption" color="text.secondary">
+                    <Typography variant="caption" color="text.secondary">
                       Current task: {runDetail.current_task_id || '-'} • Current phase: {runDetail.current_phase_id || '-'}
                     </Typography>
                   </Stack>
                 ) : (
-                  <Typography className="runs-panel-detail-loading" variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                     Loading...
                   </Typography>
                 )}

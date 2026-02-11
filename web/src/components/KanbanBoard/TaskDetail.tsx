@@ -1,14 +1,31 @@
 /**
- * Task detail slide-over panel with collaboration features.
+ * Task detail side panel with collaboration features.
  */
 
 import { useState, useEffect } from 'react'
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Divider,
+  Drawer,
+  MenuItem,
+  Stack,
+  Tab,
+  Tabs,
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material'
 import { buildApiUrl, buildAuthHeaders, fetchInspect, fetchExplain, fetchTaskLogs, fetchTrace } from '../../api'
 import FeedbackPanel from '../FeedbackPanel/FeedbackPanel'
 import ActivityTimeline from '../ActivityTimeline/ActivityTimeline'
 import ReasoningViewer from '../ReasoningViewer/ReasoningViewer'
 import CorrectionForm from '../CorrectionForm'
-import './KanbanBoard.css'
 
 type DetailTab =
   | 'summary'
@@ -51,6 +68,23 @@ interface Props {
   projectDir?: string
   onClose: () => void
   onUpdated: () => void
+}
+
+const STATUS_COLORS: Record<string, 'default' | 'info' | 'warning' | 'success' | 'error'> = {
+  backlog: 'default',
+  ready: 'info',
+  in_progress: 'warning',
+  in_review: 'info',
+  done: 'success',
+  blocked: 'error',
+  cancelled: 'default',
+}
+
+const PRIORITY_COLORS: Record<string, string> = {
+  P0: '#ef4444',
+  P1: '#f97316',
+  P2: '#3b82f6',
+  P3: '#9ca3af',
 }
 
 export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
@@ -106,79 +140,45 @@ export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
   }
 
   return (
-    <div className="task-detail-overlay" onClick={onClose}>
-      <div className="task-detail-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="task-detail-header">
-          <div className="task-detail-header-left">
-            <span className={`task-detail-type type-${task.task_type}`}>{task.task_type}</span>
-            <span className="task-detail-id">{task.id}</span>
-            <span className={`task-detail-priority priority-${task.priority}`}>{task.priority}</span>
-          </div>
-          <button className="task-detail-close" onClick={onClose}>&times;</button>
-        </div>
+    <Drawer anchor="right" open onClose={onClose} PaperProps={{ sx: { width: { xs: '100%', sm: 560 } } }}>
+      <Stack sx={{ height: '100%' }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+          <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+            <Chip size="small" label={task.task_type} sx={{ bgcolor: 'text.primary', color: 'background.paper' }} />
+            <Typography variant="caption" color="text.secondary" sx={{ fontFamily: '"IBM Plex Mono", monospace' }}>
+              {task.id}
+            </Typography>
+            <Typography variant="caption" sx={{ fontWeight: 700, color: PRIORITY_COLORS[task.priority] || '#3b82f6' }}>
+              {task.priority}
+            </Typography>
+          </Stack>
+          <Button onClick={onClose}>Close</Button>
+        </Stack>
 
-        {/* Task detail tabs */}
-        <div className="task-detail-tabs">
-          <button
-            className={`detail-tab ${activeTab === 'summary' ? 'active' : ''}`}
-            onClick={() => setActiveTab('summary')}
-          >
-            Summary
-          </button>
-          <button
-            className={`detail-tab ${activeTab === 'dependencies' ? 'active' : ''}`}
-            onClick={() => setActiveTab('dependencies')}
-          >
-            Dependencies
-          </button>
-          <button
-            className={`detail-tab ${activeTab === 'logs' ? 'active' : ''}`}
-            onClick={() => setActiveTab('logs')}
-          >
-            Logs
-          </button>
-          <button
-            className={`detail-tab ${activeTab === 'interventions' ? 'active' : ''}`}
-            onClick={() => setActiveTab('interventions')}
-          >
-            Interventions
-          </button>
-          <button
-            className={`detail-tab ${activeTab === 'activity' ? 'active' : ''}`}
-            onClick={() => setActiveTab('activity')}
-          >
-            Activity
-          </button>
-          <button
-            className={`detail-tab ${activeTab === 'reasoning' ? 'active' : ''}`}
-            onClick={() => setActiveTab('reasoning')}
-          >
-            Reasoning
-          </button>
-          <button
-            className={`detail-tab ${activeTab === 'inspect' ? 'active' : ''}`}
-            onClick={() => setActiveTab('inspect')}
-          >
-            Inspect
-          </button>
-          <button
-            className={`detail-tab ${activeTab === 'trace' ? 'active' : ''}`}
-            onClick={() => setActiveTab('trace')}
-          >
-            Trace
-          </button>
-        </div>
+        <Tabs
+          value={activeTab}
+          onChange={(_, value: DetailTab) => setActiveTab(value)}
+          variant="scrollable"
+          scrollButtons="auto"
+        >
+          <Tab label="Summary" value="summary" />
+          <Tab label="Dependencies" value="dependencies" />
+          <Tab label="Logs" value="logs" />
+          <Tab label="Interventions" value="interventions" />
+          <Tab label="Activity" value="activity" />
+          <Tab label="Reasoning" value="reasoning" />
+          <Tab label="Inspect" value="inspect" />
+          <Tab label="Trace" value="trace" />
+        </Tabs>
 
-        <div className="task-detail-body">
+        <Box sx={{ p: 2, overflowY: 'auto', flex: 1 }}>
           {activeTab === 'interventions' ? (
-            <div className="task-detail-section">
+            <Stack spacing={2}>
               <FeedbackPanel taskId={task.id} projectDir={projectDir} />
               {(task.error || task.status === 'blocked' || task.blocked_by.length > 0) && (
-                <div style={{ marginTop: '1rem' }}>
-                  <CorrectionForm taskId={task.id} projectDir={projectDir} />
-                </div>
+                <CorrectionForm taskId={task.id} projectDir={projectDir} />
               )}
-            </div>
+            </Stack>
           ) : activeTab === 'activity' ? (
             <ActivityTimeline taskId={task.id} projectDir={projectDir} />
           ) : activeTab === 'reasoning' ? (
@@ -190,181 +190,176 @@ export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
           ) : activeTab === 'trace' ? (
             <TraceTab taskId={task.id} projectDir={projectDir} />
           ) : editing ? (
-            <div className="task-detail-edit">
-              <input
-                className="task-detail-title-input"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Task title"
-              />
-              <div className="task-detail-edit-row">
-                <select value={taskType} onChange={(e) => setTaskType(e.target.value)}>
-                  <option value="feature">Feature</option>
-                  <option value="bug">Bug</option>
-                  <option value="refactor">Refactor</option>
-                  <option value="research">Research</option>
-                  <option value="test">Test</option>
-                  <option value="docs">Docs</option>
-                </select>
-                <select value={priority} onChange={(e) => setPriority(e.target.value)}>
-                  <option value="P0">P0 - Critical</option>
-                  <option value="P1">P1 - High</option>
-                  <option value="P2">P2 - Medium</option>
-                  <option value="P3">P3 - Low</option>
-                </select>
-              </div>
-              <textarea
-                className="task-detail-desc-input"
+            <Stack spacing={1.25}>
+              <TextField value={title} onChange={(e) => setTitle(e.target.value)} label="Title" fullWidth />
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                <TextField select value={taskType} onChange={(e) => setTaskType(e.target.value)} label="Type" fullWidth>
+                  <MenuItem value="feature">Feature</MenuItem>
+                  <MenuItem value="bug">Bug</MenuItem>
+                  <MenuItem value="refactor">Refactor</MenuItem>
+                  <MenuItem value="research">Research</MenuItem>
+                  <MenuItem value="test">Test</MenuItem>
+                  <MenuItem value="docs">Docs</MenuItem>
+                </TextField>
+                <TextField select value={priority} onChange={(e) => setPriority(e.target.value)} label="Priority" fullWidth>
+                  <MenuItem value="P0">P0 - Critical</MenuItem>
+                  <MenuItem value="P1">P1 - High</MenuItem>
+                  <MenuItem value="P2">P2 - Medium</MenuItem>
+                  <MenuItem value="P3">P3 - Low</MenuItem>
+                </TextField>
+              </Stack>
+              <TextField
+                multiline
+                minRows={6}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Description..."
-                rows={6}
+                label="Description"
+                fullWidth
               />
-              <div className="task-detail-edit-actions">
-                <button className="btn-save" onClick={handleSave} disabled={saving}>
+              <Stack direction="row" spacing={1}>
+                <Button variant="contained" onClick={handleSave} disabled={saving}>
                   {saving ? 'Saving...' : 'Save'}
-                </button>
-                <button className="btn-cancel" onClick={() => setEditing(false)}>Cancel</button>
-              </div>
-            </div>
+                </Button>
+                <Button variant="outlined" onClick={() => setEditing(false)}>
+                  Cancel
+                </Button>
+              </Stack>
+            </Stack>
           ) : (
             <>
-              <h2 className="task-detail-title">{task.title}</h2>
+              <Typography variant="h6" sx={{ mb: 1 }}>{task.title}</Typography>
               {task.description && (
-                <div className="task-detail-description">{task.description}</div>
+                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mb: 1.5 }}>
+                  {task.description}
+                </Typography>
               )}
-              <button className="btn-edit" onClick={() => setEditing(true)}>Edit</button>
+              <Button size="small" variant="outlined" onClick={() => setEditing(true)}>Edit</Button>
             </>
           )}
 
           {activeTab === 'summary' && (
-            <>
-              {/* Status & Actions */}
-              <div className="task-detail-section">
-                <h3>Status</h3>
-                <div className="task-detail-status">
-                  <span className={`status-badge status-${task.status}`}>{task.status}</span>
-                  <div className="task-detail-transitions">
+            <Stack spacing={2} sx={{ mt: 2 }}>
+              <Box>
+                <Typography variant="overline" color="text.secondary">Status</Typography>
+                <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
+                  <Chip size="small" color={STATUS_COLORS[task.status] || 'default'} label={task.status} />
+                  <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
                     {task.status === 'backlog' && (
-                      <button onClick={() => handleTransition('ready')}>Move to Ready</button>
+                      <Button size="small" variant="outlined" onClick={() => handleTransition('ready')}>Move to Ready</Button>
                     )}
                     {task.status === 'ready' && (
-                      <button onClick={() => handleTransition('in_progress')}>Start</button>
+                      <Button size="small" variant="outlined" onClick={() => handleTransition('in_progress')}>Start</Button>
                     )}
                     {task.status === 'in_progress' && (
                       <>
-                        <button onClick={() => handleTransition('in_review')}>Send to Review</button>
-                        <button onClick={() => handleTransition('done')}>Mark Done</button>
+                        <Button size="small" variant="outlined" onClick={() => handleTransition('in_review')}>Send to Review</Button>
+                        <Button size="small" variant="outlined" onClick={() => handleTransition('done')}>Mark Done</Button>
                       </>
                     )}
                     {task.status === 'in_review' && (
                       <>
-                        <button onClick={() => handleTransition('done')}>Approve</button>
-                        <button onClick={() => handleTransition('in_progress')}>Request Changes</button>
+                        <Button size="small" variant="outlined" onClick={() => handleTransition('done')}>Approve</Button>
+                        <Button size="small" variant="outlined" onClick={() => handleTransition('in_progress')}>Request Changes</Button>
                       </>
                     )}
                     {task.status === 'blocked' && (
-                      <button onClick={() => handleTransition('ready')}>Unblock</button>
+                      <Button size="small" variant="outlined" onClick={() => handleTransition('ready')}>Unblock</Button>
                     )}
-                  </div>
-                </div>
-              </div>
+                  </Stack>
+                </Stack>
+              </Box>
 
-              {/* Acceptance Criteria */}
               {task.acceptance_criteria.length > 0 && (
-                <div className="task-detail-section">
-                  <h3>Acceptance Criteria</h3>
-                  <ul className="task-detail-criteria">
+                <Box>
+                  <Typography variant="overline" color="text.secondary">Acceptance Criteria</Typography>
+                  <Stack component="ul" spacing={0.5} sx={{ pl: 2, my: 0.5 }}>
                     {task.acceptance_criteria.map((ac, i) => (
-                      <li key={i}>{ac}</li>
+                      <Typography key={i} component="li" variant="body2" color="text.secondary">{ac}</Typography>
                     ))}
-                  </ul>
-                </div>
+                  </Stack>
+                </Box>
               )}
 
-              {/* Labels */}
               {task.labels.length > 0 && (
-                <div className="task-detail-section">
-                  <h3>Labels</h3>
-                  <div className="task-detail-labels">
+                <Box>
+                  <Typography variant="overline" color="text.secondary">Labels</Typography>
+                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
                     {task.labels.map((l) => (
-                      <span key={l} className="task-card-label">{l}</span>
+                      <Chip key={l} size="small" label={l} variant="outlined" />
                     ))}
-                  </div>
-                </div>
+                  </Stack>
+                </Box>
               )}
 
-              {/* Metadata */}
-              <div className="task-detail-section task-detail-meta">
-                <div>Created: {new Date(task.created_at).toLocaleString()}</div>
-                <div>Updated: {new Date(task.updated_at).toLocaleString()}</div>
-                {task.completed_at && <div>Completed: {new Date(task.completed_at).toLocaleString()}</div>}
-                {task.assignee && <div>Assignee: {task.assignee} ({task.assignee_type})</div>}
-                <div>Source: {task.source}</div>
-              </div>
+              <Box>
+                <Typography variant="overline" color="text.secondary">Metadata</Typography>
+                <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary">Created: {new Date(task.created_at).toLocaleString()}</Typography>
+                  <Typography variant="caption" color="text.secondary">Updated: {new Date(task.updated_at).toLocaleString()}</Typography>
+                  {task.completed_at && <Typography variant="caption" color="text.secondary">Completed: {new Date(task.completed_at).toLocaleString()}</Typography>}
+                  {task.assignee && <Typography variant="caption" color="text.secondary">Assignee: {task.assignee} ({task.assignee_type})</Typography>}
+                  <Typography variant="caption" color="text.secondary">Source: {task.source}</Typography>
+                </Stack>
+              </Box>
 
-              {/* Danger zone */}
-              <div className="task-detail-section task-detail-danger">
-                <button className="btn-delete" onClick={handleDelete}>Delete Task</button>
-              </div>
-            </>
+              <Divider />
+              <Button color="error" variant="outlined" onClick={handleDelete}>Delete Task</Button>
+            </Stack>
           )}
 
           {activeTab === 'dependencies' && (
-            <>
+            <Stack spacing={2} sx={{ mt: 2 }}>
               {(task.blocked_by.length > 0 || task.blocks.length > 0) ? (
-                <div className="task-detail-section">
-                  <h3>Dependencies</h3>
+                <Box>
+                  <Typography variant="overline" color="text.secondary">Dependencies</Typography>
                   {task.blocked_by.length > 0 && (
-                    <div className="task-detail-deps">
-                      <span className="dep-label">Blocked by:</span>
+                    <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
+                      <Typography variant="caption" color="text.secondary">Blocked by:</Typography>
                       {task.blocked_by.map((id) => (
-                        <span key={id} className="dep-chip">{id.slice(-8)}</span>
+                        <Chip key={id} size="small" variant="outlined" label={id.slice(-8)} sx={{ fontFamily: '"IBM Plex Mono", monospace' }} />
                       ))}
-                    </div>
+                    </Stack>
                   )}
                   {task.blocks.length > 0 && (
-                    <div className="task-detail-deps">
-                      <span className="dep-label">Blocks:</span>
+                    <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap" sx={{ mt: 0.75 }}>
+                      <Typography variant="caption" color="text.secondary">Blocks:</Typography>
                       {task.blocks.map((id) => (
-                        <span key={id} className="dep-chip">{id.slice(-8)}</span>
+                        <Chip key={id} size="small" variant="outlined" label={id.slice(-8)} sx={{ fontFamily: '"IBM Plex Mono", monospace' }} />
                       ))}
-                    </div>
+                    </Stack>
                   )}
-                </div>
+                </Box>
               ) : (
-                <div className="task-detail-section">
-                  <p>No dependencies found for this task.</p>
-                </div>
+                <Typography variant="body2" color="text.secondary">No dependencies found for this task.</Typography>
               )}
 
               {task.context_files.length > 0 && (
-                <div className="task-detail-section">
-                  <h3>Context Files</h3>
-                  <ul className="task-detail-files">
+                <Box>
+                  <Typography variant="overline" color="text.secondary">Context Files</Typography>
+                  <Stack component="ul" spacing={0.5} sx={{ pl: 2, my: 0.5 }}>
                     {task.context_files.map((f) => (
-                      <li key={f}><code>{f}</code></li>
+                      <Typography key={f} component="li" variant="body2">
+                        <Box component="code" sx={{ fontFamily: '"IBM Plex Mono", monospace' }}>{f}</Box>
+                      </Typography>
                     ))}
-                  </ul>
-                </div>
+                  </Stack>
+                </Box>
               )}
 
               {task.error && (
-                <div className="task-detail-section task-detail-error">
-                  <h3>Error</h3>
-                  <pre>{task.error}</pre>
+                <Alert severity="error">
+                  <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Error</Typography>
+                  <Box component="pre" sx={{ whiteSpace: 'pre-wrap', m: 0, fontSize: '0.75rem' }}>{task.error}</Box>
                   <ExplainButton taskId={task.id} projectDir={projectDir} />
-                </div>
+                </Alert>
               )}
-            </>
+            </Stack>
           )}
-        </div>
-      </div>
-    </div>
+        </Box>
+      </Stack>
+    </Drawer>
   )
 }
-
-// --- Sub-components for new tabs ---
 
 function ExplainButton({ taskId, projectDir }: { taskId: string; projectDir?: string }) {
   const [explanation, setExplanation] = useState<string | null>(null)
@@ -383,17 +378,17 @@ function ExplainButton({ taskId, projectDir }: { taskId: string; projectDir?: st
   }
 
   return (
-    <div style={{ marginTop: '0.5rem' }}>
+    <Box sx={{ mt: 1 }}>
       {explanation ? (
-        <pre style={{ fontSize: '0.8rem', whiteSpace: 'pre-wrap', background: 'var(--bg-secondary, #f9fafb)', padding: '0.5rem', borderRadius: '4px' }}>
+        <Box component="pre" sx={{ fontSize: '0.8rem', whiteSpace: 'pre-wrap', bgcolor: 'background.default', p: 1, borderRadius: 1, m: 0 }}>
           {explanation}
-        </pre>
+        </Box>
       ) : (
-        <button className="btn-edit" onClick={handleClick} disabled={loading}>
+        <Button size="small" variant="outlined" onClick={handleClick} disabled={loading} sx={{ mt: 0.5 }}>
           {loading ? 'Loading...' : 'Why blocked?'}
-        </button>
+        </Button>
       )}
-    </div>
+    </Box>
   )
 }
 
@@ -409,14 +404,14 @@ function InspectTab({ taskId, projectDir }: { taskId: string; projectDir?: strin
       .finally(() => setLoading(false))
   }, [taskId, projectDir])
 
-  if (loading) return <div>Loading inspection data...</div>
-  if (error) return <div style={{ color: '#dc2626' }}>{error}</div>
-  if (!data) return <div>No data available</div>
+  if (loading) return <Typography>Loading inspection data...</Typography>
+  if (error) return <Alert severity="error">{error}</Alert>
+  if (!data) return <Typography>No data available</Typography>
 
   return (
-    <div style={{ fontSize: '0.85rem' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <tbody>
+    <Stack spacing={1.5}>
+      <Table size="small">
+        <TableBody>
           {[
             ['Lifecycle', data.lifecycle],
             ['Step', data.step],
@@ -425,30 +420,32 @@ function InspectTab({ taskId, projectDir }: { taskId: string; projectDir?: strin
             ['Last Error', data.last_error || '-'],
             ['Error Type', data.last_error_type || '-'],
           ].map(([key, val]) => (
-            <tr key={key} style={{ borderBottom: '1px solid var(--border-color, #e5e7eb)' }}>
-              <td style={{ padding: '0.5rem', fontWeight: 500, width: '40%' }}>{key}</td>
-              <td style={{ padding: '0.5rem', fontFamily: 'var(--font-mono, monospace)', fontSize: '0.8rem' }}>{val}</td>
-            </tr>
+            <TableRow key={key}>
+              <TableCell sx={{ fontWeight: 600, width: '40%' }}>{key}</TableCell>
+              <TableCell sx={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: '0.8rem' }}>{String(val)}</TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
+
       {data.context && data.context.length > 0 && (
-        <div style={{ marginTop: '1rem' }}>
-          <strong>Context</strong>
-          <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
-            {data.context.map((c: string, i: number) => <li key={i}>{c}</li>)}
-          </ul>
-        </div>
+        <Box>
+          <Typography variant="subtitle2">Context</Typography>
+          <Stack component="ul" spacing={0.5} sx={{ pl: 2, my: 0.5 }}>
+            {data.context.map((c: string, i: number) => <Typography key={i} component="li" variant="body2">{c}</Typography>)}
+          </Stack>
+        </Box>
       )}
+
       {data.metadata && Object.keys(data.metadata).length > 0 && (
-        <div style={{ marginTop: '1rem' }}>
-          <strong>Metadata</strong>
-          <pre style={{ fontSize: '0.8rem', background: 'var(--bg-secondary, #f9fafb)', padding: '0.5rem', borderRadius: '4px', overflow: 'auto' }}>
+        <Box>
+          <Typography variant="subtitle2">Metadata</Typography>
+          <Box component="pre" sx={{ fontSize: '0.8rem', bgcolor: 'background.default', p: 1, borderRadius: 1, overflow: 'auto', m: 0 }}>
             {JSON.stringify(data.metadata, null, 2)}
-          </pre>
-        </div>
+          </Box>
+        </Box>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -467,45 +464,51 @@ function LogsTab({ taskId, projectDir }: { taskId: string; projectDir?: string }
   }, [taskId, projectDir, step])
 
   return (
-    <div style={{ fontSize: '0.85rem' }}>
-      <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-        <label style={{ fontWeight: 500 }}>Step filter:</label>
-        <select value={step} onChange={(e) => setStep(e.target.value)} style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-color, #e5e7eb)' }}>
-          <option value="">All</option>
-          <option value="plan_impl">Plan/Impl</option>
-          <option value="implement">Implement</option>
-          <option value="verify">Verify</option>
-          <option value="review">Review</option>
-          <option value="commit">Commit</option>
-        </select>
-      </div>
+    <Stack spacing={1.25}>
+      <Stack direction="row" spacing={1} alignItems="center">
+        <Typography variant="body2" sx={{ fontWeight: 500 }}>Step filter:</Typography>
+        <TextField size="small" select value={step} onChange={(e) => setStep(e.target.value)} sx={{ minWidth: 180 }}>
+          <MenuItem value="">All</MenuItem>
+          <MenuItem value="plan_impl">Plan/Impl</MenuItem>
+          <MenuItem value="implement">Implement</MenuItem>
+          <MenuItem value="verify">Verify</MenuItem>
+          <MenuItem value="review">Review</MenuItem>
+          <MenuItem value="commit">Commit</MenuItem>
+        </TextField>
+      </Stack>
+
       {loading ? (
-        <div>Loading logs...</div>
+        <Typography>Loading logs...</Typography>
       ) : error ? (
-        <div style={{ color: '#dc2626' }}>{error}</div>
+        <Alert severity="error">{error}</Alert>
       ) : Object.keys(logs).length === 0 ? (
-        <div style={{ color: 'var(--text-secondary, #6b7280)' }}>No logs found for this task</div>
+        <Typography color="text.secondary">No logs found for this task</Typography>
       ) : (
         Object.entries(logs).map(([filename, lines]) => (
-          <div key={filename} style={{ marginBottom: '1rem' }}>
-            <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{filename}</div>
-            <pre style={{
-              fontFamily: 'var(--font-mono, monospace)',
-              fontSize: '0.75rem',
-              background: 'var(--bg-secondary, #f9fafb)',
-              padding: '0.75rem',
-              borderRadius: '6px',
-              border: '1px solid var(--border-color, #e5e7eb)',
-              overflow: 'auto',
-              maxHeight: '300px',
-              whiteSpace: 'pre-wrap',
-            }}>
+          <Box key={filename}>
+            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>{filename}</Typography>
+            <Box
+              component="pre"
+              sx={{
+                m: 0,
+                fontFamily: '"IBM Plex Mono", monospace',
+                fontSize: '0.75rem',
+                bgcolor: 'background.default',
+                p: 1,
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'divider',
+                overflow: 'auto',
+                maxHeight: 300,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
               {lines.join('\n') || '(empty)'}
-            </pre>
-          </div>
+            </Box>
+          </Box>
         ))
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -522,40 +525,47 @@ function TraceTab({ taskId, projectDir }: { taskId: string; projectDir?: string 
       .finally(() => setLoading(false))
   }, [taskId, projectDir])
 
-  if (loading) return <div>Loading event history...</div>
-  if (error) return <div style={{ color: '#dc2626' }}>{error}</div>
-  if (events.length === 0) return <div style={{ color: 'var(--text-secondary, #6b7280)' }}>No events found for this task</div>
+  if (loading) return <Typography>Loading event history...</Typography>
+  if (error) return <Alert severity="error">{error}</Alert>
+  if (events.length === 0) return <Typography color="text.secondary">No events found for this task</Typography>
 
   return (
-    <div style={{ fontSize: '0.85rem' }}>
-      <div style={{ marginBottom: '0.5rem', color: 'var(--text-secondary, #6b7280)' }}>
+    <Stack spacing={1}>
+      <Typography variant="caption" color="text.secondary">
         {events.length} event{events.length !== 1 ? 's' : ''}
-      </div>
+      </Typography>
       {events.map((event, i) => {
         const eventType = event.event_type || 'unknown'
         const timestamp = event.timestamp || ''
         const isFail = eventType.includes('fail') || eventType.includes('error') || eventType.includes('violation')
         const isPass = eventType.includes('pass') || eventType === 'task_completed'
         return (
-          <div key={i} style={{
-            padding: '0.5rem 0.75rem',
-            borderLeft: `3px solid ${isFail ? '#dc2626' : isPass ? '#16a34a' : '#3b82f6'}`,
-            marginBottom: '0.5rem',
-            background: 'var(--bg-secondary, #f9fafb)',
-            borderRadius: '0 4px 4px 0',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-              <strong>{eventType}</strong>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #6b7280)' }}>{timestamp}</span>
-            </div>
-            {event.run_id && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #6b7280)' }}>Run: {event.run_id}</div>}
-            {event.error_type && <div style={{ fontSize: '0.8rem', color: '#dc2626' }}>Error: {event.error_type}</div>}
-            {event.error_detail && <div style={{ fontSize: '0.75rem', color: '#991b1b', marginTop: '0.25rem' }}>{String(event.error_detail).slice(0, 150)}</div>}
-            {event.block_reason && <div style={{ fontSize: '0.8rem' }}>Reason: {event.block_reason}</div>}
-            {event.passed !== undefined && <div style={{ color: event.passed ? '#16a34a' : '#dc2626' }}>{event.passed ? 'Passed' : 'Failed'}</div>}
-          </div>
+          <Box
+            key={i}
+            sx={{
+              p: 1,
+              borderLeft: '3px solid',
+              borderLeftColor: isFail ? 'error.main' : isPass ? 'success.main' : 'info.main',
+              bgcolor: 'background.default',
+              borderRadius: '0 4px 4px 0',
+            }}
+          >
+            <Stack direction="row" justifyContent="space-between" spacing={1}>
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>{eventType}</Typography>
+              <Typography variant="caption" color="text.secondary">{timestamp}</Typography>
+            </Stack>
+            {event.run_id && <Typography variant="caption" color="text.secondary">Run: {event.run_id}</Typography>}
+            {event.error_type && <Typography variant="caption" color="error.main">Error: {event.error_type}</Typography>}
+            {event.error_detail && <Typography variant="caption" color="error.dark">{String(event.error_detail).slice(0, 150)}</Typography>}
+            {event.block_reason && <Typography variant="caption">Reason: {event.block_reason}</Typography>}
+            {event.passed !== undefined && (
+              <Typography variant="caption" color={event.passed ? 'success.main' : 'error.main'}>
+                {event.passed ? 'Passed' : 'Failed'}
+              </Typography>
+            )}
+          </Box>
         )
       })}
-    </div>
+    </Stack>
   )
 }

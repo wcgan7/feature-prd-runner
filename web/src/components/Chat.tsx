@@ -1,5 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import './Chat.css'
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  IconButton,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
+import CloseIcon from '@mui/icons-material/Close'
+import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline'
 import { buildApiUrl, buildAuthHeaders } from '../api'
 import { useChannel } from '../contexts/WebSocketContext'
 
@@ -34,23 +45,16 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (isOpen) {
-      fetchMessages()
-    }
+    if (isOpen) fetchMessages()
   }, [runId, projectDir, isOpen])
 
-  // Real-time updates via WebSocket instead of polling
-  useChannel('notifications', useCallback((_event: string, _data: any) => {
+  useChannel('notifications', useCallback(() => {
     if (isOpen) fetchMessages()
   }, [isOpen]))
 
   useEffect(() => {
-    scrollToBottom()
-  }, [messages])
-
-  const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  }, [messages])
 
   const fetchMessages = async () => {
     try {
@@ -58,9 +62,7 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
         buildApiUrl('/api/messages', projectDir, { run_id: runId }),
         { headers: buildAuthHeaders() }
       )
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`)
-      }
+      if (!response.ok) throw new Error(`HTTP error ${response.status}`)
       const data = await response.json()
       setMessages(Array.isArray(data) ? data : [])
       setError(null)
@@ -84,18 +86,12 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
       const metadata: Record<string, any> = {}
       if (messageType === 'requirement') {
         metadata.priority = requirementPriority
-        if (requirementTaskId.trim()) {
-          metadata.task_id = requirementTaskId.trim()
-        }
+        if (requirementTaskId.trim()) metadata.task_id = requirementTaskId.trim()
       } else if (messageType === 'correction') {
         metadata.task_id = correctionTaskId.trim()
         metadata.issue = inputValue.trim()
-        if (correctionFile.trim()) {
-          metadata.file = correctionFile.trim()
-        }
-        if (correctionSuggestedFix.trim()) {
-          metadata.suggested_fix = correctionSuggestedFix.trim()
-        }
+        if (correctionFile.trim()) metadata.file = correctionFile.trim()
+        if (correctionSuggestedFix.trim()) metadata.suggested_fix = correctionSuggestedFix.trim()
       } else if (messageType === 'clarification_request') {
         metadata.expects_response = true
       }
@@ -103,16 +99,10 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
       const response = await fetch(buildApiUrl('/api/messages', projectDir, { run_id: runId }), {
         method: 'POST',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          content: inputValue,
-          type: messageType,
-          metadata,
-        }),
+        body: JSON.stringify({ content: inputValue, type: messageType, metadata }),
       })
 
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`)
-      }
+      if (!response.ok) throw new Error(`HTTP error ${response.status}`)
 
       setInputValue('')
       if (messageType === 'requirement') {
@@ -122,7 +112,6 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
         setCorrectionFile('')
         setCorrectionSuggestedFix('')
       }
-      // Immediately fetch messages to show the sent message
       await fetchMessages()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send message')
@@ -140,8 +129,7 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
 
   const formatTimestamp = (timestamp: string): string => {
     try {
-      const date = new Date(timestamp)
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     } catch {
       return ''
     }
@@ -149,220 +137,267 @@ const Chat = ({ runId, projectDir }: ChatProps) => {
 
   const getMessageTypeLabel = (type: string): string => {
     switch (type) {
-      case 'guidance':
-        return 'Guidance'
-      case 'clarification_request':
-        return 'Question'
-      case 'clarification_response':
-        return 'Answer'
-      case 'requirement':
-        return 'Requirement'
-      case 'correction':
-        return 'Correction'
-      default:
-        return type
+      case 'guidance': return 'Guidance'
+      case 'clarification_request': return 'Question'
+      case 'clarification_response': return 'Answer'
+      case 'requirement': return 'Requirement'
+      case 'correction': return 'Correction'
+      default: return type
     }
   }
 
   if (!isOpen) {
     return (
-      <button
-        className="chat-toggle"
+      <Button
         onClick={() => setIsOpen(true)}
         title="Open chat"
         aria-label="Open chat"
+        variant="contained"
+        startIcon={<ChatBubbleOutlineIcon />}
+        sx={{
+          position: 'fixed',
+          bottom: { xs: 16, sm: 24 },
+          right: { xs: 16, sm: 24 },
+          zIndex: (theme) => theme.zIndex.modal + 1,
+          borderRadius: 6,
+          px: 2,
+          py: 1,
+          boxShadow: 6,
+        }}
       >
-        💬 Chat
-      </button>
+        Chat
+      </Button>
     )
   }
 
   return (
-    <div className="chat-panel">
-      <div className="chat-header">
-        <h3>Live Collaboration Chat</h3>
-        <button
+    <Box
+      role="dialog"
+      aria-label="Live collaboration chat panel"
+      sx={{
+        position: 'fixed',
+        bottom: { xs: 16, sm: 24 },
+        right: { xs: 16, sm: 24 },
+        width: { xs: 'calc(100vw - 32px)', sm: 420 },
+        maxWidth: '100vw',
+        height: { xs: 'calc(100vh - 32px)', sm: 620 },
+        maxHeight: 'calc(100vh - 32px)',
+        bgcolor: 'background.paper',
+        borderRadius: 3,
+        boxShadow: 10,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        zIndex: (theme) => theme.zIndex.modal + 1,
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        sx={{
+          px: 2,
+          py: 1.5,
+          color: 'common.white',
+          background: 'linear-gradient(135deg, #0ea5e9 0%, #0369a1 100%)',
+        }}
+      >
+        <Typography variant="h3" sx={{ fontSize: '1rem', color: 'inherit' }}>Live Collaboration Chat</Typography>
+        <IconButton
           onClick={() => setIsOpen(false)}
-          className="chat-close"
           aria-label="Close chat"
+          size="small"
+          sx={{ color: 'inherit' }}
         >
-          ×
-        </button>
-      </div>
+          <CloseIcon fontSize="small" />
+        </IconButton>
+      </Stack>
 
       {!runId ? (
-        <div className="chat-empty">
-          <p>No active run</p>
-          <p className="hint">Chat is available when a run is active</p>
-        </div>
+        <Stack alignItems="center" justifyContent="center" sx={{ flex: 1, textAlign: 'center', px: 3, color: 'text.secondary' }}>
+          <Typography>No active run</Typography>
+          <Typography variant="body2" color="text.disabled">Chat is available when a run is active</Typography>
+        </Stack>
       ) : (
         <>
-          <div className="chat-messages">
+          <Stack spacing={1.5} sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
             {messages.length === 0 ? (
-              <div className="chat-empty">
-                <p>No messages yet</p>
-                <p className="hint">Send a message to start collaborating with the worker</p>
-              </div>
+              <Stack alignItems="center" justifyContent="center" sx={{ flex: 1, textAlign: 'center', px: 3, color: 'text.secondary' }}>
+                <Typography>No messages yet</Typography>
+                <Typography variant="body2" color="text.disabled">
+                  Send a message to start collaborating with the worker
+                </Typography>
+              </Stack>
             ) : (
               messages.map((msg) => (
-                <div
+                <Box
                   key={msg.id}
                   className={`chat-message ${msg.from_human ? 'human' : 'worker'}`}
+                  sx={{ alignSelf: msg.from_human ? 'flex-end' : 'flex-start', maxWidth: '86%' }}
                 >
-                  <div className="message-header">
-                    <span className="message-sender">
-                      {msg.from_human ? '👤 You' : '🤖 Worker'}
-                    </span>
-                    <span className="message-type">{getMessageTypeLabel(msg.type)}</span>
-                    <span className="message-time">{formatTimestamp(msg.timestamp)}</span>
-                  </div>
-                  <div className="message-content">{msg.content}</div>
-                </div>
+                  <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.5 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                      {msg.from_human ? 'You' : 'Worker'}
+                    </Typography>
+                    <Chip size="small" label={getMessageTypeLabel(msg.type)} sx={{ textTransform: 'uppercase', fontSize: '0.625rem', height: 20 }} />
+                    <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                      {formatTimestamp(msg.timestamp)}
+                    </Typography>
+                  </Stack>
+                  <Box
+                    sx={{
+                      px: 1.5,
+                      py: 1,
+                      borderRadius: 2,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      bgcolor: msg.from_human ? 'info.main' : 'background.default',
+                      color: msg.from_human ? 'common.white' : 'text.primary',
+                      border: msg.from_human ? 'none' : '1px solid',
+                      borderColor: msg.from_human ? 'transparent' : 'divider',
+                    }}
+                  >
+                    {msg.content}
+                  </Box>
+                </Box>
               ))
             )}
             <div ref={messagesEndRef} />
-          </div>
+          </Stack>
 
-          {error && (
-            <div className="chat-error">
-              Error: {error}
-            </div>
-          )}
+          {error && <Alert severity="error" sx={{ mx: 2, mb: 1 }}>Error: {error}</Alert>}
 
-          <div className="chat-input" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-              <label style={{ fontSize: '0.75rem', color: '#666' }}>
-                Type
-              </label>
-              <select
+          <Stack spacing={1} sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.default' }}>
+            <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+              <Typography variant="caption" color="text.secondary">Type</Typography>
+              <Box
+                component="select"
                 value={messageType}
                 onChange={(e) => setMessageType(e.target.value as OutgoingMessageType)}
                 disabled={sending}
                 aria-label="Message type"
-                style={{ padding: '0.25rem 0.5rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.75rem' }}
+                sx={{
+                  minWidth: 170,
+                  borderRadius: 1,
+                  borderColor: 'divider',
+                  borderStyle: 'solid',
+                  borderWidth: 1,
+                  bgcolor: 'background.paper',
+                  color: 'text.primary',
+                  px: 1,
+                  py: 0.75,
+                }}
               >
                 <option value="guidance">Guidance</option>
                 <option value="clarification_request">Question</option>
                 <option value="requirement">Requirement</option>
                 <option value="correction">Correction</option>
-              </select>
-            </div>
+              </Box>
+            </Stack>
 
             {messageType === 'requirement' && (
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <input
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <TextField
                   value={requirementTaskId}
                   onChange={(e) => setRequirementTaskId(e.target.value)}
                   placeholder="Optional task_id"
                   disabled={sending}
-                  aria-label="Requirement task id"
-                  style={{
-                    flex: 1,
-                    minWidth: '160px',
-                    padding: '0.5rem',
-                    border: '1px solid #e0e0e0',
-                    borderRadius: '8px',
-                    fontSize: '0.75rem',
-                    fontFamily: 'inherit',
-                  }}
+                  inputProps={{ 'aria-label': 'Requirement task id' }}
+                  size="small"
+                  sx={{ flex: 1, minWidth: 160 }}
                 />
-                <select
+                <Box
+                  component="select"
                   value={requirementPriority}
-                  onChange={(e) => setRequirementPriority(e.target.value as any)}
+                  onChange={(e) => setRequirementPriority(e.target.value as 'high' | 'medium' | 'low')}
                   disabled={sending}
                   aria-label="Requirement priority"
-                  style={{ padding: '0.25rem 0.5rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.75rem' }}
+                  sx={{
+                    minWidth: 120,
+                    borderRadius: 1,
+                    borderColor: 'divider',
+                    borderStyle: 'solid',
+                    borderWidth: 1,
+                    bgcolor: 'background.paper',
+                    color: 'text.primary',
+                    px: 1,
+                    py: 0.75,
+                  }}
                 >
                   <option value="high">High</option>
                   <option value="medium">Medium</option>
                   <option value="low">Low</option>
-                </select>
-              </div>
+                </Box>
+              </Stack>
             )}
 
             {messageType === 'correction' && (
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <input
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <TextField
                   value={correctionTaskId}
                   onChange={(e) => setCorrectionTaskId(e.target.value)}
                   placeholder="task_id (required)"
                   disabled={sending}
-                  aria-label="Correction task id"
-                  style={{
-                    flex: 1,
-                    minWidth: '160px',
-                    padding: '0.5rem',
-                    border: '1px solid #e0e0e0',
-                    borderRadius: '8px',
-                    fontSize: '0.75rem',
-                    fontFamily: 'inherit',
-                  }}
+                  inputProps={{ 'aria-label': 'Correction task id' }}
+                  size="small"
+                  sx={{ flex: 1, minWidth: 160 }}
                 />
-                <input
+                <TextField
                   value={correctionFile}
                   onChange={(e) => setCorrectionFile(e.target.value)}
                   placeholder="Optional file path"
                   disabled={sending}
-                  aria-label="Correction file path"
-                  style={{
-                    flex: 2,
-                    minWidth: '180px',
-                    padding: '0.5rem',
-                    border: '1px solid #e0e0e0',
-                    borderRadius: '8px',
-                    fontSize: '0.75rem',
-                    fontFamily: 'inherit',
-                  }}
+                  inputProps={{ 'aria-label': 'Correction file path' }}
+                  size="small"
+                  sx={{ flex: 2, minWidth: 180 }}
                 />
-              </div>
+              </Stack>
             )}
 
             {messageType === 'correction' && (
-              <input
+              <TextField
                 value={correctionSuggestedFix}
                 onChange={(e) => setCorrectionSuggestedFix(e.target.value)}
                 placeholder="Optional suggested fix"
                 disabled={sending}
-                aria-label="Correction suggested fix"
-                style={{
-                  padding: '0.5rem',
-                  border: '1px solid #e0e0e0',
-                  borderRadius: '8px',
-                  fontSize: '0.75rem',
-                  fontFamily: 'inherit',
-                }}
+                inputProps={{ 'aria-label': 'Correction suggested fix' }}
+                size="small"
+                fullWidth
               />
             )}
 
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
-              <textarea
+            <Stack direction="row" spacing={1} alignItems="flex-end">
+              <TextField
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyPress}
                 placeholder="Type a message to the worker..."
                 disabled={sending}
-                rows={2}
+                multiline
+                minRows={2}
+                fullWidth
               />
-              <button
+              <Button
                 onClick={sendMessage}
                 disabled={!inputValue.trim() || sending || (messageType === 'correction' && !correctionTaskId.trim())}
+                variant="contained"
               >
                 {sending ? 'Sending...' : 'Send'}
-              </button>
-            </div>
-          </div>
+              </Button>
+            </Stack>
+          </Stack>
 
-          <div className="chat-hints">
-            <p>💡 Tips:</p>
-            <ul>
-              <li>Provide guidance to steer the worker's approach</li>
-              <li>Ask questions about the current implementation</li>
-              <li>Inject requirements or corrections mid-run</li>
-            </ul>
-          </div>
+          <Box sx={{ p: 1.5, borderTop: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
+            <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontWeight: 600 }}>
+              Tips
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+              Provide guidance, ask questions, or inject requirements/corrections mid-run.
+            </Typography>
+          </Box>
         </>
       )}
-    </div>
+    </Box>
   )
 }
 
