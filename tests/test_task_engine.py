@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import threading
 import pytest
 from pathlib import Path
 
@@ -243,6 +245,22 @@ class TestStatusTransitions:
         with pytest.raises(ValueError, match="Cannot transition"):
             engine.transition_task(t.id, "done")
 
+    def test_in_progress_to_done_requires_review_by_default(self, engine: TaskEngine) -> None:
+        t = engine.create_task(title="Needs review")
+        engine.transition_task(t.id, "ready")
+        engine.transition_task(t.id, "in_progress")
+        with pytest.raises(ValueError, match="Cannot transition"):
+            engine.transition_task(t.id, "done")
+
+    def test_in_progress_to_done_allowed_when_auto_approve_enabled(self, state_dir: Path) -> None:
+        auto_engine = TaskEngine(state_dir, allow_auto_approve_review=True)
+        t = auto_engine.create_task(title="Auto approve")
+        auto_engine.transition_task(t.id, "ready")
+        auto_engine.transition_task(t.id, "in_progress")
+        done = auto_engine.transition_task(t.id, "done")
+        assert done is not None
+        assert done.status == TaskStatus.DONE
+
     def test_done_unblocks_dependents(self, engine: TaskEngine) -> None:
         t1 = engine.create_task(title="First")
         t2 = engine.create_task(title="Second")
@@ -264,6 +282,137 @@ class TestStatusTransitions:
         assert t2_after is not None
         assert t2_after.status == TaskStatus.READY
         assert t1.id not in t2_after.blocked_by
+
+    def test_dependency_guard_blocks_ready_transition(self, engine: TaskEngine) -> None:
+        blocker = engine.create_task(title="Blocker")
+        task = engine.create_task(title="Blocked task")
+        engine.add_dependency(task.id, blocker.id)
+
+        with pytest.raises(ValueError, match="unresolved blockers"):
+            engine.transition_task(task.id, "ready")
+
+    def test_dependency_guard_blocks_in_progress_transition(self, engine: TaskEngine) -> None:
+        blocker = engine.create_task(title="Blocker")
+        task = engine.create_task(title="Blocked task")
+        engine.transition_task(task.id, "ready")
+        engine.add_dependency(task.id, blocker.id)
+        # Force a synthetic inconsistent state (ready with unresolved blockers)
+        # to validate the explicit in_progress dependency guard path.
+        engine.update_task(task.id, {"status": "ready"})
+
+        with pytest.raises(ValueError, match="unresolved blockers"):
+            engine.transition_task(task.id, "in_progress")
+
+
+class TestClaimTask:
+    def test_claim_ready_moves_to_in_progress(self, engine: TaskEngine) -> None:
+        task = engine.create_task(title="Claim me")
+        engine.transition_task(task.id, "ready")
+        claimed = engine.claim_task(task.id, claimer="orchestrator")
+        assert claimed is not None
+        assert claimed.status == TaskStatus.IN_PROGRESS
+        assert claimed.current_agent_id == "orchestrator"
+
+    def test_claim_backlog_promotes_then_claims(self, engine: TaskEngine) -> None:
+        task = engine.create_task(title="Backlog claim")
+        claimed = engine.claim_task(task.id, claimer="manual_ui")
+        assert claimed is not None
+        assert claimed.status == TaskStatus.IN_PROGRESS
+        assert claimed.assignee == "manual_ui"
+
+    def test_claim_fails_with_unresolved_blockers(self, engine: TaskEngine) -> None:
+        blocker = engine.create_task(title="Blocker")
+        blocked = engine.create_task(title="Blocked")
+        engine.add_dependency(blocked.id, blocker.id)
+        with pytest.raises(ValueError, match="unresolved blockers"):
+            engine.claim_task(blocked.id)
+
+    def test_claim_fails_when_in_review(self, engine: TaskEngine) -> None:
+        task = engine.create_task(title="Needs human gate")
+        engine.transition_task(task.id, "ready")
+        engine.transition_task(task.id, "in_progress")
+        engine.transition_task(task.id, "in_review")
+        with pytest.raises(ValueError, match="awaiting human review"):
+            engine.claim_task(task.id)
+
+    def test_concurrent_claim_allows_only_one_winner(self, engine: TaskEngine) -> None:
+        task = engine.create_task(title="Single claimant task")
+        engine.transition_task(task.id, "ready")
+
+        barrier = threading.Barrier(2)
+        results: list[str] = []
+        errors: list[str] = []
+
+        def _claim(claimer: str) -> None:
+            barrier.wait()
+            try:
+                claimed = engine.claim_task(task.id, claimer=claimer)
+                if claimed is not None:
+                    results.append(claimer)
+            except Exception as exc:
+                errors.append(str(exc))
+
+        t1 = threading.Thread(target=_claim, args=("agent-a",))
+        t2 = threading.Thread(target=_claim, args=("agent-b",))
+        t1.start()
+        t2.start()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+        assert len(results) == 1
+        assert len(errors) == 1
+        assert "already in progress" in errors[0]
+
+        fetched = engine.get_task(task.id)
+        assert fetched is not None
+        assert fetched.status == TaskStatus.IN_PROGRESS
+        assert fetched.current_agent_id == results[0]
+
+
+class TestRetryCancelAndEvents:
+    def test_retry_task_moves_to_ready_and_increments_counter(self, engine: TaskEngine) -> None:
+        task = engine.create_task(title="Retry me")
+        engine.transition_task(task.id, "ready")
+        engine.transition_task(task.id, "in_progress")
+        engine.transition_task(task.id, "blocked")
+        retried = engine.retry_task(task.id, reason="manual")
+        assert retried is not None
+        assert retried.status == TaskStatus.READY
+        assert retried.retry_count == 1
+        assert retried.error is None
+
+    def test_cancel_task_sets_cancelled(self, engine: TaskEngine) -> None:
+        task = engine.create_task(title="Cancel me")
+        cancelled = engine.cancel_task(task.id, reason="no longer needed")
+        assert cancelled is not None
+        assert cancelled.status == TaskStatus.CANCELLED
+
+    def test_task_events_are_persisted(self, engine: TaskEngine, state_dir: Path) -> None:
+        task = engine.create_task(title="Eventful")
+        engine.transition_task(task.id, "ready")
+        engine.claim_task(task.id, claimer="test-suite", run_id="run-test-1")
+        events = engine.get_recent_events(limit=20)
+        assert events
+        event_types = [e.get("type") for e in events]
+        assert "task.created" in event_types
+        assert "task.transitioned" in event_types
+        assert "task.claimed" in event_types
+
+        events_file = state_dir / "artifacts" / "task_events_v2.jsonl"
+        assert events_file.exists()
+        parsed_lines = [json.loads(line) for line in events_file.read_text().splitlines() if line.strip()]
+        assert len(parsed_lines) >= len(events)
+
+    def test_record_event_and_task_event_filter(self, engine: TaskEngine) -> None:
+        t1 = engine.create_task(title="Task one")
+        t2 = engine.create_task(title="Task two")
+        assert engine.record_event(t1.id, "task.custom_marker", marker="alpha")
+        assert engine.record_event(t2.id, "task.custom_marker", marker="beta")
+        assert not engine.record_event("missing-task", "task.custom_marker")
+
+        task1_events = engine.get_task_events(t1.id, limit=10)
+        assert task1_events
+        assert all(e.get("task_id") == t1.id for e in task1_events)
 
 
 # ---------------------------------------------------------------------------

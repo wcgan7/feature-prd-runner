@@ -7,6 +7,7 @@ import {
   Alert,
   Box,
   Button,
+  Card,
   Chip,
   Divider,
   Drawer,
@@ -68,6 +69,7 @@ interface Props {
   projectDir?: string
   onClose: () => void
   onUpdated: () => void
+  onNavigateTask?: (task: TaskData) => void
 }
 
 const STATUS_COLORS: Record<string, 'default' | 'info' | 'warning' | 'success' | 'error'> = {
@@ -87,7 +89,7 @@ const PRIORITY_COLORS: Record<string, string> = {
   P3: '#9ca3af',
 }
 
-export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
+export function TaskDetail({ task, projectDir, onClose, onUpdated, onNavigateTask }: Props) {
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(task.title)
   const [description, setDescription] = useState(task.description)
@@ -95,12 +97,13 @@ export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
   const [taskType, setTaskType] = useState(task.task_type)
   const [saving, setSaving] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>('summary')
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const handleSave = async () => {
     setSaving(true)
     try {
       await fetch(
-        buildApiUrl(`/api/v2/tasks/${task.id}`, projectDir),
+        buildApiUrl(`/api/v3/tasks/${task.id}`, projectDir),
         {
           method: 'PATCH',
           headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -116,24 +119,96 @@ export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
 
   const handleTransition = async (newStatus: string) => {
     try {
-      await fetch(
-        buildApiUrl(`/api/v2/tasks/${task.id}/transition`, projectDir),
+      const response = await fetch(
+        buildApiUrl(`/api/v3/tasks/${task.id}/transition`, projectDir),
         {
           method: 'POST',
           headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ status: newStatus }),
         }
       )
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        setActionError(data?.detail || `Failed to transition task (${response.status})`)
+        return
+      }
+      setActionError(null)
       onUpdated()
     } catch {
-      // transition failed
+      setActionError('Transition failed due to a network or server error')
+    }
+  }
+
+  const handleRunNow = async () => {
+    try {
+      const response = await fetch(
+        buildApiUrl(`/api/v3/tasks/${task.id}/run`, projectDir),
+        {
+          method: 'POST',
+          headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ claimer: 'manual_ui', assignee_type: 'agent' }),
+        }
+      )
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        setActionError(data?.detail || `Failed to start task (${response.status})`)
+        return
+      }
+      setActionError(null)
+      onUpdated()
+    } catch {
+      setActionError('Run request failed due to a network or server error')
+    }
+  }
+
+  const handleRetry = async () => {
+    try {
+      const response = await fetch(
+        buildApiUrl(`/api/v3/tasks/${task.id}/retry`, projectDir),
+        {
+          method: 'POST',
+          headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ reason: 'manual_retry_from_task_detail' }),
+        }
+      )
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        setActionError(data?.detail || `Failed to retry task (${response.status})`)
+        return
+      }
+      setActionError(null)
+      onUpdated()
+    } catch {
+      setActionError('Retry request failed due to a network or server error')
+    }
+  }
+
+  const handleCancelTask = async () => {
+    try {
+      const response = await fetch(
+        buildApiUrl(`/api/v3/tasks/${task.id}/cancel`, projectDir),
+        {
+          method: 'POST',
+          headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ reason: 'manual_cancel_from_task_detail' }),
+        }
+      )
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        setActionError(data?.detail || `Failed to cancel task (${response.status})`)
+        return
+      }
+      setActionError(null)
+      onUpdated()
+    } catch {
+      setActionError('Cancel request failed due to a network or server error')
     }
   }
 
   const handleDelete = async () => {
     if (!confirm('Delete this task?')) return
     await fetch(
-      buildApiUrl(`/api/v2/tasks/${task.id}`, projectDir),
+      buildApiUrl(`/api/v3/tasks/${task.id}`, projectDir),
       { method: 'DELETE', headers: buildAuthHeaders() }
     )
     onUpdated()
@@ -239,31 +314,42 @@ export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
 
           {activeTab === 'summary' && (
             <Stack spacing={2} sx={{ mt: 2 }}>
+              {actionError && (
+                <Alert severity="error">{actionError}</Alert>
+              )}
               <Box>
                 <Typography variant="overline" color="text.secondary">Status</Typography>
                 <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
                   <Chip size="small" color={STATUS_COLORS[task.status] || 'default'} label={task.status} />
                   <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
                     {task.status === 'backlog' && (
-                      <Button size="small" variant="outlined" onClick={() => handleTransition('ready')}>Move to Ready</Button>
+                      <>
+                        <Button size="small" variant="outlined" onClick={() => handleTransition('ready')}>Move to Ready</Button>
+                        <Button size="small" variant="contained" onClick={handleRunNow}>Run Now</Button>
+                      </>
                     )}
                     {task.status === 'ready' && (
-                      <Button size="small" variant="outlined" onClick={() => handleTransition('in_progress')}>Start</Button>
+                      <Button size="small" variant="contained" onClick={handleRunNow}>Run Now</Button>
                     )}
                     {task.status === 'in_progress' && (
                       <>
-                        <Button size="small" variant="outlined" onClick={() => handleTransition('in_review')}>Send to Review</Button>
-                        <Button size="small" variant="outlined" onClick={() => handleTransition('done')}>Mark Done</Button>
+                        <Button size="small" variant="outlined" onClick={() => handleTransition('in_review')}>Send to Human Review</Button>
+                      </>
+                    )}
+                    {task.status === 'blocked' && (
+                      <>
+                        <Button size="small" variant="contained" onClick={handleRunNow}>Run Now</Button>
+                        <Button size="small" variant="outlined" onClick={handleRetry}>Retry</Button>
+                        <Button size="small" color="error" variant="outlined" onClick={handleCancelTask}>Cancel</Button>
                       </>
                     )}
                     {task.status === 'in_review' && (
                       <>
                         <Button size="small" variant="outlined" onClick={() => handleTransition('done')}>Approve</Button>
                         <Button size="small" variant="outlined" onClick={() => handleTransition('in_progress')}>Request Changes</Button>
+                        <Button size="small" variant="outlined" onClick={handleRetry}>Retry</Button>
+                        <Button size="small" color="error" variant="outlined" onClick={handleCancelTask}>Cancel</Button>
                       </>
-                    )}
-                    {task.status === 'blocked' && (
-                      <Button size="small" variant="outlined" onClick={() => handleTransition('ready')}>Unblock</Button>
                     )}
                   </Stack>
                 </Stack>
@@ -309,6 +395,14 @@ export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
 
           {activeTab === 'dependencies' && (
             <Stack spacing={2} sx={{ mt: 2 }}>
+              {(task.status === 'blocked' || task.blocked_by.length > 0) && (
+                <BlockedTaskAssistant
+                  task={task}
+                  projectDir={projectDir}
+                  onUpdated={onUpdated}
+                  onNavigateTask={onNavigateTask}
+                />
+              )}
               {(task.blocked_by.length > 0 || task.blocks.length > 0) ? (
                 <Box>
                   <Typography variant="overline" color="text.secondary">Dependencies</Typography>
@@ -358,6 +452,196 @@ export function TaskDetail({ task, projectDir, onClose, onUpdated }: Props) {
         </Box>
       </Stack>
     </Drawer>
+  )
+}
+
+function BlockedTaskAssistant({
+  task,
+  projectDir,
+  onUpdated,
+  onNavigateTask,
+}: {
+  task: TaskData
+  projectDir?: string
+  onUpdated: () => void
+  onNavigateTask?: (task: TaskData) => void
+}) {
+  const [blockerTasks, setBlockerTasks] = useState<TaskData[]>([])
+  const [loading, setLoading] = useState(false)
+  const [running, setRunning] = useState<string | null>(null)
+  const [loadingTaskId, setLoadingTaskId] = useState<string | null>(null)
+  const [assistantError, setAssistantError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const loadBlockers = async () => {
+      if (task.blocked_by.length === 0) {
+        setBlockerTasks([])
+        return
+      }
+      setLoading(true)
+      setAssistantError(null)
+      try {
+        const results = await Promise.all(
+          task.blocked_by.map(async (id) => {
+            const response = await fetch(buildApiUrl(`/api/v3/tasks/${id}`, projectDir), {
+              headers: buildAuthHeaders(),
+            })
+            if (!response.ok) return null
+            const payload = await response.json()
+            return payload?.task || null
+          }),
+        )
+        if (!active) return
+        setBlockerTasks(results.filter(Boolean))
+      } catch {
+        if (!active) return
+        setAssistantError('Failed to load blocker details')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    loadBlockers()
+    return () => {
+      active = false
+    }
+  }, [task.id, task.blocked_by, projectDir])
+
+  const runBlocker = async (blockerId: string) => {
+    setRunning(blockerId)
+    setAssistantError(null)
+    try {
+      const response = await fetch(
+        buildApiUrl(`/api/v3/tasks/${blockerId}/run`, projectDir),
+        {
+          method: 'POST',
+          headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ claimer: 'manual_ui', assignee_type: 'agent' }),
+        },
+      )
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        setAssistantError(data?.detail || `Failed to run blocker (${response.status})`)
+        return
+      }
+      onUpdated()
+    } catch {
+      setAssistantError('Failed to run blocker due to a network or server error')
+    } finally {
+      setRunning(null)
+    }
+  }
+
+  const openBlocker = async (blockerId: string) => {
+    if (!onNavigateTask) return
+    setLoadingTaskId(blockerId)
+    setAssistantError(null)
+    try {
+      const response = await fetch(buildApiUrl(`/api/v3/tasks/${blockerId}`, projectDir), {
+        headers: buildAuthHeaders(),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        setAssistantError(data?.detail || `Failed to load blocker (${response.status})`)
+        return
+      }
+      const payload = await response.json()
+      if (payload?.task) onNavigateTask(payload.task)
+    } catch {
+      setAssistantError('Failed to load blocker due to a network or server error')
+    } finally {
+      setLoadingTaskId(null)
+    }
+  }
+
+  const tryUnblockCurrent = async () => {
+    setAssistantError(null)
+    try {
+      const response = await fetch(
+        buildApiUrl(`/api/v3/tasks/${task.id}/retry`, projectDir),
+        {
+          method: 'POST',
+          headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ reason: 'manual_unblock_shortcut' }),
+        },
+      )
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        setAssistantError(data?.detail || `Failed to unblock task (${response.status})`)
+        return
+      }
+      onUpdated()
+    } catch {
+      setAssistantError('Unblock request failed due to a network or server error')
+    }
+  }
+
+  return (
+    <Alert severity={task.status === 'blocked' ? 'warning' : 'info'} variant="outlined">
+      <Stack spacing={1.25}>
+        <Typography variant="subtitle2">
+          {task.status === 'blocked' ? 'Task is blocked' : 'Dependency blockers detected'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Resolve or run blocker tasks, then use Try Unblock to move this task back to ready.
+        </Typography>
+        {assistantError && <Alert severity="error">{assistantError}</Alert>}
+        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+          <ExplainButton taskId={task.id} projectDir={projectDir} />
+          <Button size="small" variant="contained" onClick={tryUnblockCurrent}>
+            Try Unblock
+          </Button>
+        </Stack>
+
+        {loading ? (
+          <Typography variant="body2" color="text.secondary">Loading blocker details...</Typography>
+        ) : blockerTasks.length > 0 ? (
+          <Stack spacing={1}>
+            {blockerTasks.map((blocker) => (
+              <Card key={blocker.id} variant="outlined" sx={{ p: 1 }}>
+                <Stack spacing={0.5}>
+                  <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{blocker.title}</Typography>
+                    <Chip size="small" label={blocker.status} color={STATUS_COLORS[blocker.status] || 'default'} />
+                    <Typography variant="caption" color="text.secondary" sx={{ fontFamily: '"IBM Plex Mono", monospace' }}>
+                      {blocker.id}
+                    </Typography>
+                  </Stack>
+                  {blocker.error && (
+                    <Typography variant="caption" color="error.main" sx={{ wordBreak: 'break-word' }}>
+                      {blocker.error}
+                    </Typography>
+                  )}
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => openBlocker(blocker.id)}
+                      disabled={!onNavigateTask || loadingTaskId === blocker.id}
+                    >
+                      {loadingTaskId === blocker.id ? 'Opening...' : 'Open'}
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => runBlocker(blocker.id)}
+                      disabled={running === blocker.id}
+                    >
+                      {running === blocker.id ? 'Running...' : 'Run Blocker'}
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Card>
+            ))}
+          </Stack>
+        ) : task.blocked_by.length > 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            Blocker IDs: {task.blocked_by.join(', ')}
+          </Typography>
+        ) : null}
+      </Stack>
+    </Alert>
   )
 }
 

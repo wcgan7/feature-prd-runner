@@ -12,13 +12,24 @@ const WORKERS_PANEL_STYLES = `
 .workers-routing-step { font-family: var(--font-mono, monospace); font-weight: 500; }
 .workers-routing-provider { color: var(--text-secondary, #6b7280); }
 .workers-list h4 { margin: 0 0 0.5rem; font-size: 0.9rem; }
-.workers-provider { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--border-color, #e5e7eb); border-radius: 6px; margin-bottom: 0.5rem; background: var(--bg-secondary, #f9fafb); }
-.workers-provider-info { flex: 1; }
+.workers-provider { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--border-color, #e5e7eb); border-radius: 6px; margin-bottom: 0.5rem; background: var(--bg-secondary, #f9fafb); flex-wrap: wrap; }
+.workers-provider-info { flex: 1; min-width: 0; }
 .workers-provider-name { font-weight: 600; font-size: 0.9rem; }
 .workers-provider-type { font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 3px; background: var(--bg-primary, #fff); border: 1px solid var(--border-color, #e5e7eb); margin-left: 0.5rem; }
-.workers-provider-detail { font-size: 0.8rem; color: var(--text-secondary, #6b7280); font-family: var(--font-mono, monospace); }
+.workers-provider-detail { font-size: 0.8rem; color: var(--text-secondary, #6b7280); font-family: var(--font-mono, monospace); overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
 .workers-test-btn { padding: 0.35rem 0.75rem; font-size: 0.8rem; border: 1px solid var(--border-color, #e5e7eb); border-radius: 4px; cursor: pointer; background: var(--bg-primary, #fff); }
-.workers-test-result { font-size: 0.8rem; padding: 0.25rem 0.5rem; border-radius: 4px; }
+.workers-test-result {
+  font-size: 0.8rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  display: block;
+  flex-basis: 100%;
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
 .workers-test-result.success { background: #dcfce7; color: #166534; }
 .workers-test-result.fail { background: #fee2e2; color: #991b1b; }
 .workers-error { color: #dc2626; font-size: 0.85rem; }

@@ -12,6 +12,7 @@ import {
   MenuItem,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material'
 import { buildApiUrl, buildAuthHeaders } from '../../api'
@@ -169,7 +170,7 @@ export default function KanbanBoard({ projectDir }: Props) {
   const fetchBoard = useCallback(async () => {
     try {
       const resp = await fetch(
-        buildApiUrl('/api/v2/tasks/board', projectDir),
+        buildApiUrl('/api/v3/tasks/board', projectDir),
         { headers: buildAuthHeaders() }
       )
       if (resp.ok) {
@@ -201,7 +202,7 @@ export default function KanbanBoard({ projectDir }: Props) {
 
     try {
       await fetch(
-        buildApiUrl(`/api/v2/tasks/${draggedTaskId}/transition`, projectDir),
+        buildApiUrl(`/api/v3/tasks/${draggedTaskId}/transition`, projectDir),
         {
           method: 'POST',
           headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -287,22 +288,47 @@ export default function KanbanBoard({ projectDir }: Props) {
   return (
     <Stack spacing={1} sx={{ height: '100%' }}>
       <Card variant="outlined" sx={{ p: 1.25 }}>
-        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ lg: 'center' }}>
-          <Stack direction="row" spacing={1} alignItems="center">
+        <Stack
+          direction={{ xs: 'column', lg: 'row' }}
+          spacing={1}
+          alignItems={{ lg: 'flex-start' }}
+          sx={{
+            flexWrap: { lg: 'wrap' },
+            rowGap: 1.25,
+            columnGap: 1,
+          }}
+        >
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
             <Typography variant="h6">Task Board</Typography>
             <Chip size="small" label={`${totalTasks} tasks`} variant="outlined" />
           </Stack>
 
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ md: 'center' }} sx={{ flex: 1, maxWidth: 820 }}>
+          <Stack
+            direction={{ xs: 'column', md: 'row' }}
+            spacing={1}
+            alignItems={{ md: 'center' }}
+            sx={{
+              flex: '1 1 720px',
+              minWidth: 0,
+              width: '100%',
+            }}
+          >
             <TextField
               inputRef={searchInputRef}
               size="small"
               placeholder="Search tasks... ( / )"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              sx={{ minWidth: 210 }}
+              sx={{ minWidth: { xs: '100%', md: 210 }, flex: { md: '1 1 240px' } }}
             />
-            <TextField size="small" select value={filterType} onChange={(e) => setFilterType(e.target.value)} sx={{ minWidth: 130 }}>
+            <TextField
+              size="small"
+              select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              SelectProps={{ displayEmpty: true }}
+              sx={{ minWidth: { xs: '100%', md: 130 }, flex: { md: '1 1 140px' } }}
+            >
               <MenuItem value="">All types</MenuItem>
               <MenuItem value="feature">Feature</MenuItem>
               <MenuItem value="bug">Bug</MenuItem>
@@ -311,14 +337,28 @@ export default function KanbanBoard({ projectDir }: Props) {
               <MenuItem value="test">Test</MenuItem>
               <MenuItem value="docs">Docs</MenuItem>
             </TextField>
-            <TextField size="small" select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} sx={{ minWidth: 150 }}>
+            <TextField
+              size="small"
+              select
+              value={filterPriority}
+              onChange={(e) => setFilterPriority(e.target.value)}
+              SelectProps={{ displayEmpty: true }}
+              sx={{ minWidth: { xs: '100%', md: 150 }, flex: { md: '1 1 150px' } }}
+            >
               <MenuItem value="">All priorities</MenuItem>
               <MenuItem value="P0">P0 - Critical</MenuItem>
               <MenuItem value="P1">P1 - High</MenuItem>
               <MenuItem value="P2">P2 - Medium</MenuItem>
               <MenuItem value="P3">P3 - Low</MenuItem>
             </TextField>
-            <TextField size="small" select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 145 }}>
+            <TextField
+              size="small"
+              select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              SelectProps={{ displayEmpty: true }}
+              sx={{ minWidth: { xs: '100%', md: 145 }, flex: { md: '1 1 145px' } }}
+            >
               <MenuItem value="">All status</MenuItem>
               <MenuItem value="backlog">Backlog</MenuItem>
               <MenuItem value="ready">Ready</MenuItem>
@@ -335,7 +375,7 @@ export default function KanbanBoard({ projectDir }: Props) {
                 const next = allViews.find((v) => v.id === e.target.value)
                 if (next) applyView(next)
               }}
-              sx={{ minWidth: 145 }}
+              sx={{ minWidth: { xs: '100%', md: 145 }, flex: { md: '1 1 145px' } }}
             >
               {allViews.map((view) => (
                 <MenuItem key={view.id} value={view.id}>{view.name}</MenuItem>
@@ -343,13 +383,35 @@ export default function KanbanBoard({ projectDir }: Props) {
             </TextField>
           </Stack>
 
-          <Stack direction="row" spacing={0.75}>
-            <Button variant="outlined" onClick={saveCurrentView}>Save View</Button>
-            <Button variant="outlined" onClick={clearFilters}>Clear</Button>
-            <Button variant="outlined" onClick={fetchBoard}>Refresh</Button>
-            <Button variant="contained" onClick={() => setShowCreate(true)}>New Task</Button>
+          <Stack
+            direction="row"
+            spacing={0.75}
+            useFlexGap
+            flexWrap="wrap"
+            sx={{
+              width: { xs: '100%', lg: 'auto' },
+              justifyContent: { xs: 'flex-start', lg: 'flex-end' },
+              flexShrink: 0,
+              mt: { xs: 0.5, lg: 0.25 },
+            }}
+          >
+            <Tooltip title="Save current filters as a reusable view">
+              <Button variant="outlined" onClick={saveCurrentView}>Save View</Button>
+            </Tooltip>
+            <Tooltip title="Reset all filters and search">
+              <Button variant="outlined" onClick={clearFilters}>Clear</Button>
+            </Tooltip>
+            <Tooltip title="Reload board data from server">
+              <Button variant="outlined" onClick={fetchBoard}>Refresh</Button>
+            </Tooltip>
+            <Tooltip title="Create a new task (shortcut: N)">
+              <Button variant="contained" onClick={() => setShowCreate(true)}>New Task</Button>
+            </Tooltip>
           </Stack>
         </Stack>
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+          Tip: press <strong>/</strong> to focus search, <strong>N</strong> to create task, and drag cards between columns.
+        </Typography>
       </Card>
 
       <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
@@ -415,6 +477,7 @@ export default function KanbanBoard({ projectDir }: Props) {
           projectDir={projectDir}
           onClose={() => setSelectedTask(null)}
           onUpdated={handleTaskUpdated}
+          onNavigateTask={(nextTask) => setSelectedTask(nextTask)}
         />
       )}
 

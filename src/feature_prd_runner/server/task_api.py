@@ -75,6 +75,20 @@ class ReorderRequest(BaseModel):
     task_ids: list[str]
 
 
+class RunTaskRequest(BaseModel):
+    claimer: str = "manual_ui"
+    assignee_type: str = "agent"
+    run_id: Optional[str] = None
+
+
+class RetryTaskRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class CancelTaskRequest(BaseModel):
+    reason: Optional[str] = None
+
+
 class TaskResponse(BaseModel):
     """Standard wrapper for task responses."""
     task: dict[str, Any]
@@ -95,6 +109,18 @@ class DependencyGraphResponse(BaseModel):
 
 class ExecutionOrderResponse(BaseModel):
     batches: list[list[str]]
+
+
+class StateMachineResponse(BaseModel):
+    states: list[str]
+    transitions: dict[str, list[str]]
+    guards: dict[str, str]
+    defaults: dict[str, Any]
+
+
+class TaskEventsResponse(BaseModel):
+    events: list[dict[str, Any]]
+    total: int
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +212,44 @@ def create_task_router(get_engine: Any) -> APIRouter:
         engine = get_engine(project_dir)
         return ExecutionOrderResponse(batches=engine.get_execution_order())
 
+    @router.get("/meta/state-machine", response_model=StateMachineResponse)
+    async def get_state_machine(
+        project_dir: Optional[str] = Query(None),
+    ) -> StateMachineResponse:
+        engine = get_engine(project_dir)
+        transitions: dict[str, list[str]] = {
+            "backlog": ["ready", "cancelled"],
+            "ready": ["in_progress", "blocked", "backlog", "cancelled"],
+            "in_progress": ["in_review", "blocked", "ready", "cancelled"],
+            "in_review": ["done", "in_progress", "blocked", "cancelled"],
+            "blocked": ["ready", "cancelled", "backlog"],
+            "done": ["ready"],
+            "cancelled": ["backlog"],
+        }
+        if engine.allow_auto_approve_review:
+            transitions["in_progress"].append("done")
+        guards = {
+            "ready": "All blockers in blocked_by must be terminal before transition.",
+            "in_progress": "All blockers in blocked_by must be terminal before transition.",
+        }
+        defaults = {
+            "new_task_status": "backlog",
+            "dependency_terminal_statuses": ["done", "cancelled"],
+            "quick_action_promotion_behavior": "create_new_task",
+            "feature_pipeline_steps": ["plan", "plan_impl", "implement", "verify", "review", "commit"],
+            "human_review_required_default": not engine.allow_auto_approve_review,
+            "allow_auto_approve_review": engine.allow_auto_approve_review,
+            "auto_approve_env_var": "FEATURE_PRD_AUTO_APPROVE_REVIEW",
+            "v2_tasks_default_enabled": True,
+            "legacy_scheduler_opt_out_env_var": "FEATURE_PRD_DISABLE_V2_TASKS",
+        }
+        return StateMachineResponse(
+            states=list(transitions.keys()),
+            transitions=transitions,
+            guards=guards,
+            defaults=defaults,
+        )
+
     @router.post("/reorder")
     async def reorder_tasks(
         body: ReorderRequest,
@@ -242,6 +306,56 @@ def create_task_router(get_engine: Any) -> APIRouter:
         engine = get_engine(project_dir)
         try:
             task = engine.transition_task(task_id, body.status)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if task is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        return TaskResponse(task=task.to_dict())
+
+    @router.post("/{task_id}/run", response_model=TaskResponse)
+    async def run_task(
+        task_id: str,
+        body: RunTaskRequest,
+        project_dir: Optional[str] = Query(None),
+    ) -> TaskResponse:
+        engine = get_engine(project_dir)
+        try:
+            task = engine.claim_task(
+                task_id,
+                claimer=body.claimer,
+                assignee_type=body.assignee_type,
+                run_id=body.run_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if task is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        return TaskResponse(task=task.to_dict())
+
+    @router.post("/{task_id}/retry", response_model=TaskResponse)
+    async def retry_task(
+        task_id: str,
+        body: RetryTaskRequest,
+        project_dir: Optional[str] = Query(None),
+    ) -> TaskResponse:
+        engine = get_engine(project_dir)
+        try:
+            task = engine.retry_task(task_id, reason=body.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if task is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        return TaskResponse(task=task.to_dict())
+
+    @router.post("/{task_id}/cancel", response_model=TaskResponse)
+    async def cancel_task(
+        task_id: str,
+        body: CancelTaskRequest,
+        project_dir: Optional[str] = Query(None),
+    ) -> TaskResponse:
+        engine = get_engine(project_dir)
+        try:
+            task = engine.cancel_task(task_id, reason=body.reason)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         if task is None:
@@ -354,5 +468,26 @@ def create_task_router(get_engine: Any) -> APIRouter:
 
         data = [t.to_dict() for t in new_tasks]
         return TaskListResponse(tasks=data, total=len(data))
+
+    @router.get("/events/recent", response_model=TaskEventsResponse)
+    async def get_recent_task_events(
+        project_dir: Optional[str] = Query(None),
+        limit: int = Query(100, ge=1, le=1000),
+    ) -> TaskEventsResponse:
+        engine = get_engine(project_dir)
+        events = engine.get_recent_events(limit=limit)
+        return TaskEventsResponse(events=events, total=len(events))
+
+    @router.get("/{task_id}/events", response_model=TaskEventsResponse)
+    async def get_task_events(
+        task_id: str,
+        project_dir: Optional[str] = Query(None),
+        limit: int = Query(100, ge=1, le=1000),
+    ) -> TaskEventsResponse:
+        engine = get_engine(project_dir)
+        if engine.get_task(task_id) is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        events = engine.get_task_events(task_id, limit=limit)
+        return TaskEventsResponse(events=events, total=len(events))
 
     return router
