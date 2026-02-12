@@ -120,6 +120,14 @@ def _execution_batches(tasks: list[Task]) -> list[list[str]]:
     return batches
 
 
+def _has_unresolved_blockers(container: V3Container, task: Task) -> Optional[str]:
+    for dep_id in task.blocked_by:
+        dep = container.tasks.get(dep_id)
+        if dep is None or dep.status not in {"done", "cancelled"}:
+            return dep_id
+    return None
+
+
 def _parse_prd_into_tasks(content: str, default_priority: str) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
     for line in content.splitlines():
@@ -275,7 +283,13 @@ def create_v3_router(
         task = container.tasks.get(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        for key, value in body.model_dump(exclude_none=True).items():
+        updates = body.model_dump(exclude_none=True)
+        if "status" in updates:
+            raise HTTPException(
+                status_code=400,
+                detail="Task status cannot be changed via PATCH. Use /transition, /retry, /cancel, or review actions.",
+            )
+        for key, value in updates.items():
             setattr(task, key, value)
         task.updated_at = now_iso()
         container.tasks.upsert(task)
@@ -293,10 +307,9 @@ def create_v3_router(
         if target not in valid:
             raise HTTPException(status_code=400, detail=f"Invalid transition {task.status} -> {target}")
         if target in {"ready", "in_progress"}:
-            for dep_id in task.blocked_by:
-                dep = container.tasks.get(dep_id)
-                if dep is None or dep.status not in {"done", "cancelled"}:
-                    raise HTTPException(status_code=400, detail=f"Unresolved blocker: {dep_id}")
+            unresolved = _has_unresolved_blockers(container, task)
+            if unresolved is not None:
+                raise HTTPException(status_code=400, detail=f"Unresolved blocker: {unresolved}")
         task.status = target
         task.updated_at = now_iso()
         container.tasks.upsert(task)
@@ -320,6 +333,9 @@ def create_v3_router(
         task = container.tasks.get(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
+        unresolved = _has_unresolved_blockers(container, task)
+        if unresolved is not None:
+            raise HTTPException(status_code=400, detail=f"Unresolved blocker: {unresolved}")
         task.retry_count += 1
         task.status = "ready"
         task.error = None
@@ -373,6 +389,8 @@ def create_v3_router(
     async def preview_import(body: PrdPreviewRequest, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
         container, _, _ = _ctx(project_dir)
         items = _parse_prd_into_tasks(body.content, body.default_priority)
+        nodes = [{"id": f"n{idx + 1}", "title": str(item.get("title") or "Imported task"), "priority": str(item.get("priority") or body.default_priority)} for idx, item in enumerate(items)]
+        edges = [{"from": nodes[idx]["id"], "to": nodes[idx + 1]["id"]} for idx in range(len(nodes) - 1)]
         job_id = f"imp-{uuid.uuid4().hex[:10]}"
         job_store[job_id] = {
             "id": job_id,
@@ -382,7 +400,7 @@ def create_v3_router(
             "created_at": now_iso(),
             "tasks": items,
         }
-        return {"job_id": job_id, "preview": {"nodes": items, "edges": []}}
+        return {"job_id": job_id, "preview": {"nodes": nodes, "edges": edges}}
 
     @router.post("/import/prd/commit")
     async def commit_import(body: PrdCommitRequest, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
@@ -466,6 +484,8 @@ def create_v3_router(
         task = container.tasks.get(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
+        if task.status != "in_review":
+            raise HTTPException(status_code=400, detail=f"Task {task_id} is not in_review")
         task.status = "done"
         task.metadata["last_review_approval"] = {"ts": now_iso(), "guidance": body.guidance}
         container.tasks.upsert(task)
@@ -478,6 +498,8 @@ def create_v3_router(
         task = container.tasks.get(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
+        if task.status != "in_review":
+            raise HTTPException(status_code=400, detail=f"Task {task_id} is not in_review")
         task.status = "ready"
         task.metadata["requested_changes"] = {"ts": now_iso(), "guidance": body.guidance}
         container.tasks.upsert(task)

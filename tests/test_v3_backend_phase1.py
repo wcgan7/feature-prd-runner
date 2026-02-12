@@ -29,10 +29,36 @@ def test_cutover_archives_legacy_state(tmp_path: Path) -> None:
     assert (archives[0] / "task_queue.yaml").exists()
 
 
+def test_cutover_archives_any_non_v3_prd_runner_state(tmp_path: Path) -> None:
+    legacy_root = tmp_path / ".prd_runner"
+    legacy_root.mkdir(parents=True)
+    (legacy_root / "custom_legacy_blob.yaml").write_text("legacy: true\n", encoding="utf-8")
+
+    ensure_v3_state_root(tmp_path)
+
+    archives = sorted(tmp_path.glob(".prd_runner_legacy_*"))
+    assert len(archives) == 1
+    assert (archives[0] / "custom_legacy_blob.yaml").exists()
+
+
+def test_cutover_forces_schema_version_3(tmp_path: Path) -> None:
+    v3_root = tmp_path / ".prd_runner" / "v3"
+    v3_root.mkdir(parents=True)
+    (v3_root / "config.yaml").write_text("schema_version: 2\n", encoding="utf-8")
+
+    ensure_v3_state_root(tmp_path)
+
+    config_text = (tmp_path / ".prd_runner" / "v3" / "config.yaml").read_text(encoding="utf-8")
+    assert "schema_version: 3" in config_text
+
+
 def test_task_dependency_guard_blocks_ready_transition(tmp_path: Path) -> None:
     app = create_app(project_dir=tmp_path)
     with TestClient(app) as client:
-        blocker = client.post("/api/v3/tasks", json={"title": "Blocker"}).json()["task"]
+        blocker = client.post(
+            "/api/v3/tasks",
+            json={"title": "Blocker", "approval_mode": "auto_approve", "metadata": {"scripted_findings": [[]]}},
+        ).json()["task"]
         blocked = client.post("/api/v3/tasks", json={"title": "Blocked"}).json()["task"]
 
         dep_resp = client.post(
@@ -48,13 +74,34 @@ def test_task_dependency_guard_blocks_ready_transition(tmp_path: Path) -> None:
         assert transition.status_code == 400
         assert "Unresolved blocker" in transition.text
 
-        client.patch(f"/api/v3/tasks/{blocker['id']}", json={"status": "done"})
+        done = client.post(f"/api/v3/tasks/{blocker['id']}/run")
+        assert done.status_code == 200
+        assert done.json()["task"]["status"] == "done"
         ok_transition = client.post(
             f"/api/v3/tasks/{blocked['id']}/transition",
             json={"status": "ready"},
         )
         assert ok_transition.status_code == 200
         assert ok_transition.json()["task"]["status"] == "ready"
+
+
+def test_patch_rejects_direct_status_changes(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path)
+    with TestClient(app) as client:
+        task = client.post("/api/v3/tasks", json={"title": "Patch guarded"}).json()["task"]
+        response = client.patch(f"/api/v3/tasks/{task['id']}", json={"status": "done"})
+        assert response.status_code == 400
+        assert "cannot be changed via PATCH" in response.text
+
+
+def test_review_actions_require_in_review_state(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path)
+    with TestClient(app) as client:
+        task = client.post("/api/v3/tasks", json={"title": "Needs status guard"}).json()["task"]
+        approve = client.post(f"/api/v3/review/{task['id']}/approve", json={})
+        assert approve.status_code == 400
+        changes = client.post(f"/api/v3/review/{task['id']}/request-changes", json={"guidance": "x"})
+        assert changes.status_code == 400
 
 
 def test_quick_action_promotion_is_singleton(tmp_path: Path) -> None:

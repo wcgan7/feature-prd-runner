@@ -538,3 +538,57 @@ Full revamp-plan gap review cycles:
 Release readiness:
 - Breaking reset behavior implemented and documented.
 - Runtime is v3-first and legacy runtime wiring is removed.
+
+## Post-Completion Gap Findings (2026-02-12)
+
+This section records the follow-up full repo review findings and resolution decisions.
+
+### Decisions Applied
+
+- Remove legacy tests/components that are not part of the v3 orchestrator-first runtime contract.
+- Enforce guarded state transitions: task `status` is no longer mutable via `PATCH /api/v3/tasks/{id}`.
+
+### Findings Identified
+
+1. Full matrix claim mismatch:
+   - Focused revamp suites passed, but full backend/frontend test matrices still included legacy failing suites.
+2. Transition guard gap:
+   - `PATCH /api/v3/tasks/{id}` previously allowed direct status mutation, bypassing transition/dependency checks.
+3. Retry guard gap:
+   - `POST /api/v3/tasks/{id}/retry` previously set `ready` without blocker validation.
+4. Review action guard gap:
+   - Review actions (`approve` / `request-changes`) previously allowed on tasks not in `in_review`.
+5. Cutover strictness gap:
+   - Hard-reset/archive semantics were weaker than contract wording for non-v3 legacy state edge cases.
+6. UI contract drift:
+   - Board-first center/right workbench depth and PRD preview graph remained simplified.
+7. Project UX gap:
+   - Settings included manual pinning/persistence, but no explicit discovered-project search UX.
+8. Legacy UI surface still present in repo:
+   - Obsolete components/tests remained on disk and introduced non-canonical endpoint assumptions.
+9. Legacy package-level reference:
+   - Top-level package import still referenced legacy orchestrator module.
+
+### Remediation Work Directed
+
+- Legacy frontend components/tests and legacy backend API test suites were removed from active repo coverage where they were outside the v3 contract.
+- v3 API transition hardening implemented:
+  - reject `status` updates in task `PATCH`,
+  - enforce blocker checks on `retry`,
+  - require `in_review` state for review actions.
+
+### Follow-up Remediation Complete (2026-02-12, later pass)
+
+- Bridged remaining backend cutover gaps:
+  - archive now triggers for any non-v3 `.prd_runner` root, not only a legacy artifact subset.
+  - existing v3 config is normalized to `schema_version: 3`.
+- Bridged remaining UI contract gaps:
+  - board-first workbench now renders left Kanban + center task detail + right queue/agent context.
+  - settings now includes project search over discovered+pinned items.
+  - PRD import preview now includes a visible node/edge graph summary before commit.
+- Bridged remaining legacy wiring gap:
+  - removed package-level import of legacy orchestrator from top-level package init.
+- Full current matrix after cleanup/bridging:
+  - backend: `890 passed`,
+  - frontend: `50 passed`,
+  - frontend build: passed.

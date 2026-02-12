@@ -19,6 +19,22 @@ type BoardResponse = {
   columns: Record<string, TaskRecord[]>
 }
 
+type PreviewNode = {
+  id: string
+  title: string
+  priority: string
+}
+
+type PreviewEdge = {
+  from: string
+  to: string
+}
+
+type PrdPreview = {
+  nodes: PreviewNode[]
+  edges: PreviewEdge[]
+}
+
 type OrchestratorStatus = {
   status: string
   queue_depth: number
@@ -84,6 +100,7 @@ export default function App() {
 
   const [workOpen, setWorkOpen] = useState(false)
   const [createTab, setCreateTab] = useState<CreateTab>('task')
+  const [selectedTaskId, setSelectedTaskId] = useState<string>('')
 
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [newTaskDescription, setNewTaskDescription] = useState('')
@@ -91,11 +108,13 @@ export default function App() {
 
   const [importText, setImportText] = useState('')
   const [importJobId, setImportJobId] = useState('')
+  const [importPreview, setImportPreview] = useState<PrdPreview | null>(null)
 
   const [quickPrompt, setQuickPrompt] = useState('')
 
   const [manualPinPath, setManualPinPath] = useState('')
   const [allowNonGit, setAllowNonGit] = useState(false)
+  const [projectSearch, setProjectSearch] = useState('')
 
   useEffect(() => {
     const syncFromHash = () => {
@@ -182,12 +201,13 @@ export default function App() {
   async function previewImport(event: FormEvent): Promise<void> {
     event.preventDefault()
     if (!importText.trim()) return
-    const preview = await requestJson<{ job_id: string }>(buildApiUrl('/api/v3/import/prd/preview', projectDir), {
+    const preview = await requestJson<{ job_id: string; preview: PrdPreview }>(buildApiUrl('/api/v3/import/prd/preview', projectDir), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: importText, default_priority: 'P2' }),
     })
     setImportJobId(preview.job_id)
+    setImportPreview(preview.preview)
   }
 
   async function commitImport(): Promise<void> {
@@ -198,6 +218,7 @@ export default function App() {
       body: JSON.stringify({ job_id: importJobId }),
     })
     setImportJobId('')
+    setImportPreview(null)
     setImportText('')
     setWorkOpen(false)
     await reloadAll()
@@ -263,27 +284,70 @@ export default function App() {
 
   function renderBoard(): JSX.Element {
     const columns = ['backlog', 'ready', 'in_progress', 'in_review', 'blocked', 'done']
+    const allTasks = columns.flatMap((column) => board.columns[column] || [])
+    const selectedTask = allTasks.find((task) => task.id === selectedTaskId) || allTasks[0]
+    const queueTasks = [...(board.columns.ready || []), ...(board.columns.in_progress || [])]
     return (
       <section className="panel">
         <header className="panel-head">
           <h2>Board</h2>
           <button className="button button-primary" onClick={() => setWorkOpen(true)}>Create Work</button>
         </header>
-        <div className="board-grid">
-          {columns.map((column) => (
-            <article className="board-col" key={column}>
-              <h3>{column.replace('_', ' ')}</h3>
-              <div className="card-list">
-                {(board.columns[column] || []).map((task) => (
-                  <div className="task-card" key={task.id}>
-                    <p className="task-title">{task.title}</p>
-                    <p className="task-meta">{task.priority} · {task.id}</p>
-                    {task.description ? <p className="task-desc">{task.description}</p> : null}
+        <div className="workbench-grid">
+          <article className="workbench-pane">
+            <h3>Kanban</h3>
+            <div className="board-grid">
+              {columns.map((column) => (
+                <article className="board-col" key={column}>
+                  <h3>{column.replace('_', ' ')}</h3>
+                  <div className="card-list">
+                    {(board.columns[column] || []).map((task) => (
+                      <button className="task-card task-card-button" key={task.id} onClick={() => setSelectedTaskId(task.id)}>
+                        <p className="task-title">{task.title}</p>
+                        <p className="task-meta">{task.priority} · {task.id}</p>
+                        {task.description ? <p className="task-desc">{task.description}</p> : null}
+                      </button>
+                    ))}
                   </div>
-                ))}
+                </article>
+              ))}
+            </div>
+          </article>
+          <article className="workbench-pane">
+            <h3>Task Detail</h3>
+            {selectedTask ? (
+              <div className="detail-card">
+                <p className="task-title">{selectedTask.title}</p>
+                <p className="task-meta">{selectedTask.id} · {selectedTask.priority} · {selectedTask.status}</p>
+                {selectedTask.description ? <p className="task-desc">{selectedTask.description}</p> : <p className="task-desc">No description.</p>}
+                <p className="field-label">Blockers: {(selectedTask.blocked_by || []).join(', ') || 'None'}</p>
+                <p className="field-label">Activity: Review queue size is {reviewQueue.length}. Trigger actions from Review Queue.</p>
               </div>
-            </article>
-          ))}
+            ) : (
+              <p className="empty">No tasks on board yet.</p>
+            )}
+          </article>
+          <article className="workbench-pane">
+            <h3>Queue & Agents</h3>
+            <div className="list-stack">
+              <p className="field-label">Queue depth: {orchestrator?.queue_depth ?? 0}</p>
+              <p className="field-label">In progress: {orchestrator?.in_progress ?? 0}</p>
+              {queueTasks.slice(0, 5).map((task) => (
+                <div key={task.id} className="row-card">
+                  <p className="task-title">{task.title}</p>
+                  <p className="task-meta">{task.status}</p>
+                </div>
+              ))}
+              {queueTasks.length === 0 ? <p className="empty">No queued or running tasks.</p> : null}
+              <p className="field-label">Agents ({agents.length})</p>
+              {agents.slice(0, 4).map((agent) => (
+                <div key={agent.id} className="row-card">
+                  <p className="task-title">{agent.role}</p>
+                  <p className="task-meta">{agent.status}</p>
+                </div>
+              ))}
+            </div>
+          </article>
         </div>
       </section>
     )
@@ -376,6 +440,7 @@ export default function App() {
   }
 
   function renderSettings(): JSX.Element {
+    const filteredProjects = projects.filter((project) => project.path.toLowerCase().includes(projectSearch.toLowerCase()))
     return (
       <section className="panel">
         <header className="panel-head">
@@ -386,13 +451,19 @@ export default function App() {
           <article className="settings-card">
             <h3>Projects</h3>
             <label className="field-label" htmlFor="project-selector">Active project</label>
+            <input
+              id="project-search"
+              value={projectSearch}
+              onChange={(event) => setProjectSearch(event.target.value)}
+              placeholder="Search discovered/pinned projects"
+            />
             <select
               id="project-selector"
               value={projectDir}
               onChange={(event) => setProjectDir(event.target.value)}
             >
               <option value="">Current workspace</option>
-              {projects.map((project) => (
+              {filteredProjects.map((project) => (
                 <option key={`${project.id}-${project.path}`} value={project.path}>
                   {project.path} ({project.source})
                 </option>
@@ -513,6 +584,25 @@ export default function App() {
                 {importJobId ? (
                   <div className="preview-box">
                     <p>Preview ready: {importJobId}</p>
+                    {importPreview ? (
+                      <div className="import-preview-graph">
+                        <p className="field-label">Preview Graph</p>
+                        {importPreview.nodes.map((node) => (
+                          <div key={node.id} className="import-node">
+                            <span>{node.id}</span>
+                            <span>{node.title}</span>
+                            <span>{node.priority}</span>
+                          </div>
+                        ))}
+                        {importPreview.edges.length > 0 ? (
+                          <p className="field-label">
+                            Edges: {importPreview.edges.map((edge) => `${edge.from} -> ${edge.to}`).join(', ')}
+                          </p>
+                        ) : (
+                          <p className="field-label">Edges: none</p>
+                        )}
+                      </div>
+                    ) : null}
                     <button className="button button-primary" onClick={() => void commitImport()}>Commit to board</button>
                   </div>
                 ) : null}
