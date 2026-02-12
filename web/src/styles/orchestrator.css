@@ -11,6 +11,12 @@
   --shadow: 0 20px 40px rgba(18, 35, 26, 0.08);
 }
 
+html.modal-open,
+body.modal-open {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 .orchestrator-app {
   min-height: 100vh;
   position: relative;
@@ -54,6 +60,11 @@ h1 {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.topbar-project-select {
+  width: min(360px, 36vw);
+  min-width: 180px;
 }
 
 .nav-strip {
@@ -222,14 +233,17 @@ h1 {
   color: var(--ink-1);
 }
 
-input,
+input:not([type='checkbox']):not([type='radio']),
 textarea,
 select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 10px;
+  min-height: 2.6rem;
   padding: 0.56rem 0.62rem;
+  line-height: 1.35;
   background: #fff;
+  box-sizing: border-box;
 }
 
 .checkbox-row {
@@ -276,10 +290,50 @@ select {
   display: grid;
   place-items: center;
   padding: 1rem;
+  overscroll-behavior: contain;
 }
 
 .modal-card {
   width: min(760px, 96vw);
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+
+.create-work-modal .modal-sticky-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-2);
+  padding: 1rem 1rem 0.1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.create-work-modal .modal-sticky-top .panel-head {
+  margin-bottom: 0.55rem;
+}
+
+.create-work-modal {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.create-work-modal .modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.9rem 1rem 1rem;
+}
+
+.create-task-form {
+  padding-bottom: 0.2rem;
+}
+
+.create-work-modal .modal-footer {
+  border-top: 1px solid var(--line);
+  padding: 0.75rem 1rem 1rem;
+  background: var(--bg-2);
 }
 
 .tab-row {
@@ -298,6 +352,46 @@ select {
 .tab.is-active {
   background: #d9efe2;
   border-color: #8ab79a;
+}
+
+.toggle-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.toggle-button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink-0);
+  padding: 0.4rem 0.78rem;
+  min-height: 2.2rem;
+}
+
+.toggle-button.is-active {
+  background: #d9efe2;
+  border-color: #8ab79a;
+  color: #165638;
+}
+
+.advanced-fields {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.55rem 0.7rem;
+  background: rgba(246, 248, 247, 0.7);
+}
+
+.advanced-fields summary {
+  cursor: pointer;
+  color: var(--ink-1);
+  font-size: 0.84rem;
+  font-weight: 600;
+  user-select: none;
+}
+
+.advanced-fields-body {
+  margin-top: 0.65rem;
 }
 
 .preview-box {
@@ -323,6 +417,103 @@ select {
   font-size: 0.82rem;
 }
 
+.browse-toolbar {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 0.45rem;
+  margin-bottom: 0.6rem;
+}
+
+.browse-path-input.is-git {
+  border-color: #6aa382;
+  box-shadow: inset 0 0 0 1px rgba(22, 86, 56, 0.18);
+}
+
+.browse-path-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.browse-path-wrap .browse-path-input {
+  width: 100%;
+}
+
+.browse-path-wrap .browse-path-input.is-git {
+  padding-right: 5.8rem;
+}
+
+.git-chip {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid #6aa382;
+  background: #e6f6ed;
+  color: #165638;
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.browse-list {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  max-height: 46vh;
+  overflow: auto;
+  padding: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.browse-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.48rem 0.62rem;
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.browse-item-name {
+  text-align: left;
+}
+
+.browse-item-kind {
+  color: var(--ink-1);
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.browse-item.is-git {
+  border-color: #6aa382;
+  background: #eef8f2;
+}
+
+.browse-item.is-git .browse-item-name {
+  font-weight: 700;
+  color: #165638;
+}
+
+.browse-item.is-git .browse-item-kind {
+  color: #165638;
+  font-weight: 700;
+}
+
+.browse-actions {
+  margin-top: 0.65rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 920px) {
   .status-grid {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
@@ -339,5 +530,14 @@ select {
   .row-card {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .topbar-project-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .browse-toolbar {
+    grid-template-columns: 1fr 1fr;
   }
 }
