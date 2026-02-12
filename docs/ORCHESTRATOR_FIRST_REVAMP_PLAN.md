@@ -344,3 +344,251 @@ Project registry:
 - Git model: single orchestrator run branch with task-level commits.
 - Quick Action: ephemeral by default, explicit promotion to task.
 - CLI direction: UI-first minimal CLI.
+
+## Implementation Progress Log
+
+### Execution Rules Applied
+
+- Working mode: `implement -> document -> test -> review -> fix -> repeat` per phase.
+- Commit policy: one commit per completed phase + final consolidation commit.
+- Runtime strategy: move production wiring to v3 modules; keep legacy code only as non-wired reference during migration.
+
+### Phase 1 (Core Backend v3) - Complete
+
+Status: `COMPLETE`
+
+Completed:
+- Added new canonical backend package: `src/feature_prd_runner/v3/`.
+- Implemented v3 domain types for tasks, runs, review cycles/findings, agents, quick actions.
+- Implemented repository interfaces and file-backed implementations with lock + atomic writes.
+- Implemented v3 state bootstrap/cutover:
+  - archives legacy `.prd_runner` to `.prd_runner_legacy_<timestamp>` on first v3 launch when legacy state is detected.
+  - initializes `.prd_runner/v3/` and `schema_version: 3` config.
+- Implemented v3 event bus + websocket publisher with v3 channels:
+  - `tasks`, `queue`, `agents`, `review`, `quick_actions`, `notifications`, `system`.
+- Implemented v3 API router (`/api/v3/*`) for:
+  - projects (list/pin/unpin),
+  - tasks CRUD/board/dependencies/run/retry/cancel/transition,
+  - PRD import preview/commit/job,
+  - quick actions + promote,
+  - review queue + approve/request-changes,
+  - orchestrator status/control,
+  - agents list/spawn/pause/resume/terminate.
+- Rewired FastAPI runtime to v3-only API and v3 websocket hub endpoint.
+
+Testing completed:
+- Added and passed `tests/test_v3_backend_phase1.py` (8 tests):
+  - cutover archival + schema init,
+  - dependency guard,
+  - quick action promotion singleton behavior,
+  - project pin validation + persistence,
+  - PRD preview/commit dependency chain creation,
+  - claim-lock single-claim guarantee under concurrency,
+  - transition valid/invalid edge enforcement,
+  - review queue request-changes/approve flow.
+
+Review findings and fixes:
+- Gap found: `POST /api/v3/tasks/{id}/run` could execute a different ready task.
+  - Fix: added explicit orchestrator `run_task(task_id)` path.
+- Gap found: transition endpoint accepted invalid state edges.
+  - Fix: added strict transition matrix validation.
+
+Outstanding for future phases:
+- Scheduler sophistication (aging/concurrency strategy tuning) and deeper worker integration are covered in Phase 2.
+
+### Phase 2 (Orchestrator Engine) - Complete
+
+Status: `COMPLETE`
+
+Completed:
+- Implemented orchestrator service with:
+  - scheduler tick loop,
+  - atomic claim flow through repository lock,
+  - repo conflict guard,
+  - concurrency cap enforcement,
+  - task-specific run API path.
+- Added execution worker adapter abstraction (`WorkerAdapter`) with default deterministic adapter.
+- Implemented implementation/review refinement loop:
+  - `plan -> implement -> verify -> review`,
+  - when findings exceed quality gate, loop `implement_fix -> verify -> review`,
+  - cap attempts, then mark task `blocked`.
+- Implemented single run branch + per-task commits:
+  - one branch per orchestrator run lifecycle,
+  - task-level commits with task-stamped commit messages.
+- Implemented agent role routing:
+  - task-type to role mapping via config,
+  - role-level provider override injection into task metadata.
+
+Testing completed:
+- Added and passed `tests/test_v3_orchestrator_phase2.py` (6 tests):
+  - review-loop retry until findings clear,
+  - review-attempt cap to blocked,
+  - role routing + provider override,
+  - single run branch + per-task commit ordering,
+  - scheduler priority/dependency/repo-conflict behavior,
+  - scheduler concurrency cap behavior.
+
+Review findings and fixes:
+- Gap found: dependency checks treated missing blockers as resolved.
+  - Fix: missing blocker now considered unresolved in claim, transition, and explicit run paths.
+
+Outstanding for future phases:
+- Frontend route-shell rewrite, Create Work modal, and v3-only UI flows are covered in Phase 3.
+
+### Phase 3 (UI Rebuild) - Complete
+
+Status: `COMPLETE`
+
+Completed:
+- Replaced monolithic app shell with route-driven orchestrator-first UI:
+  - `Board` (default landing),
+  - `Execution`,
+  - `Review Queue`,
+  - `Agents`,
+  - `Settings`.
+- Implemented single `Create Work` modal with required tabs:
+  - `Create Task`,
+  - `Import PRD` (preview -> commit),
+  - `Quick Action` (explicitly labeled ephemeral).
+- Implemented board-first workbench and v3 API data binding.
+- Implemented project management in settings:
+  - discovered + pinned project listing,
+  - manual absolute path pin with non-git override option,
+  - selected project persistence in local storage.
+- Wired realtime updates through websocket subscription to v3 channels.
+- Added new dedicated UI stylesheet (`orchestrator.css`) for revamp layout and responsive behavior.
+
+Testing completed:
+- Updated and passed frontend app tests:
+  - `web/src/App.defaultView.test.tsx`,
+  - `web/src/App.accessibility.test.tsx`.
+- Verified frontend production compile/build:
+  - `npm --prefix web run build` passed.
+
+Review findings and fixes:
+- Gap found: test ambiguity on duplicate `Create Work` and `Create Task` button labels.
+  - Fix: updated tests to use explicit `getAllByRole` assertions where duplicate labels are intentional.
+
+Outstanding for future phases:
+- Stabilization pass to align docs/CLI contracts and run combined backend/frontend verification is covered in Phase 4.
+
+### Phase 4 (Stabilization and Release) - Complete
+
+Status: `COMPLETE`
+
+Completed:
+- Introduced UI-first minimal CLI implementation:
+  - new entrypoint module: `src/feature_prd_runner/cli_v3.py`,
+  - supported commands:
+    - `server`
+    - `project pin/list/unpin`
+    - `task create/list/run`
+    - `quick-action`
+    - `orchestrator status/control`.
+- Switched package script entrypoint to minimal CLI:
+  - `feature-prd-runner = feature_prd_runner.cli_v3:main`.
+- Rewrote root docs for orchestrator-first positioning:
+  - `README.md`
+  - `docs/README.md`.
+- Added CI gate tests:
+  - Python runtime floor (`>=3.10`),
+  - UI runtime sources must use `/api/v3/*` endpoints.
+- Added end-to-end backend scenario tests for the revamp contract.
+
+Testing completed:
+- Backend suites:
+  - `tests/test_v3_backend_phase1.py`
+  - `tests/test_v3_orchestrator_phase2.py`
+  - `tests/test_cli_v3.py`
+  - `tests/test_revamp_ci_gates.py`
+  - `tests/test_v3_e2e_phase4.py`
+  - Result: `25 passed`.
+- Frontend suites:
+  - `web/src/App.defaultView.test.tsx`
+  - `web/src/App.accessibility.test.tsx`
+  - Result: `5 passed`.
+- Frontend build:
+  - `npm --prefix web run build` passed.
+
+Full revamp-plan gap review cycles:
+- Review cycle 1 identified gaps:
+  - missing explicit CI gate for non-v3 UI endpoints,
+  - missing explicit E2E scenarios for pinned repo -> run -> review -> approve, PRD dependency order, quick-action promotion, request-changes reopen.
+  - Fixes applied: CI gate tests + dedicated E2E coverage.
+- Review cycle 2 identified gaps:
+  - frontend regression test did not assert websocket-driven refresh behavior,
+  - project pinning UI test did not verify selector persistence visibility.
+  - Fixes applied: websocket refresh test + project selector persistence assertion.
+- Review cycle 3:
+  - no remaining contract gaps found against this revamp plan.
+- Post-completion review cycle 4 (follow-up):
+  - gap found: CI gate scope only covered two UI files.
+    - fix: gate now scans all non-test TS/TSX files under `web/src`.
+  - gap found: frontend compile scope was narrowed and could hide regressions.
+    - fix: restored `web/tsconfig.json` include to full `src`.
+  - gap found: runtime UI still had legacy `/api/*` endpoint usage in non-test components.
+    - fix: migrated remaining non-test component endpoint strings to `/api/v3/*`.
+  - gap found: helper inconsistency for task correction method and execution-order route.
+    - fix: changed helper to `PATCH /api/v3/tasks/{id}` and added `GET /api/v3/tasks/execution-order`.
+  - verification after fixes:
+    - backend suites passed (`25 passed`),
+    - frontend tests passed (`5 passed`),
+    - frontend build passed.
+
+Release readiness:
+- Breaking reset behavior implemented and documented.
+- Runtime is v3-first and legacy runtime wiring is removed.
+
+## Post-Completion Gap Findings (2026-02-12)
+
+This section records the follow-up full repo review findings and resolution decisions.
+
+### Decisions Applied
+
+- Remove legacy tests/components that are not part of the v3 orchestrator-first runtime contract.
+- Enforce guarded state transitions: task `status` is no longer mutable via `PATCH /api/v3/tasks/{id}`.
+
+### Findings Identified
+
+1. Full matrix claim mismatch:
+   - Focused revamp suites passed, but full backend/frontend test matrices still included legacy failing suites.
+2. Transition guard gap:
+   - `PATCH /api/v3/tasks/{id}` previously allowed direct status mutation, bypassing transition/dependency checks.
+3. Retry guard gap:
+   - `POST /api/v3/tasks/{id}/retry` previously set `ready` without blocker validation.
+4. Review action guard gap:
+   - Review actions (`approve` / `request-changes`) previously allowed on tasks not in `in_review`.
+5. Cutover strictness gap:
+   - Hard-reset/archive semantics were weaker than contract wording for non-v3 legacy state edge cases.
+6. UI contract drift:
+   - Board-first center/right workbench depth and PRD preview graph remained simplified.
+7. Project UX gap:
+   - Settings included manual pinning/persistence, but no explicit discovered-project search UX.
+8. Legacy UI surface still present in repo:
+   - Obsolete components/tests remained on disk and introduced non-canonical endpoint assumptions.
+9. Legacy package-level reference:
+   - Top-level package import still referenced legacy orchestrator module.
+
+### Remediation Work Directed
+
+- Legacy frontend components/tests and legacy backend API test suites were removed from active repo coverage where they were outside the v3 contract.
+- v3 API transition hardening implemented:
+  - reject `status` updates in task `PATCH`,
+  - enforce blocker checks on `retry`,
+  - require `in_review` state for review actions.
+
+### Follow-up Remediation Complete (2026-02-12, later pass)
+
+- Bridged remaining backend cutover gaps:
+  - archive now triggers for any non-v3 `.prd_runner` root, not only a legacy artifact subset.
+  - existing v3 config is normalized to `schema_version: 3`.
+- Bridged remaining UI contract gaps:
+  - board-first workbench now renders left Kanban + center task detail + right queue/agent context.
+  - settings now includes project search over discovered+pinned items.
+  - PRD import preview now includes a visible node/edge graph summary before commit.
+- Bridged remaining legacy wiring gap:
+  - removed package-level import of legacy orchestrator from top-level package init.
+- Full current matrix after cleanup/bridging:
+  - backend: `890 passed`,
+  - frontend: `50 passed`,
+  - frontend build: passed.
