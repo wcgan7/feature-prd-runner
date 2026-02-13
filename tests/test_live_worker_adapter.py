@@ -12,6 +12,7 @@ from feature_prd_runner.v3.orchestrator.live_worker_adapter import (
     LiveWorkerAdapter,
     _extract_json,
     build_step_prompt,
+    detect_project_languages,
 )
 from feature_prd_runner.v3.orchestrator.worker_adapter import StepResult
 from feature_prd_runner.v3.storage.container import V3Container
@@ -581,3 +582,197 @@ def test_ollama_verify_fail(adapter: LiveWorkerAdapter) -> None:
 
     assert result.status == "error"
     assert result.summary == "3 tests failed"
+
+
+# ---------------------------------------------------------------------------
+# Preamble and guardrails in prompts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("step", ["plan", "implement", "review", "verify", "report"])
+def test_prompt_includes_preamble(step: str) -> None:
+    task = _make_task()
+    prompt = build_step_prompt(task=task, step=step, attempt=1, is_codex=True)
+    assert "autonomous coding agent" in prompt
+    assert "coordinator" in prompt
+    assert "human-blocking issue" in prompt
+
+
+@pytest.mark.parametrize("step", ["plan", "implement", "review", "verify", "report"])
+def test_prompt_includes_guardrails(step: str) -> None:
+    task = _make_task()
+    prompt = build_step_prompt(task=task, step=step, attempt=1, is_codex=True)
+    assert "Do NOT commit" in prompt
+    assert ".prd_runner/" in prompt
+    assert "suppress" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# Expanded category instructions
+# ---------------------------------------------------------------------------
+
+
+def test_planning_prompt_has_planning_rules() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(task=task, step="plan", attempt=1, is_codex=True)
+    assert "independently testable" in prompt
+    assert "does not modify" in prompt.lower()
+
+
+def test_implementation_prompt_has_impl_rules() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(task=task, step="implement", attempt=1, is_codex=True)
+    assert "entire step fully" in prompt
+    assert "inconsistent state" in prompt
+
+
+def test_review_prompt_has_severity_guidance() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(task=task, step="review", attempt=1, is_codex=True)
+    assert "severity" in prompt.lower()
+    assert "acceptance criterion" in prompt.lower()
+    assert "do not speculate" in prompt.lower()
+
+
+def test_verification_prompt_has_testing_rules() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(task=task, step="verify", attempt=1, is_codex=True)
+    assert "test" in prompt.lower()
+    assert "Do not bypass" in prompt
+    assert "do not\nmask failures" in prompt.lower() or "do not mask failures" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# Dependency analysis prompt includes preamble and guardrails
+# ---------------------------------------------------------------------------
+
+
+def test_dep_analysis_prompt_includes_preamble_and_guardrails() -> None:
+    task = _make_task(
+        metadata={
+            "candidate_tasks": [
+                {"id": "t1", "title": "Add auth", "task_type": "feature"},
+            ],
+        },
+    )
+    prompt = build_step_prompt(task=task, step="analyze_deps", attempt=1, is_codex=True)
+    assert "autonomous coding agent" in prompt
+    assert "Do NOT commit" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Language standards injection
+# ---------------------------------------------------------------------------
+
+
+def test_implementation_prompt_includes_python_standards() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="implement", attempt=1, is_codex=True,
+        project_languages=["python"],
+    )
+    assert "Language standards" in prompt
+    assert "Python" in prompt
+    assert "ruff" in prompt
+
+
+def test_review_prompt_includes_typescript_standards() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="review", attempt=1, is_codex=True,
+        project_languages=["typescript"],
+    )
+    assert "Language standards" in prompt
+    assert "TypeScript" in prompt
+    assert "tsc" in prompt
+
+
+def test_prompt_no_language_when_none() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="implement", attempt=1, is_codex=True, project_languages=None,
+    )
+    assert "Language standards" not in prompt
+
+
+def test_language_not_injected_for_planning() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="plan", attempt=1, is_codex=True,
+        project_languages=["python"],
+    )
+    assert "Language standards" not in prompt
+
+
+def test_mixed_language_prompt_includes_all_standards() -> None:
+    """Full-stack repo: both Python and TypeScript standards are injected."""
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="implement", attempt=1, is_codex=True,
+        project_languages=["python", "typescript"],
+    )
+    assert "Language standards \u2014 Python" in prompt
+    assert "Language standards \u2014 TypeScript" in prompt
+    assert "ruff" in prompt
+    assert "tsc" in prompt
+
+
+# ---------------------------------------------------------------------------
+# detect_project_languages
+# ---------------------------------------------------------------------------
+
+
+def test_detect_languages_python(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[build-system]")
+    assert detect_project_languages(tmp_path) == ["python"]
+
+
+def test_detect_languages_typescript(tmp_path: Path) -> None:
+    (tmp_path / "tsconfig.json").write_text("{}")
+    assert detect_project_languages(tmp_path) == ["typescript"]
+
+
+def test_detect_languages_go(tmp_path: Path) -> None:
+    (tmp_path / "go.mod").write_text("module example")
+    assert detect_project_languages(tmp_path) == ["go"]
+
+
+def test_detect_languages_rust(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text("[package]")
+    assert detect_project_languages(tmp_path) == ["rust"]
+
+
+def test_detect_languages_none(tmp_path: Path) -> None:
+    assert detect_project_languages(tmp_path) == []
+
+
+def test_detect_languages_mixed_python_typescript(tmp_path: Path) -> None:
+    """Full-stack repo with both pyproject.toml and tsconfig.json."""
+    (tmp_path / "pyproject.toml").write_text("[build-system]")
+    (tmp_path / "tsconfig.json").write_text("{}")
+    (tmp_path / "package.json").write_text("{}")
+    langs = detect_project_languages(tmp_path)
+    assert "python" in langs
+    assert "typescript" in langs
+    # JavaScript is subsumed by TypeScript
+    assert "javascript" not in langs
+
+
+def test_detect_languages_deduplicates(tmp_path: Path) -> None:
+    """Both pyproject.toml and setup.py map to python — no duplicates."""
+    (tmp_path / "pyproject.toml").write_text("[build-system]")
+    (tmp_path / "setup.py").write_text("from setuptools import setup")
+    assert detect_project_languages(tmp_path) == ["python"]
+
+
+def test_detect_languages_typescript_subsumes_javascript(tmp_path: Path) -> None:
+    """When tsconfig.json is present, package.json's 'javascript' is dropped."""
+    (tmp_path / "tsconfig.json").write_text("{}")
+    (tmp_path / "package.json").write_text("{}")
+    assert detect_project_languages(tmp_path) == ["typescript"]
+
+
+def test_detect_languages_javascript_alone(tmp_path: Path) -> None:
+    """package.json without tsconfig.json → javascript."""
+    (tmp_path / "package.json").write_text("{}")
+    assert detect_project_languages(tmp_path) == ["javascript"]
