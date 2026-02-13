@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,14 +24,23 @@ V3_CHANNELS = {
 class _WsClient:
     ws: WebSocket
     channels: set[str] = field(default_factory=set)
+    project_ids: set[str] = field(default_factory=set)
 
 
 class V3WebSocketHub:
     def __init__(self) -> None:
         self._clients: dict[int, _WsClient] = {}
         self._counter = 0
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._lock = threading.Lock()
+
+    def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        with self._lock:
+            self._loop = loop
 
     async def handle_connection(self, websocket: WebSocket) -> None:
+        # Remember the active event loop so background threads can publish safely.
+        self.attach_loop(asyncio.get_running_loop())
         await websocket.accept()
         client = _WsClient(ws=websocket)
         cid = id(websocket)
@@ -42,12 +52,44 @@ class V3WebSocketHub:
                 message = json.loads(raw)
                 action = message.get("action")
                 channels = set(message.get("channels", []))
+                project_ids = {
+                    str(project_id).strip()
+                    for project_id in message.get("project_ids", [])
+                    if str(project_id).strip()
+                }
+                single_project_id = str(message.get("project_id") or "").strip()
+                if single_project_id:
+                    project_ids.add(single_project_id)
                 if action == "subscribe":
                     client.channels |= channels & V3_CHANNELS
-                    await websocket.send_text(json.dumps({"channel": "system", "type": "subscribed", "payload": {"channels": sorted(client.channels)}}))
+                    client.project_ids |= project_ids
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "channel": "system",
+                                "type": "subscribed",
+                                "payload": {
+                                    "channels": sorted(client.channels),
+                                    "project_ids": sorted(client.project_ids),
+                                },
+                            }
+                        )
+                    )
                 elif action == "unsubscribe":
                     client.channels -= channels
-                    await websocket.send_text(json.dumps({"channel": "system", "type": "unsubscribed", "payload": {"channels": sorted(client.channels)}}))
+                    client.project_ids -= project_ids
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "channel": "system",
+                                "type": "unsubscribed",
+                                "payload": {
+                                    "channels": sorted(client.channels),
+                                    "project_ids": sorted(client.project_ids),
+                                },
+                            }
+                        )
+                    )
                 elif action == "ping":
                     await websocket.send_text(json.dumps({"channel": "system", "type": "pong", "payload": {}}))
         except Exception:
@@ -62,6 +104,10 @@ class V3WebSocketHub:
         for cid, client in self._clients.items():
             if event.get("channel") not in client.channels and event.get("channel") != "system":
                 continue
+            if event.get("channel") != "system" and client.project_ids:
+                event_project_id = str(event.get("project_id") or "").strip()
+                if not event_project_id or event_project_id not in client.project_ids:
+                    continue
             try:
                 await client.ws.send_text(payload)
             except Exception:
@@ -70,8 +116,14 @@ class V3WebSocketHub:
             self._clients.pop(cid, None)
 
     def publish_sync(self, event: dict[str, Any]) -> None:
+        with self._lock:
+            loop = self._loop
+        if loop and loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.publish(event), loop)
+            return
         try:
             loop = asyncio.get_running_loop()
+            self.attach_loop(loop)
             loop.create_task(self.publish(event))
         except RuntimeError:
             pass
