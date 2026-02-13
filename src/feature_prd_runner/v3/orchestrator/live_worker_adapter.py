@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from ...pipelines.registry import PipelineRegistry
 from ...workers.config import get_workers_runtime_config, resolve_worker_for_step
 from ...workers.diagnostics import test_worker
 from ...workers.run import WorkerRunResult, run_worker
@@ -27,6 +28,8 @@ _SCAN_STEPS = {"scan", "scan_deps", "scan_code", "gather"}
 _TASK_GEN_STEPS = {"generate_tasks", "diagnose"}
 _MERGE_RESOLVE_STEPS = {"resolve_merge"}
 _DEP_ANALYSIS_STEPS = {"analyze_deps"}
+_STEP_TIMEOUT_ALIASES = {"implement_fix": "implement"}
+_DEFAULT_STEP_TIMEOUT_SECONDS = 600
 
 
 def _step_category(step: str) -> str:
@@ -238,6 +241,44 @@ class LiveWorkerAdapter:
     def __init__(self, container: V3Container) -> None:
         self._container = container
 
+    @staticmethod
+    def _coerce_timeout(value: Any, default: int = _DEFAULT_STEP_TIMEOUT_SECONDS) -> int:
+        try:
+            timeout = int(value)
+        except (TypeError, ValueError):
+            return default
+        return timeout if timeout > 0 else default
+
+    def _timeout_for_step(self, task: Task, step: str) -> int:
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        overrides = metadata.get("step_timeouts")
+        if isinstance(overrides, dict):
+            for key in (step, _STEP_TIMEOUT_ALIASES.get(step)):
+                if not key:
+                    continue
+                if key in overrides:
+                    return self._coerce_timeout(overrides.get(key))
+
+        try:
+            template = PipelineRegistry().resolve_for_task_type(task.task_type)
+        except Exception:
+            return _DEFAULT_STEP_TIMEOUT_SECONDS
+
+        step_timeouts = {sd.name: self._coerce_timeout(sd.timeout_seconds) for sd in template.steps}
+        for key in (step, _STEP_TIMEOUT_ALIASES.get(step)):
+            if key and key in step_timeouts:
+                return step_timeouts[key]
+        return _DEFAULT_STEP_TIMEOUT_SECONDS
+
+    @staticmethod
+    def _human_blocker_summary(issues: list[dict[str, str]]) -> str:
+        count = len(issues)
+        first = issues[0].get("summary", "").strip() if issues else ""
+        if not first:
+            return f"Human intervention required ({count} blocking issue{'s' if count != 1 else ''})."
+        suffix = "issue" if count == 1 else "issues"
+        return f"Human intervention required ({count} {suffix}): {first}"
+
     def run_step(self, *, task: Task, step: str, attempt: int) -> StepResult:
         # 1. Resolve worker
         try:
@@ -258,13 +299,14 @@ class LiveWorkerAdapter:
         progress_path = run_dir / "progress.json"
         worktree_path = task.metadata.get("worktree_dir") if isinstance(task.metadata, dict) else None
         project_dir = Path(worktree_path) if worktree_path else self._container.project_dir
+        timeout_seconds = self._timeout_for_step(task, step)
         try:
             result = run_worker(
                 spec=spec,
                 prompt=prompt,
                 project_dir=project_dir,
                 run_dir=run_dir,
-                timeout_seconds=600,
+                timeout_seconds=timeout_seconds,
                 heartbeat_seconds=30,
                 heartbeat_grace_seconds=15,
                 progress_path=progress_path,
@@ -276,6 +318,14 @@ class LiveWorkerAdapter:
         return self._map_result(result, spec, step)
 
     def _map_result(self, result: WorkerRunResult, spec: Any, step: str) -> StepResult:
+        if result.human_blocking_issues:
+            return StepResult(
+                status="human_blocked",
+                summary=self._human_blocker_summary(result.human_blocking_issues),
+                human_blocking_issues=result.human_blocking_issues,
+            )
+        if result.no_heartbeat:
+            return StepResult(status="error", summary="Worker stalled (no heartbeat or output activity).")
         if result.timed_out:
             return StepResult(status="error", summary="Worker timed out")
         if result.exit_code != 0:

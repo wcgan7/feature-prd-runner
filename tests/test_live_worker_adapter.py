@@ -39,7 +39,9 @@ def _make_run_result(
     *,
     exit_code: int = 0,
     timed_out: bool = False,
+    no_heartbeat: bool = False,
     response_text: str = "",
+    human_blocking_issues: list[dict[str, str]] | None = None,
 ) -> WorkerRunResult:
     return WorkerRunResult(
         provider="test",
@@ -51,8 +53,9 @@ def _make_run_result(
         runtime_seconds=60,
         exit_code=exit_code,
         timed_out=timed_out,
-        no_heartbeat=False,
+        no_heartbeat=no_heartbeat,
         response_text=response_text,
+        human_blocking_issues=list(human_blocking_issues or []),
     )
 
 
@@ -126,7 +129,71 @@ def test_codex_success_maps_to_ok(adapter: LiveWorkerAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Codex failure maps to error
+# 3. Step timeout can be overridden per task metadata
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_override_from_task_metadata(adapter: LiveWorkerAdapter) -> None:
+    run_result = _make_run_result(exit_code=0)
+    task = _make_task(metadata={"step_timeouts": {"implement": 42}})
+
+    with (
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.get_workers_runtime_config"
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.resolve_worker_for_step",
+            return_value=_CODEX_SPEC,
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.test_worker",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.run_worker",
+            return_value=run_result,
+        ) as run_worker_mock,
+    ):
+        result = adapter.run_step(task=task, step="implement", attempt=1)
+
+    assert result.status == "ok"
+    assert run_worker_mock.call_args.kwargs["timeout_seconds"] == 42
+
+
+# ---------------------------------------------------------------------------
+# 4. Template timeout is used when no metadata override exists
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_defaults_from_pipeline_template(adapter: LiveWorkerAdapter) -> None:
+    run_result = _make_run_result(exit_code=0)
+    task = _make_task(task_type="bug")
+
+    with (
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.get_workers_runtime_config"
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.resolve_worker_for_step",
+            return_value=_CODEX_SPEC,
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.test_worker",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.run_worker",
+            return_value=run_result,
+        ) as run_worker_mock,
+    ):
+        result = adapter.run_step(task=task, step="reproduce", attempt=1)
+
+    assert result.status == "ok"
+    assert run_worker_mock.call_args.kwargs["timeout_seconds"] == 300
+
+
+# ---------------------------------------------------------------------------
+# 5. Codex failure maps to error
 # ---------------------------------------------------------------------------
 
 
@@ -157,7 +224,7 @@ def test_codex_failure_maps_to_error(adapter: LiveWorkerAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. Codex timeout maps to error
+# 6. Codex timeout maps to error
 # ---------------------------------------------------------------------------
 
 
@@ -188,7 +255,74 @@ def test_codex_timeout_maps_to_error(adapter: LiveWorkerAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. Ollama review parses findings
+# 7. Codex no-heartbeat maps to explicit stall error
+# ---------------------------------------------------------------------------
+
+
+def test_codex_no_heartbeat_maps_to_stalled_error(adapter: LiveWorkerAdapter) -> None:
+    run_result = _make_run_result(exit_code=1, no_heartbeat=True)
+
+    with (
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.get_workers_runtime_config"
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.resolve_worker_for_step",
+            return_value=_CODEX_SPEC,
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.test_worker",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.run_worker",
+            return_value=run_result,
+        ),
+    ):
+        result = adapter.run_step(task=_make_task(), step="implement", attempt=1)
+
+    assert result.status == "error"
+    assert "stalled" in (result.summary or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# 8. Human-blocking issues map to dedicated status
+# ---------------------------------------------------------------------------
+
+
+def test_human_blocking_issues_map_to_human_blocked(adapter: LiveWorkerAdapter) -> None:
+    run_result = _make_run_result(
+        exit_code=0,
+        human_blocking_issues=[{"summary": "Need production API token"}],
+    )
+
+    with (
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.get_workers_runtime_config"
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.resolve_worker_for_step",
+            return_value=_CODEX_SPEC,
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.test_worker",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.run_worker",
+            return_value=run_result,
+        ),
+    ):
+        result = adapter.run_step(task=_make_task(), step="implement", attempt=1)
+
+    assert result.status == "human_blocked"
+    assert result.human_blocking_issues is not None
+    assert result.human_blocking_issues[0]["summary"] == "Need production API token"
+    assert "human intervention required" in (result.summary or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# 9. Ollama review parses findings
 # ---------------------------------------------------------------------------
 
 
@@ -223,7 +357,7 @@ def test_ollama_review_parses_findings(adapter: LiveWorkerAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. Ollama generate_tasks parses tasks
+# 10. Ollama generate_tasks parses tasks
 # ---------------------------------------------------------------------------
 
 
@@ -257,7 +391,7 @@ def test_ollama_generate_tasks_parses_tasks(adapter: LiveWorkerAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. Ollama implement extracts summary
+# 11. Ollama implement extracts summary
 # ---------------------------------------------------------------------------
 
 

@@ -47,6 +47,13 @@ function installFetchMock() {
     blocked_by: ['task-0'],
     blocks: ['task-2'],
     pending_gate: 'human_review',
+    human_blocking_issues: [
+      {
+        summary: 'Need production API token',
+        details: 'Grant read-only credentials for staging',
+        action: 'Provide token',
+      },
+    ],
     approval_mode: 'human_review',
     hitl_mode: 'autopilot',
   }
@@ -210,7 +217,22 @@ function installFetchMock() {
     if (u.includes('/api/v3/metrics')) {
       return jsonResponse({ api_calls: 1, wall_time_seconds: 1, phases_completed: 0, phases_total: 0, tokens_used: 10, estimated_cost_usd: 0.01 })
     }
-    if (u.includes('/api/v3/collaboration/timeline/task-1')) return jsonResponse({ events: [] })
+    if (u.includes('/api/v3/collaboration/timeline/task-1')) {
+      return jsonResponse({
+        events: [
+          {
+            id: 'evt-1',
+            type: 'task.gate_waiting',
+            timestamp: '2026-02-13T00:00:00Z',
+            actor: 'system',
+            actor_type: 'system',
+            summary: 'task.gate_waiting',
+            details: 'Need human intervention',
+            human_blocking_issues: [{ summary: 'Need production API token' }],
+          },
+        ],
+      })
+    }
     if (u.includes('/api/v3/collaboration/feedback/task-1')) return jsonResponse({ feedback: [] })
     if (u.includes('/api/v3/collaboration/comments/task-1')) return jsonResponse({ comments: [] })
 
@@ -237,6 +259,8 @@ describe('App action coverage', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^Run$/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /Approve gate/i })).toBeInTheDocument()
+      expect(screen.getByText('Need production API token')).toBeInTheDocument()
+      expect(screen.getByText(/Required human input/i)).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole('button', { name: /^Run$/i }))
