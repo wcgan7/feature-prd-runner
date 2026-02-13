@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Optional
 
 from ...collaboration.modes import should_gate
@@ -11,6 +13,8 @@ from ..domain.models import ReviewCycle, ReviewFinding, RunRecord, Task, now_iso
 from ..events.bus import EventBus
 from ..storage.container import V3Container
 from .worker_adapter import DefaultWorkerAdapter, WorkerAdapter
+
+logger = logging.getLogger(__name__)
 
 
 class OrchestratorService:
@@ -36,6 +40,16 @@ class OrchestratorService:
         self._stop = threading.Event()
         self._drain = False
         self._run_branch: Optional[str] = None
+        self._pool: ThreadPoolExecutor | None = None
+        self._futures: dict[str, Future] = {}
+        self._futures_lock = threading.Lock()
+
+    def _get_pool(self) -> ThreadPoolExecutor:
+        if self._pool is None:
+            cfg = self.container.config.load()
+            max_workers = int(dict(cfg.get("orchestrator") or {}).get("concurrency", 2) or 2)
+            self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="v3-task")
+        return self._pool
 
     def status(self) -> dict[str, Any]:
         cfg = self.container.config.load()
@@ -43,10 +57,13 @@ class OrchestratorService:
         tasks = self.container.tasks.list()
         queue_depth = len([task for task in tasks if task.status == "ready"])
         in_progress = len([task for task in tasks if task.status == "in_progress"])
+        with self._futures_lock:
+            active_workers = len(self._futures)
         return {
             "status": orchestrator_cfg.get("status", "running"),
             "queue_depth": queue_depth,
             "in_progress": in_progress,
+            "active_workers": active_workers,
             "draining": self._drain,
             "run_branch": self._run_branch,
         }
@@ -79,7 +96,19 @@ class OrchestratorService:
             self._thread = threading.Thread(target=self._loop, daemon=True, name="v3-orchestrator")
             self._thread.start()
 
+    def _sweep_futures(self) -> None:
+        """Remove completed futures and log any unexpected errors."""
+        with self._futures_lock:
+            done_ids = [tid for tid, f in self._futures.items() if f.done()]
+            for tid in done_ids:
+                fut = self._futures.pop(tid)
+                exc = fut.exception()
+                if exc:
+                    logger.error("Task %s raised unexpected error: %s", tid, exc, exc_info=exc)
+
     def tick_once(self) -> bool:
+        self._sweep_futures()
+
         cfg = self.container.config.load()
         orchestrator_cfg = dict(cfg.get("orchestrator") or {})
         if orchestrator_cfg.get("status", "running") != "running":
@@ -92,7 +121,9 @@ class OrchestratorService:
             return False
 
         self.bus.emit(channel="queue", event_type="task.claimed", entity_id=claimed.id, payload={"status": claimed.status})
-        self._execute_task(claimed)
+        future = self._get_pool().submit(self._execute_task, claimed)
+        with self._futures_lock:
+            self._futures[claimed.id] = future
         return True
 
     def run_task(self, task_id: str) -> Task:
@@ -113,16 +144,26 @@ class OrchestratorService:
                     raise ValueError(f"Task {task_id} has unresolved blocker {dep_id}")
             task.status = "ready"
             self.container.tasks.upsert(task)
-            self._execute_task(task)
-            updated = self.container.tasks.get(task_id)
-            if not updated:
-                raise ValueError(f"Task disappeared during execution: {task_id}")
-            return updated
+
+        future = self._get_pool().submit(self._execute_task, task)
+        with self._futures_lock:
+            self._futures[task_id] = future
+        try:
+            future.result()
+        finally:
+            with self._futures_lock:
+                self._futures.pop(task_id, None)
+        updated = self.container.tasks.get(task_id)
+        if not updated:
+            raise ValueError(f"Task disappeared during execution: {task_id}")
+        return updated
 
     def _loop(self) -> None:
         while not self._stop.is_set():
             handled = self.tick_once()
-            if self._drain and not handled:
+            with self._futures_lock:
+                has_inflight = bool(self._futures)
+            if self._drain and not handled and not has_inflight:
                 self.control("pause")
                 self._drain = False
                 break
@@ -325,6 +366,15 @@ class OrchestratorService:
         )
 
     def _execute_task(self, task: Task) -> None:
+        try:
+            self._execute_task_inner(task)
+        except Exception:
+            logger.exception("Unexpected error executing task %s", task.id)
+            task.status = "blocked"
+            task.error = "Internal error during execution"
+            self.container.tasks.upsert(task)
+
+    def _execute_task_inner(self, task: Task) -> None:
         run = RunRecord(task_id=task.id, status="in_progress", started_at=now_iso(), branch=self._ensure_branch())
         run.steps = []
         self.container.runs.upsert(run)
