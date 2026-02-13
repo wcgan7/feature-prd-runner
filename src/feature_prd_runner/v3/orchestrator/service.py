@@ -4,7 +4,7 @@ import logging
 import subprocess
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any, Optional
 
@@ -113,10 +113,62 @@ class OrchestratorService:
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
+            self._recover_in_progress_tasks()
             self._cleanup_orphaned_worktrees()
             self._stop.clear()
             self._thread = threading.Thread(target=self._loop, daemon=True, name="v3-orchestrator")
             self._thread.start()
+
+    def shutdown(self, *, timeout: float = 10.0) -> None:
+        with self._lock:
+            self._stop.set()
+            thread = self._thread
+
+        if thread and thread.is_alive():
+            thread.join(timeout=max(timeout, 0.0))
+
+        with self._futures_lock:
+            inflight = list(self._futures.values())
+        if inflight and timeout > 0:
+            wait(inflight, timeout=timeout)
+
+        pool = self._pool
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=False)
+            self._pool = None
+
+        with self._futures_lock:
+            self._futures.clear()
+        self._thread = None
+
+    def _recover_in_progress_tasks(self) -> None:
+        tasks = self.container.tasks.list()
+        in_progress_ids = {task.id for task in tasks if task.status == "in_progress"}
+        if not in_progress_ids:
+            return
+
+        for run in self.container.runs.list():
+            if run.task_id in in_progress_ids and run.status == "in_progress" and not run.finished_at:
+                run.status = "interrupted"
+                run.finished_at = now_iso()
+                run.summary = run.summary or "Interrupted by orchestrator restart"
+                self.container.runs.upsert(run)
+
+        for task in tasks:
+            if task.id not in in_progress_ids:
+                continue
+            task.status = "ready"
+            task.current_step = None
+            task.current_agent_id = None
+            task.pending_gate = None
+            task.error = "Recovered from interrupted run"
+            self.container.tasks.upsert(task)
+            self.bus.emit(
+                channel="tasks",
+                event_type="task.recovered",
+                entity_id=task.id,
+                payload={"reason": "orchestrator_restart"},
+            )
 
     def _sweep_futures(self) -> None:
         """Remove completed futures and log any unexpected errors."""
@@ -150,23 +202,38 @@ class OrchestratorService:
         return True
 
     def run_task(self, task_id: str) -> Task:
+        wait_existing = False
         with self._lock:
             task = self.container.tasks.get(task_id)
             if not task:
                 raise ValueError(f"Task not found: {task_id}")
             # Make explicit run idempotent when a worker already started or finished
             # the same task; this avoids request races with the background loop.
-            if task.status in {"in_progress", "in_review", "done"}:
+            if task.status in {"in_review", "done"}:
                 return task
+            if task.status == "in_progress":
+                wait_existing = True
             if task.status in {"cancelled"}:
                 raise ValueError(f"Task {task_id} cannot be run from status={task.status}")
-            terminal = {"done", "cancelled"}
-            for dep_id in task.blocked_by:
-                dep = self.container.tasks.get(dep_id)
-                if dep is None or dep.status not in terminal:
-                    raise ValueError(f"Task {task_id} has unresolved blocker {dep_id}")
-            task.status = "ready"
-            self.container.tasks.upsert(task)
+
+            if not wait_existing:
+                terminal = {"done", "cancelled"}
+                for dep_id in task.blocked_by:
+                    dep = self.container.tasks.get(dep_id)
+                    if dep is None or dep.status not in terminal:
+                        raise ValueError(f"Task {task_id} has unresolved blocker {dep_id}")
+                task.status = "ready"
+                self.container.tasks.upsert(task)
+
+        if wait_existing:
+            with self._futures_lock:
+                existing_future = self._futures.get(task_id)
+            if existing_future:
+                existing_future.result()
+            updated = self.container.tasks.get(task_id)
+            if not updated:
+                raise ValueError(f"Task disappeared during execution: {task_id}")
+            return updated
 
         future = self._get_pool().submit(self._execute_task, task)
         with self._futures_lock:

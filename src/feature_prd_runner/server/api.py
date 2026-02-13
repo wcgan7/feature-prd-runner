@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -20,10 +22,27 @@ def create_app(
     enable_cors: bool = True,
     worker_adapter: Optional[WorkerAdapter] = None,
 ) -> FastAPI:
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        hub.attach_loop(asyncio.get_running_loop())
+        try:
+            yield
+        finally:
+            orchestrators = list(getattr(app.state, "v3_orchestrators", {}).values())
+            for orchestrator in orchestrators:
+                try:
+                    orchestrator.shutdown(timeout=10.0)
+                except Exception:
+                    pass
+            app.state.v3_orchestrators = {}
+            app.state.v3_containers = {}
+            app.state.import_jobs = {}
+
     app = FastAPI(
         title="Feature PRD Runner",
         description="Orchestrator-first AI engineering control center",
         version="3.0.0",
+        lifespan=_lifespan,
     )
 
     if enable_cors:
@@ -75,7 +94,22 @@ def create_app(
             "name": "Feature PRD Runner",
             "version": "3.0.0",
             "project": str(container.project_dir),
+            "project_id": container.project_id,
             "schema_version": 3,
+        }
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, object]:
+        return {"status": "ok", "version": "3.0.0"}
+
+    @app.get("/readyz")
+    async def readyz(project_dir: Optional[str] = Query(None)) -> dict[str, object]:
+        container = _resolve_container(project_dir)
+        return {
+            "status": "ready",
+            "project": str(container.project_dir),
+            "project_id": container.project_id,
+            "orchestrators": len(app.state.v3_orchestrators),
         }
 
     @app.websocket("/ws")

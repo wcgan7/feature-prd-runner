@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from feature_prd_runner.server.api import create_app
 from feature_prd_runner.v3.orchestrator import DefaultWorkerAdapter
-from feature_prd_runner.v3.domain.models import Task
+from feature_prd_runner.v3.domain.models import QuickActionRun, Task
 from feature_prd_runner.v3.storage.bootstrap import ensure_v3_state_root
 from feature_prd_runner.v3.storage.container import V3Container
 
@@ -124,6 +124,17 @@ def test_quick_action_promotion_is_singleton(tmp_path: Path) -> None:
         assert [task["id"] for task in tasks].count(task_id) == 1
 
 
+def test_quick_action_pending_limit_returns_429(tmp_path: Path) -> None:
+    container = V3Container(tmp_path)
+    for idx in range(32):
+        container.quick_actions.upsert(QuickActionRun(prompt=f"Run {idx}", status="running"))
+
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        response = client.post("/api/v3/quick-actions", json={"prompt": "git status"})
+        assert response.status_code == 429
+
+
 def test_project_pin_requires_git_unless_override(tmp_path: Path) -> None:
     app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
     plain_dir = tmp_path / "plain"
@@ -165,6 +176,34 @@ def test_import_preview_commit_creates_dependency_chain(tmp_path: Path) -> None:
         job = client.get(f"/api/v3/import/{job_id}")
         assert job.status_code == 200
         assert job.json()["job"]["created_task_ids"] == created_ids
+
+
+def test_import_job_persists_when_in_memory_cache_is_empty(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        preview = client.post(
+            "/api/v3/import/prd/preview",
+            json={"content": "- Persist me"},
+        )
+        assert preview.status_code == 200
+        job_id = preview.json()["job_id"]
+
+        app.state.import_jobs.clear()
+        loaded = client.get(f"/api/v3/import/{job_id}")
+        assert loaded.status_code == 200
+        assert loaded.json()["job"]["id"] == job_id
+
+
+def test_health_endpoints_available(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        health = client.get("/healthz")
+        assert health.status_code == 200
+        assert health.json()["status"] == "ok"
+
+        ready = client.get("/readyz")
+        assert ready.status_code == 200
+        assert ready.json()["status"] == "ready"
 
 
 def test_legacy_compat_endpoints_available(tmp_path: Path) -> None:
@@ -224,6 +263,69 @@ def test_legacy_compat_endpoints_available(tmp_path: Path) -> None:
         types = {event["type"] for event in timeline.json()["events"]}
         assert "feedback" in types
         assert "comment" in types
+
+
+def test_settings_endpoint_round_trip(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        baseline = client.get("/api/v3/settings")
+        assert baseline.status_code == 200
+        assert baseline.json()["orchestrator"]["concurrency"] == 2
+        assert baseline.json()["orchestrator"]["auto_deps"] is True
+        assert baseline.json()["orchestrator"]["max_review_attempts"] == 3
+        assert baseline.json()["agent_routing"]["default_role"] == "general"
+        assert baseline.json()["defaults"]["quality_gate"]["high"] == 0
+        assert baseline.json()["workers"]["default"] == "codex"
+        assert baseline.json()["workers"]["providers"]["codex"]["type"] == "codex"
+
+        updated = client.patch(
+            "/api/v3/settings",
+            json={
+                "orchestrator": {"concurrency": 5, "auto_deps": False, "max_review_attempts": 4},
+                "agent_routing": {
+                    "default_role": "reviewer",
+                    "task_type_roles": {"bug": "debugger"},
+                    "role_provider_overrides": {"reviewer": "openai"},
+                },
+                "defaults": {"quality_gate": {"critical": 1, "high": 2, "medium": 3, "low": 4}},
+                "workers": {
+                    "default": "ollama-dev",
+                    "routing": {"plan": "codex", "implement": "ollama-dev"},
+                    "providers": {
+                        "codex": {"type": "codex", "command": "codex"},
+                        "ollama-dev": {
+                            "type": "ollama",
+                            "endpoint": "http://localhost:11434",
+                            "model": "llama3.1:8b",
+                            "temperature": 0.2,
+                            "num_ctx": 8192,
+                        },
+                    },
+                },
+            },
+        )
+        assert updated.status_code == 200
+        body = updated.json()
+        assert body["orchestrator"]["concurrency"] == 5
+        assert body["orchestrator"]["auto_deps"] is False
+        assert body["orchestrator"]["max_review_attempts"] == 4
+        assert body["agent_routing"]["default_role"] == "reviewer"
+        assert body["agent_routing"]["task_type_roles"]["bug"] == "debugger"
+        assert body["agent_routing"]["role_provider_overrides"]["reviewer"] == "openai"
+        assert body["defaults"]["quality_gate"]["critical"] == 1
+        assert body["defaults"]["quality_gate"]["high"] == 2
+        assert body["defaults"]["quality_gate"]["medium"] == 3
+        assert body["defaults"]["quality_gate"]["low"] == 4
+        assert body["workers"]["default"] == "ollama-dev"
+        assert body["workers"]["routing"]["plan"] == "codex"
+        assert body["workers"]["routing"]["implement"] == "ollama-dev"
+        assert body["workers"]["providers"]["codex"]["type"] == "codex"
+        assert body["workers"]["providers"]["ollama-dev"]["type"] == "ollama"
+        assert body["workers"]["providers"]["ollama-dev"]["model"] == "llama3.1:8b"
+
+        reloaded = client.get("/api/v3/settings")
+        assert reloaded.status_code == 200
+        assert reloaded.json() == body
 
 
 def test_claim_lock_prevents_double_claim(tmp_path: Path) -> None:

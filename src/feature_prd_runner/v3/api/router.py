@@ -79,6 +79,51 @@ class OrchestratorControlRequest(BaseModel):
     action: str
 
 
+class OrchestratorSettingsRequest(BaseModel):
+    concurrency: int = Field(2, ge=1, le=128)
+    auto_deps: bool = True
+    max_review_attempts: int = Field(3, ge=1, le=50)
+
+
+class AgentRoutingSettingsRequest(BaseModel):
+    default_role: str = "general"
+    task_type_roles: dict[str, str] = Field(default_factory=dict)
+    role_provider_overrides: dict[str, str] = Field(default_factory=dict)
+
+
+class WorkerProviderSettingsRequest(BaseModel):
+    type: str = "codex"
+    command: Optional[str] = None
+    endpoint: Optional[str] = None
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    num_ctx: Optional[int] = None
+
+
+class WorkersSettingsRequest(BaseModel):
+    default: str = "codex"
+    routing: dict[str, str] = Field(default_factory=dict)
+    providers: dict[str, WorkerProviderSettingsRequest] = Field(default_factory=dict)
+
+
+class QualityGateSettingsRequest(BaseModel):
+    critical: int = Field(0, ge=0)
+    high: int = Field(0, ge=0)
+    medium: int = Field(0, ge=0)
+    low: int = Field(0, ge=0)
+
+
+class DefaultsSettingsRequest(BaseModel):
+    quality_gate: QualityGateSettingsRequest = Field(default_factory=QualityGateSettingsRequest)
+
+
+class UpdateSettingsRequest(BaseModel):
+    orchestrator: Optional[OrchestratorSettingsRequest] = None
+    agent_routing: Optional[AgentRoutingSettingsRequest] = None
+    defaults: Optional[DefaultsSettingsRequest] = None
+    workers: Optional[WorkersSettingsRequest] = None
+
+
 class SpawnAgentRequest(BaseModel):
     role: str = "general"
     capacity: int = 1
@@ -117,9 +162,161 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     "cancelled": {"backlog"},
 }
 
+IMPORT_JOB_TTL_SECONDS = 60 * 60 * 24
+IMPORT_JOB_MAX_RECORDS = 200
+QUICK_ACTION_MAX_PENDING = 32
+
 
 def _priority_rank(priority: str) -> int:
     return {"P0": 0, "P1": 1, "P2": 2, "P3": 3}.get(priority, 9)
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _pruned_import_jobs(items: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    kept: list[dict[str, Any]] = []
+    for item in items.values():
+        if not isinstance(item, dict):
+            continue
+        job_id = str(item.get("id") or "").strip()
+        if not job_id:
+            continue
+        created_at = _parse_iso_datetime(item.get("created_at"))
+        if created_at and (now - created_at).total_seconds() > IMPORT_JOB_TTL_SECONDS:
+            continue
+        kept.append(item)
+
+    kept.sort(key=lambda job: str(job.get("created_at") or ""), reverse=True)
+    trimmed = kept[:IMPORT_JOB_MAX_RECORDS]
+    return {str(job.get("id")): job for job in trimmed if str(job.get("id") or "").strip()}
+
+
+def _coerce_int(value: Any, default: int, *, minimum: int = 0, maximum: Optional[int] = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if parsed < minimum:
+        parsed = minimum
+    if maximum is not None and parsed > maximum:
+        parsed = maximum
+    return parsed
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return default
+
+
+def _normalize_str_map(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, raw in value.items():
+        k = str(key or "").strip()
+        v = str(raw or "").strip()
+        if k and v:
+            out[k] = v
+    return out
+
+
+def _normalize_workers_providers(value: Any) -> dict[str, dict[str, Any]]:
+    raw_providers = value if isinstance(value, dict) else {}
+    providers: dict[str, dict[str, Any]] = {}
+    for raw_name, raw_item in raw_providers.items():
+        name = str(raw_name or "").strip()
+        if not name or not isinstance(raw_item, dict):
+            continue
+        provider_type = str(raw_item.get("type") or ("codex" if name == "codex" else "")).strip().lower()
+        if provider_type == "local":
+            provider_type = "ollama"
+        if provider_type not in {"codex", "ollama"}:
+            continue
+
+        if provider_type == "codex":
+            command = str(raw_item.get("command") or "codex").strip() or "codex"
+            providers[name] = {"type": "codex", "command": command}
+            continue
+
+        endpoint = str(raw_item.get("endpoint") or "").strip()
+        model = str(raw_item.get("model") or "").strip()
+        provider: dict[str, Any] = {"type": "ollama"}
+        if endpoint:
+            provider["endpoint"] = endpoint
+        if model:
+            provider["model"] = model
+        temperature = raw_item.get("temperature")
+        if isinstance(temperature, (int, float)):
+            provider["temperature"] = float(temperature)
+        num_ctx = raw_item.get("num_ctx")
+        if isinstance(num_ctx, int) and num_ctx > 0:
+            provider["num_ctx"] = num_ctx
+        providers[name] = provider
+
+    codex = providers.get("codex")
+    codex_command = "codex"
+    if isinstance(codex, dict):
+        codex_command = str(codex.get("command") or "codex").strip() or "codex"
+    providers["codex"] = {"type": "codex", "command": codex_command}
+    return providers
+
+
+def _settings_payload(cfg: dict[str, Any]) -> dict[str, Any]:
+    orchestrator = dict(cfg.get("orchestrator") or {})
+    routing = dict(cfg.get("agent_routing") or {})
+    defaults = dict(cfg.get("defaults") or {})
+    quality_gate = dict(defaults.get("quality_gate") or {})
+    workers_cfg = dict(cfg.get("workers") or {})
+    workers_providers = _normalize_workers_providers(workers_cfg.get("providers"))
+    workers_default = str(workers_cfg.get("default") or "codex").strip() or "codex"
+    if workers_default not in workers_providers:
+        workers_default = "codex"
+    return {
+        "orchestrator": {
+            "concurrency": _coerce_int(orchestrator.get("concurrency"), 2, minimum=1, maximum=128),
+            "auto_deps": _coerce_bool(orchestrator.get("auto_deps"), True),
+            "max_review_attempts": _coerce_int(orchestrator.get("max_review_attempts"), 3, minimum=1, maximum=50),
+        },
+        "agent_routing": {
+            "default_role": str(routing.get("default_role") or "general"),
+            "task_type_roles": _normalize_str_map(routing.get("task_type_roles")),
+            "role_provider_overrides": _normalize_str_map(routing.get("role_provider_overrides")),
+        },
+        "defaults": {
+            "quality_gate": {
+                "critical": _coerce_int(quality_gate.get("critical"), 0, minimum=0),
+                "high": _coerce_int(quality_gate.get("high"), 0, minimum=0),
+                "medium": _coerce_int(quality_gate.get("medium"), 0, minimum=0),
+                "low": _coerce_int(quality_gate.get("low"), 0, minimum=0),
+            }
+        },
+        "workers": {
+            "default": workers_default,
+            "routing": _normalize_str_map(workers_cfg.get("routing")),
+            "providers": workers_providers,
+        },
+    }
 
 
 def _execution_batches(tasks: list[Task]) -> list[list[str]]:
@@ -208,6 +405,49 @@ def create_v3_router(
         cfg = container.config.load()
         cfg["collaboration_comments"] = items
         container.config.save(cfg)
+
+    def _load_import_jobs(container: V3Container) -> dict[str, dict[str, Any]]:
+        cfg = container.config.load()
+        raw = cfg.get("import_jobs")
+        jobs: dict[str, dict[str, Any]] = {}
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                if isinstance(value, dict):
+                    job_id = str(value.get("id") or key).strip()
+                    if job_id:
+                        item = dict(value)
+                        item["id"] = job_id
+                        jobs[job_id] = item
+        elif isinstance(raw, list):
+            for value in raw:
+                if isinstance(value, dict):
+                    job_id = str(value.get("id") or "").strip()
+                    if job_id:
+                        jobs[job_id] = dict(value)
+        return _pruned_import_jobs(jobs)
+
+    def _save_import_jobs(container: V3Container, jobs: dict[str, dict[str, Any]]) -> None:
+        cfg = container.config.load()
+        cfg["import_jobs"] = list(_pruned_import_jobs(jobs).values())
+        container.config.save(cfg)
+
+    def _upsert_import_job(container: V3Container, job: dict[str, Any]) -> None:
+        jobs = _load_import_jobs(container)
+        job_id = str(job.get("id") or "").strip()
+        if not job_id:
+            return
+        jobs[job_id] = job
+        _save_import_jobs(container, jobs)
+
+    def _fetch_import_job(container: V3Container, job_id: str) -> Optional[dict[str, Any]]:
+        jobs = _load_import_jobs(container)
+        _save_import_jobs(container, jobs)
+        return jobs.get(job_id)
+
+    def _prune_in_memory_jobs() -> None:
+        pruned = _pruned_import_jobs(dict(job_store))
+        job_store.clear()
+        job_store.update(pruned)
 
     @router.get("/projects")
     async def list_projects(project_dir: Optional[str] = Query(None), include_non_git: bool = Query(False)) -> dict[str, Any]:
@@ -544,11 +784,12 @@ def create_v3_router(
     @router.post("/import/prd/preview")
     async def preview_import(body: PrdPreviewRequest, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
         container, _, _ = _ctx(project_dir)
+        _prune_in_memory_jobs()
         items = _parse_prd_into_tasks(body.content, body.default_priority)
         nodes = [{"id": f"n{idx + 1}", "title": str(item.get("title") or "Imported task"), "priority": str(item.get("priority") or body.default_priority)} for idx, item in enumerate(items)]
         edges = [{"from": nodes[idx]["id"], "to": nodes[idx + 1]["id"]} for idx in range(len(nodes) - 1)]
         job_id = f"imp-{uuid.uuid4().hex[:10]}"
-        job_store[job_id] = {
+        job = {
             "id": job_id,
             "project_id": container.project_id,
             "title": body.title or "Imported PRD",
@@ -556,12 +797,17 @@ def create_v3_router(
             "created_at": now_iso(),
             "tasks": items,
         }
+        job_store[job_id] = job
+        _upsert_import_job(container, job)
         return {"job_id": job_id, "preview": {"nodes": nodes, "edges": edges}}
 
     @router.post("/import/prd/commit")
     async def commit_import(body: PrdCommitRequest, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
         container, bus, _ = _ctx(project_dir)
+        _prune_in_memory_jobs()
         job = job_store.get(body.job_id)
+        if not job:
+            job = _fetch_import_job(container, body.job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Import job not found")
         created: list[str] = []
@@ -580,12 +826,18 @@ def create_v3_router(
             previous = task
         job["status"] = "committed"
         job["created_task_ids"] = created
+        job_store[body.job_id] = job
+        _upsert_import_job(container, job)
         bus.emit(channel="tasks", event_type="import.committed", entity_id=body.job_id, payload={"created_task_ids": created})
         return {"job_id": body.job_id, "created_task_ids": created}
 
     @router.get("/import/{job_id}")
-    async def get_import_job(job_id: str) -> dict[str, Any]:
+    async def get_import_job(job_id: str, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
+        _prune_in_memory_jobs()
         job = job_store.get(job_id)
+        if not job:
+            container: V3Container = resolve_container(project_dir)
+            job = _fetch_import_job(container, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Import job not found")
         return {"job": job}
@@ -867,6 +1119,9 @@ def create_v3_router(
         from ..quick_actions.executor import QuickActionExecutor
 
         container, bus, _ = _ctx(project_dir)
+        pending_runs = [run for run in container.quick_actions.list() if run.status in {"queued", "running"}]
+        if len(pending_runs) >= QUICK_ACTION_MAX_PENDING:
+            raise HTTPException(status_code=429, detail="Too many pending quick actions; wait for active runs to finish.")
         run = QuickActionRun(prompt=body.prompt, status="queued")
         container.quick_actions.upsert(run)
         bus.emit(channel="quick_actions", event_type="quick_action.queued", entity_id=run.id, payload={"status": run.status})
@@ -953,6 +1208,64 @@ def create_v3_router(
     async def orchestrator_control(body: OrchestratorControlRequest, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
         _, _, orchestrator = _ctx(project_dir)
         return orchestrator.control(body.action)
+
+    @router.get("/settings")
+    async def get_settings(project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
+        container, _, _ = _ctx(project_dir)
+        cfg = container.config.load()
+        return _settings_payload(cfg)
+
+    @router.patch("/settings")
+    async def patch_settings(body: UpdateSettingsRequest, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
+        container, bus, _ = _ctx(project_dir)
+        cfg = container.config.load()
+        touched_sections: list[str] = []
+
+        if body.orchestrator is not None:
+            orchestrator_cfg = dict(cfg.get("orchestrator") or {})
+            orchestrator_cfg.update(body.orchestrator.model_dump())
+            cfg["orchestrator"] = orchestrator_cfg
+            touched_sections.append("orchestrator")
+
+        if body.agent_routing is not None:
+            routing_cfg = dict(cfg.get("agent_routing") or {})
+            routing_cfg.update(body.agent_routing.model_dump())
+            cfg["agent_routing"] = routing_cfg
+            touched_sections.append("agent_routing")
+
+        if body.defaults is not None:
+            defaults_cfg = dict(cfg.get("defaults") or {})
+            incoming_defaults = body.defaults.model_dump()
+            incoming_quality_gate = dict(incoming_defaults.get("quality_gate") or {})
+            quality_gate_cfg = dict(defaults_cfg.get("quality_gate") or {})
+            quality_gate_cfg.update(incoming_quality_gate)
+            defaults_cfg["quality_gate"] = quality_gate_cfg
+            cfg["defaults"] = defaults_cfg
+            touched_sections.append("defaults.quality_gate")
+
+        if body.workers is not None:
+            workers_cfg = dict(cfg.get("workers") or {})
+            incoming_workers = body.workers.model_dump(exclude_none=True, exclude_unset=True)
+
+            if "default" in incoming_workers:
+                workers_cfg["default"] = str(incoming_workers.get("default") or "codex")
+            if "routing" in incoming_workers:
+                workers_cfg["routing"] = dict(incoming_workers.get("routing") or {})
+            if "providers" in incoming_workers:
+                workers_cfg["providers"] = dict(incoming_workers.get("providers") or {})
+
+            normalized_workers = _settings_payload({"workers": workers_cfg})["workers"]
+            cfg["workers"] = normalized_workers
+            touched_sections.append("workers")
+
+        container.config.save(cfg)
+        bus.emit(
+            channel="system",
+            event_type="settings.updated",
+            entity_id=container.project_id,
+            payload={"sections": touched_sections},
+        )
+        return _settings_payload(cfg)
 
     @router.get("/agents")
     async def list_agents(project_dir: Optional[str] = Query(None)) -> dict[str, Any]:

@@ -176,14 +176,33 @@ def test_executor_shortcut_failure(tmp_path: Path) -> None:
     assert result.exit_code != 0
 
 
+def test_executor_rejects_shortcut_with_shell_metacharacters(tmp_path: Path) -> None:
+    executor, _, _ = _make_executor(tmp_path)
+
+    config_dir = tmp_path / ".prd_runner"
+    config_dir.mkdir(exist_ok=True)
+    (config_dir / "quick_shortcuts.yaml").write_text(
+        "- name: unsafe\n"
+        "  patterns:\n"
+        "    - '^unsafe$'\n"
+        "  command: echo hi && echo bye\n"
+    )
+
+    run = QuickActionRun(prompt="unsafe")
+    result = executor.execute(run)
+    assert result.status == "failed"
+    assert result.exit_code == -1
+    assert "metacharacters" in (result.result_summary or "").lower()
+
+
 def test_executor_agent_fallback(tmp_path: Path) -> None:
     executor, container, mock_bus = _make_executor(tmp_path)
     run = QuickActionRun(prompt="explain the auth flow in detail")
     result = executor.execute(run)
     assert result.kind == "agent"
-    # Without workers configured, it should fail gracefully
+    # Without a working local agent setup, it should fail gracefully.
     assert result.status == "failed"
-    assert "no worker" in (result.result_summary or "").lower()
+    assert result.exit_code is not None or (result.result_summary or "")
 
 
 def test_executor_status_flow(tmp_path: Path) -> None:

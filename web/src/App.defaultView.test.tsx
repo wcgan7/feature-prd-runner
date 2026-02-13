@@ -22,9 +22,9 @@ class MockWebSocket {
 
   close() {}
 
-  dispatch(event: string) {
+  dispatch(event: string, payload: unknown = {}) {
     for (const cb of this.listeners[event] || []) {
-      cb({})
+      cb(payload)
     }
   }
 }
@@ -81,6 +81,16 @@ describe('App default route', () => {
       expect(screen.getAllByRole('button', { name: /Create Task/i }).length).toBeGreaterThan(0)
       expect(screen.getByRole('button', { name: /Import PRD/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /Quick Action/i })).toBeInTheDocument()
+    })
+  })
+
+  it('requests metrics and agent type compatibility endpoints during reload', async () => {
+    const mockedFetch = global.fetch as unknown as ReturnType<typeof vi.fn>
+    render(<App />)
+
+    await waitFor(() => {
+      expect(mockedFetch.mock.calls.some(([url]) => String(url).includes('/api/v3/metrics'))).toBe(true)
+      expect(mockedFetch.mock.calls.some(([url]) => String(url).includes('/api/v3/agents/types'))).toBe(true)
     })
   })
 
@@ -192,6 +202,103 @@ describe('App default route', () => {
     })
   })
 
+  it('loads collaboration endpoints for selected task and submits feedback/comments', async () => {
+    const mockedFetch = global.fetch as unknown as ReturnType<typeof vi.fn>
+    mockedFetch.mockImplementation((url, init) => {
+      const u = String(url)
+      if (u.includes('/api/v3/tasks/board')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            columns: {
+              backlog: [{ id: 'task-1', title: 'Task 1', priority: 'P2', status: 'ready', task_type: 'feature' }],
+              ready: [],
+              in_progress: [],
+              in_review: [],
+              blocked: [],
+              done: [],
+            },
+          }),
+        })
+      }
+      if (u.includes('/api/v3/tasks/task-1')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            task: { id: 'task-1', title: 'Task 1', priority: 'P2', status: 'ready', task_type: 'feature', blocked_by: [], blocks: [] },
+          }),
+        })
+      }
+      if (u.includes('/api/v3/tasks') && !u.includes('/api/v3/tasks/')) {
+        return Promise.resolve({ ok: true, json: async () => ({ tasks: [] }) })
+      }
+      if (u.includes('/api/v3/collaboration/timeline/task-1')) {
+        return Promise.resolve({ ok: true, json: async () => ({ events: [] }) })
+      }
+      if (u.includes('/api/v3/collaboration/feedback/task-1')) {
+        return Promise.resolve({ ok: true, json: async () => ({ feedback: [] }) })
+      }
+      if (u.includes('/api/v3/collaboration/comments/task-1')) {
+        return Promise.resolve({ ok: true, json: async () => ({ comments: [] }) })
+      }
+      if (u.includes('/api/v3/collaboration/feedback') && (init as RequestInit | undefined)?.method === 'POST') {
+        return Promise.resolve({ ok: true, json: async () => ({ feedback: { id: 'fb-1' } }) })
+      }
+      if (
+        u.includes('/api/v3/collaboration/comments') &&
+        !u.includes('/resolve') &&
+        (init as RequestInit | undefined)?.method === 'POST'
+      ) {
+        return Promise.resolve({ ok: true, json: async () => ({ comment: { id: 'cm-1' } }) })
+      }
+      if (u.includes('/api/v3/orchestrator/status')) {
+        return Promise.resolve({ ok: true, json: async () => ({ status: 'running', queue_depth: 0, in_progress: 0, draining: false, run_branch: null }) })
+      }
+      if (u.includes('/api/v3/review-queue')) {
+        return Promise.resolve({ ok: true, json: async () => ({ tasks: [] }) })
+      }
+      if (u.includes('/api/v3/agents')) {
+        return Promise.resolve({ ok: true, json: async () => ({ agents: [] }) })
+      }
+      if (u.includes('/api/v3/projects')) {
+        return Promise.resolve({ ok: true, json: async () => ({ projects: [] }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(mockedFetch.mock.calls.some(([url]) => String(url).includes('/api/v3/collaboration/timeline/task-1'))).toBe(true)
+      expect(mockedFetch.mock.calls.some(([url]) => String(url).includes('/api/v3/collaboration/feedback/task-1'))).toBe(true)
+      expect(mockedFetch.mock.calls.some(([url]) => String(url).includes('/api/v3/collaboration/comments/task-1'))).toBe(true)
+    })
+
+    fireEvent.change(screen.getByLabelText(/Summary/i), { target: { value: 'Please tighten validation.' } })
+    fireEvent.click(screen.getByRole('button', { name: /Add feedback/i }))
+
+    await waitFor(() => {
+      const feedbackCall = mockedFetch.mock.calls.find(([url, init]) =>
+        String(url).includes('/api/v3/collaboration/feedback') &&
+        (init as RequestInit | undefined)?.method === 'POST'
+      )
+      expect(feedbackCall).toBeTruthy()
+    })
+
+    fireEvent.change(screen.getByLabelText(/File path/i), { target: { value: 'src/App.tsx' } })
+    fireEvent.change(screen.getByLabelText(/Comment/i), { target: { value: 'Looks good, but add tests.' } })
+    fireEvent.click(screen.getByRole('button', { name: /Add comment/i }))
+
+    await waitFor(() => {
+      const commentCall = mockedFetch.mock.calls.find(([url, init]) =>
+        String(url).includes('/api/v3/collaboration/comments') &&
+        !String(url).includes('/resolve') &&
+        (init as RequestInit | undefined)?.method === 'POST'
+      )
+      expect(commentCall).toBeTruthy()
+    })
+  })
+
   it('refreshes surfaces when websocket events arrive', async () => {
     const mockedFetch = global.fetch as unknown as ReturnType<typeof vi.fn>
     render(<App />)
@@ -202,10 +309,97 @@ describe('App default route', () => {
     const baselineCalls = mockedFetch.mock.calls.length
 
     expect(MockWebSocket.instances.length).toBeGreaterThan(0)
-    MockWebSocket.instances[0].dispatch('message')
+    MockWebSocket.instances[0].dispatch('message', { data: JSON.stringify({ channel: 'tasks', type: 'task.updated' }) })
 
     await waitFor(() => {
       expect(mockedFetch.mock.calls.length).toBeGreaterThan(baselineCalls)
     })
+  })
+
+  it('ignores websocket system frames without triggering reload', async () => {
+    const mockedFetch = global.fetch as unknown as ReturnType<typeof vi.fn>
+    render(<App />)
+
+    await waitFor(() => {
+      expect(mockedFetch).toHaveBeenCalled()
+    })
+    const baselineCalls = mockedFetch.mock.calls.length
+
+    expect(MockWebSocket.instances.length).toBeGreaterThan(0)
+    MockWebSocket.instances[0].dispatch('message', { data: JSON.stringify({ channel: 'system', type: 'subscribed' }) })
+
+    await new Promise((resolve) => setTimeout(resolve, 180))
+    expect(mockedFetch.mock.calls.length).toBe(baselineCalls)
+  })
+
+  it('coalesces burst websocket task events into a single tasks refresh', async () => {
+    const mockedFetch = global.fetch as unknown as ReturnType<typeof vi.fn>
+    render(<App />)
+
+    const boardCallCount = () =>
+      mockedFetch.mock.calls.filter(([url]) => String(url).includes('/api/v3/tasks/board')).length
+
+    await waitFor(() => {
+      expect(boardCallCount()).toBeGreaterThan(0)
+    })
+    const baselineBoardCalls = boardCallCount()
+
+    expect(MockWebSocket.instances.length).toBeGreaterThan(0)
+    MockWebSocket.instances[0].dispatch('message', { data: JSON.stringify({ channel: 'tasks', type: 'task.updated' }) })
+    MockWebSocket.instances[0].dispatch('message', { data: JSON.stringify({ channel: 'tasks', type: 'task.updated' }) })
+    MockWebSocket.instances[0].dispatch('message', { data: JSON.stringify({ channel: 'tasks', type: 'task.updated' }) })
+
+    await waitFor(() => {
+      expect(boardCallCount()).toBeGreaterThan(baselineBoardCalls)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 260))
+    expect(boardCallCount()).toBe(baselineBoardCalls + 1)
+  })
+
+  it('ignores websocket events from other projects', async () => {
+    const mockedFetch = global.fetch as unknown as ReturnType<typeof vi.fn>
+    localStorage.setItem('feature-prd-runner-v3-project', '/tmp/repo-alpha')
+    render(<App />)
+
+    const boardCallCount = () =>
+      mockedFetch.mock.calls.filter(([url]) => String(url).includes('/api/v3/tasks/board')).length
+
+    await waitFor(() => {
+      expect(boardCallCount()).toBeGreaterThan(0)
+    })
+    const baselineBoardCalls = boardCallCount()
+
+    expect(MockWebSocket.instances.length).toBeGreaterThan(0)
+    MockWebSocket.instances[0].dispatch('message', {
+      data: JSON.stringify({ channel: 'tasks', type: 'task.updated', project_id: 'repo-beta' }),
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 220))
+    expect(boardCallCount()).toBe(baselineBoardCalls)
+  })
+
+  it('does not re-fetch root metadata on websocket task refreshes', async () => {
+    const mockedFetch = global.fetch as unknown as ReturnType<typeof vi.fn>
+    render(<App />)
+
+    const rootCallCount = () =>
+      mockedFetch.mock.calls.filter(([url]) => String(url).startsWith('/?') || String(url) === '/').length
+    const boardCallCount = () =>
+      mockedFetch.mock.calls.filter(([url]) => String(url).includes('/api/v3/tasks/board')).length
+
+    await waitFor(() => {
+      expect(rootCallCount()).toBeGreaterThan(0)
+    })
+    const baselineRootCalls = rootCallCount()
+    const baselineBoardCalls = boardCallCount()
+
+    expect(MockWebSocket.instances.length).toBeGreaterThan(0)
+    MockWebSocket.instances[0].dispatch('message', { data: JSON.stringify({ channel: 'tasks', type: 'task.updated' }) })
+
+    await waitFor(() => {
+      expect(boardCallCount()).toBeGreaterThan(baselineBoardCalls)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 220))
+    expect(rootCallCount()).toBe(baselineRootCalls)
   })
 })

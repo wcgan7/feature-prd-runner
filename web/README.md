@@ -6,6 +6,10 @@
 
 Modern web dashboard for monitoring and controlling Feature PRD Runner.
 
+## Homepage
+
+![Feature PRD Runner homepage](./public/homepage-screenshot.png)
+
 ## Setup
 
 ### Prerequisites
@@ -51,6 +55,21 @@ Optional:
 ```bash
 npm run test:ui
 npm run test:coverage
+```
+
+Run real-server browser smoke tests (Playwright):
+
+```bash
+npx playwright install chromium
+npm run e2e:smoke
+```
+
+`e2e:smoke` starts both backend (`:8080`) and frontend (`:3000`) automatically.
+
+Regenerate the homepage screenshot with seeded tasks across board stages:
+
+```bash
+npm run screenshot:homepage
 ```
 
 ### Production Build
@@ -155,4 +174,4 @@ The dashboard is responsive and works on mobile devices, tablets, and desktops.
 - [ ] Export reports (PDF, CSV)
 - [ ] Email/Slack notifications
 - [ ] WebSocket for all realtime panels (status/tasks/phases)
-- [ ] More hardening + E2E tests
+- [ ] Expand E2E scenarios beyond smoke coverage

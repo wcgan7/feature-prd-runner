@@ -5,6 +5,7 @@ or an agent fallback via the workers subsystem.
 """
 from __future__ import annotations
 
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -18,6 +19,11 @@ from ..storage.container import V3Container
 from .shortcuts import load_shortcuts, match_prompt
 
 _MAX_OUTPUT = 4000
+_UNSAFE_SHELL_TOKENS = {"|", "&", ";", "<", ">", "`", "$", "\n", "\r"}
+
+
+def _contains_unsafe_shell_tokens(command: str) -> bool:
+    return any(token in command for token in _UNSAFE_SHELL_TOKENS)
 
 
 class QuickActionExecutor:
@@ -53,9 +59,22 @@ class QuickActionExecutor:
         project_dir = self._container.project_dir
 
         try:
+            if _contains_unsafe_shell_tokens(match.command):
+                run.exit_code = -1
+                run.result_summary = "Shortcut rejected: shell metacharacters are not allowed."
+                run.status = "failed"
+                raise RuntimeError("unsafe shortcut command")
+
+            command_parts = shlex.split(match.command)
+            if not command_parts:
+                run.exit_code = -1
+                run.result_summary = "Shortcut rejected: empty command."
+                run.status = "failed"
+                raise RuntimeError("empty shortcut command")
+
             result = subprocess.run(
-                match.command,
-                shell=True,
+                command_parts,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -69,6 +88,9 @@ class QuickActionExecutor:
             run.exit_code = -1
             run.result_summary = "Command timed out after 120 seconds"
             run.status = "failed"
+        except RuntimeError:
+            # result_summary/status are already set for rejected shortcut commands.
+            pass
         except Exception as exc:
             run.exit_code = -1
             run.result_summary = f"Execution error: {exc}"

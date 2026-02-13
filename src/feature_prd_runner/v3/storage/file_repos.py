@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Generic, Optional, TypeVar
 
@@ -281,6 +282,9 @@ class FileQuickActionRepository(QuickActionRepository):
                 runs = self._repo._load()
                 for idx, existing in enumerate(runs):
                     if existing.id == quick_action.id:
+                        # Preserve promotion linkage across async status updates.
+                        if existing.promoted_task_id and not quick_action.promoted_task_id:
+                            quick_action.promoted_task_id = existing.promoted_task_id
                         runs[idx] = quick_action
                         self._repo._save(runs)
                         return quick_action
@@ -319,8 +323,8 @@ class FileEventRepository(EventRepository):
             return []
         with self._thread_lock:
             with self._lock:
-                lines = self._path.read_text(encoding="utf-8").splitlines()
-        selected = lines[-limit:]
+                with self._path.open("r", encoding="utf-8") as handle:
+                    selected = list(deque(handle, maxlen=limit))
         events: list[dict[str, Any]] = []
         for line in selected:
             try:

@@ -165,6 +165,24 @@ describe('HITLModeSelector', () => {
     expect(screen.getByText('Active')).toBeInTheDocument()
   })
 
+  it('exposes accessible button and listbox semantics', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ modes: MOCK_MODES }),
+    })
+
+    render(
+      <HITLModeSelector currentMode="autopilot" onModeChange={onModeChange} />
+    )
+
+    const trigger = await screen.findByRole('button', { name: /autopilot/i })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'listbox')
+    fireEvent.click(trigger)
+
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(screen.getAllByRole('option').length).toBeGreaterThanOrEqual(3)
+  })
+
   it('falls back to default modes on fetch failure', async () => {
     global.fetch = vi.fn().mockRejectedValueOnce(new Error('Network error'))
 
@@ -177,6 +195,27 @@ describe('HITLModeSelector', () => {
     })
 
     // Expand to verify default modes were loaded
+    const currentMode = screen.getByText('Autopilot').closest('.hitl-current')!
+    fireEvent.click(currentMode)
+
+    expect(screen.getByText('Supervised')).toBeInTheDocument()
+    expect(screen.getByText('Collaborative')).toBeInTheDocument()
+  })
+
+  it('falls back to default modes on non-ok response', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ modes: [] }),
+    })
+
+    render(
+      <HITLModeSelector currentMode="autopilot" onModeChange={onModeChange} />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Autopilot')).toBeInTheDocument()
+    })
+
     const currentMode = screen.getByText('Autopilot').closest('.hitl-current')!
     fireEvent.click(currentMode)
 

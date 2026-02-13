@@ -14,7 +14,15 @@ interface TaskItem {
   task_type?: string
 }
 
-type BatchItem = TaskItem[] | { batch: number; tasks: TaskItem[] }
+type TaskLike = TaskItem | string
+type BatchItem = TaskLike[] | { batch: number; tasks: TaskLike[] }
+
+function normalizeTask(task: TaskLike): TaskItem {
+  if (typeof task === 'string') {
+    return { id: task }
+  }
+  return task
+}
 
 export default function ParallelPlanView({ projectDir }: Props) {
   const [batches, setBatches] = useState<TaskItem[][]>([])
@@ -28,9 +36,11 @@ export default function ParallelPlanView({ projectDir }: Props) {
         // Normalize response — may be array of arrays or array of objects with batch/tasks
         const raw: BatchItem[] = Array.isArray(data) ? data : data.batches || data.order || []
         const normalized = raw.map((item) => {
-          if (Array.isArray(item)) return item
-          if (typeof item === 'object' && 'tasks' in item) return (item as any).tasks as TaskItem[]
-          return [item] as TaskItem[]
+          if (Array.isArray(item)) return item.map(normalizeTask)
+          if (item && typeof item === 'object' && 'tasks' in item && Array.isArray(item.tasks)) {
+            return item.tasks.map(normalizeTask)
+          }
+          return []
         })
         setBatches(normalized)
       })
@@ -42,7 +52,7 @@ export default function ParallelPlanView({ projectDir }: Props) {
     return (
       <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
-          Parallel Execution Plan
+          Parallel Plan
         </Typography>
         <Typography variant="body2">Loading...</Typography>
       </Paper>
@@ -53,7 +63,7 @@ export default function ParallelPlanView({ projectDir }: Props) {
     return (
       <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
-          Parallel Execution Plan
+          Parallel Plan
         </Typography>
         <Typography variant="body2" sx={{ color: 'error.main' }}>
           {error}
@@ -66,7 +76,7 @@ export default function ParallelPlanView({ projectDir }: Props) {
     return (
       <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
-          Parallel Execution Plan
+          Parallel Plan
         </Typography>
         <Typography variant="body2" sx={{ color: 'text.secondary', textAlign: 'center', py: 4 }}>
           No execution batches found
@@ -78,7 +88,7 @@ export default function ParallelPlanView({ projectDir }: Props) {
   return (
     <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
       <Typography variant="h6" sx={{ mb: 2 }}>
-        Parallel Execution Plan
+        Parallel Plan
       </Typography>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         {batches.map((batch, waveIdx) => (
