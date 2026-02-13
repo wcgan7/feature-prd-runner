@@ -36,7 +36,7 @@ def _service(
         _git_init(tmp_path)
     container = V3Container(tmp_path)
     cfg = container.config.load()
-    cfg["orchestrator"] = {"concurrency": concurrency}
+    cfg["orchestrator"] = {"concurrency": concurrency, "auto_deps": False}
     container.config.save(cfg)
     bus = EventBus(container.events, container.project_id)
     service = OrchestratorService(container, bus, worker_adapter=adapter) if adapter else OrchestratorService(container, bus)

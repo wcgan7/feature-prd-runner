@@ -503,6 +503,44 @@ def create_v3_router(
         bus.emit(channel="tasks", event_type="task.dependency_removed", entity_id=task.id, payload={"dep_id": dep_id})
         return {"task": task.to_dict()}
 
+    @router.post("/tasks/analyze-dependencies")
+    async def analyze_dependencies(project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
+        container, _, orchestrator = _ctx(project_dir)
+        orchestrator._maybe_analyze_dependencies()
+        # Collect all inferred edges across tasks
+        edges: list[dict[str, str]] = []
+        for task in container.tasks.list():
+            inferred = task.metadata.get("inferred_deps") if isinstance(task.metadata, dict) else None
+            if isinstance(inferred, list):
+                for dep in inferred:
+                    if isinstance(dep, dict):
+                        edges.append({"from": dep.get("from", ""), "to": task.id, "reason": dep.get("reason", "")})
+        return {"edges": edges}
+
+    @router.post("/tasks/{task_id}/reset-dep-analysis")
+    async def reset_dep_analysis(task_id: str, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
+        container, bus, _ = _ctx(project_dir)
+        task = container.tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if isinstance(task.metadata, dict):
+            # Remove inferred blocked_by entries and corresponding blocks on blockers
+            inferred = task.metadata.get("inferred_deps")
+            if isinstance(inferred, list):
+                inferred_from_ids = {dep.get("from") for dep in inferred if isinstance(dep, dict)}
+                task.blocked_by = [bid for bid in task.blocked_by if bid not in inferred_from_ids]
+                for blocker_id in inferred_from_ids:
+                    blocker = container.tasks.get(blocker_id)
+                    if blocker:
+                        blocker.blocks = [bid for bid in blocker.blocks if bid != task.id]
+                        container.tasks.upsert(blocker)
+            task.metadata.pop("deps_analyzed", None)
+            task.metadata.pop("inferred_deps", None)
+        task.updated_at = now_iso()
+        container.tasks.upsert(task)
+        bus.emit(channel="tasks", event_type="task.dep_analysis_reset", entity_id=task.id, payload={})
+        return {"task": task.to_dict()}
+
     @router.post("/import/prd/preview")
     async def preview_import(body: PrdPreviewRequest, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
         container, _, _ = _ctx(project_dir)

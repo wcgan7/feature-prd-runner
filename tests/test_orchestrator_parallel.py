@@ -47,7 +47,7 @@ def test_tick_dispatches_to_thread_pool(tmp_path: Path) -> None:
 
     container = V3Container(tmp_path)
     cfg = container.config.load()
-    cfg["orchestrator"] = {"concurrency": 2}
+    cfg["orchestrator"] = {"concurrency": 2, "auto_deps": False}
     container.config.save(cfg)
     bus = EventBus(container.events, container.project_id)
     service = OrchestratorService(container, bus, worker_adapter=SlowAdapter())
@@ -101,7 +101,7 @@ def test_concurrency_cap_respected(tmp_path: Path) -> None:
 
     container = V3Container(tmp_path)
     cfg = container.config.load()
-    cfg["orchestrator"] = {"concurrency": 2}
+    cfg["orchestrator"] = {"concurrency": 2, "auto_deps": False}
     container.config.save(cfg)
     bus = EventBus(container.events, container.project_id)
     service = OrchestratorService(container, bus, worker_adapter=BlockingAdapter())
@@ -167,7 +167,7 @@ def test_same_repo_tasks_run_in_parallel(tmp_path: Path) -> None:
 
     container = V3Container(tmp_path)
     cfg = container.config.load()
-    cfg["orchestrator"] = {"concurrency": 4}
+    cfg["orchestrator"] = {"concurrency": 4, "auto_deps": False}
     container.config.save(cfg)
     bus = EventBus(container.events, container.project_id)
     service = OrchestratorService(container, bus, worker_adapter=BarrierAdapter())
@@ -216,7 +216,7 @@ def test_different_repos_run_in_parallel(tmp_path: Path) -> None:
 
     container = V3Container(tmp_path)
     cfg = container.config.load()
-    cfg["orchestrator"] = {"concurrency": 2}
+    cfg["orchestrator"] = {"concurrency": 2, "auto_deps": False}
     container.config.save(cfg)
     bus = EventBus(container.events, container.project_id)
     service = OrchestratorService(container, bus, worker_adapter=BarrierAdapter())

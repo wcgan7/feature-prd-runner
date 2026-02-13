@@ -18,6 +18,24 @@ from .worker_adapter import DefaultWorkerAdapter, WorkerAdapter
 logger = logging.getLogger(__name__)
 
 
+def _has_cycle(adj: dict[str, list[str]], from_id: str, to_id: str) -> bool:
+    """Return True if adding an edge from_id→to_id would create a cycle.
+
+    Checks whether to_id can already reach from_id via existing edges.
+    """
+    visited: set[str] = set()
+    stack = [to_id]
+    while stack:
+        node = stack.pop()
+        if node == from_id:
+            return True
+        if node in visited:
+            continue
+        visited.add(node)
+        stack.extend(adj.get(node, []))
+    return False
+
+
 class OrchestratorService:
     _GATE_MAPPING: dict[str, str] = {
         "plan": "before_plan",
@@ -117,6 +135,8 @@ class OrchestratorService:
         orchestrator_cfg = dict(cfg.get("orchestrator") or {})
         if orchestrator_cfg.get("status", "running") != "running":
             return False
+
+        self._maybe_analyze_dependencies()
 
         max_in_progress = int(orchestrator_cfg.get("concurrency", 2) or 2)
         claimed = self.container.tasks.claim_next_runnable(max_in_progress=max_in_progress)
@@ -509,6 +529,143 @@ class OrchestratorService:
             entity_id=task.id,
             payload={"error": task.error},
         )
+
+    def _maybe_analyze_dependencies(self) -> None:
+        """Run automatic dependency analysis on unanalyzed ready tasks."""
+        cfg = self.container.config.load()
+        orchestrator_cfg = dict(cfg.get("orchestrator") or {})
+        if not orchestrator_cfg.get("auto_deps", True):
+            return
+
+        all_tasks = self.container.tasks.list()
+        candidates = [
+            t for t in all_tasks
+            if t.status == "ready"
+            and not (isinstance(t.metadata, dict) and t.metadata.get("deps_analyzed"))
+            and t.source != "prd_import"
+        ]
+
+        # Mark all candidates analyzed regardless of outcome
+        def _mark_analyzed(tasks: list[Task]) -> None:
+            for t in tasks:
+                if not isinstance(t.metadata, dict):
+                    t.metadata = {}
+                t.metadata["deps_analyzed"] = True
+                self.container.tasks.upsert(t)
+
+        if len(candidates) < 2:
+            _mark_analyzed(candidates)
+            return
+
+        # Gather already-analyzed non-terminal tasks as context
+        terminal = {"done", "cancelled"}
+        existing = [
+            t for t in all_tasks
+            if isinstance(t.metadata, dict) and t.metadata.get("deps_analyzed")
+            and t.status not in terminal
+        ]
+
+        # Build synthetic task with metadata for the worker
+        candidate_data = [
+            {
+                "id": t.id,
+                "title": t.title,
+                "description": (t.description or "")[:200],
+                "task_type": t.task_type,
+                "labels": t.labels,
+            }
+            for t in candidates
+        ]
+        existing_data = [
+            {"id": t.id, "title": t.title, "status": t.status}
+            for t in existing
+        ]
+
+        synthetic = Task(
+            title="Dependency analysis",
+            description="Analyze task dependencies",
+            task_type="research",
+            source="system",
+            metadata={
+                "candidate_tasks": candidate_data,
+                "existing_tasks": existing_data,
+            },
+        )
+
+        try:
+            result = self.worker_adapter.run_step(task=synthetic, step="analyze_deps", attempt=1)
+            if result.status == "ok" and result.dependency_edges:
+                self._apply_dependency_edges(candidates, result.dependency_edges, all_tasks)
+        except Exception:
+            logger.exception("Dependency analysis failed; tasks will run without inferred deps")
+        finally:
+            _mark_analyzed(candidates)
+
+    def _apply_dependency_edges(
+        self,
+        candidates: list[Task],
+        edges: list[dict[str, str]],
+        all_tasks: list[Task],
+    ) -> None:
+        """Apply inferred dependency edges with cycle detection."""
+        task_map: dict[str, Task] = {}
+        # All tasks as context for resolving IDs outside candidate set
+        for t in all_tasks:
+            task_map[t.id] = t
+        # Overlay candidate objects (same Python objects that _mark_analyzed will touch)
+        for t in candidates:
+            task_map[t.id] = t
+
+        # Build adjacency list from existing blocked_by relationships
+        adj: dict[str, list[str]] = {}
+        for t in task_map.values():
+            for dep_id in t.blocked_by:
+                adj.setdefault(dep_id, []).append(t.id)
+
+        for edge in edges:
+            if not isinstance(edge, dict):
+                continue
+            from_id = edge.get("from", "")
+            to_id = edge.get("to", "")
+            reason = edge.get("reason", "")
+
+            if not from_id or not to_id:
+                continue
+            if from_id not in task_map or to_id not in task_map:
+                continue
+            if from_id == to_id:
+                continue
+
+            # Cycle check
+            if _has_cycle(adj, from_id, to_id):
+                logger.warning("Skipping edge %s→%s: would create cycle", from_id, to_id)
+                continue
+
+            from_task = task_map[from_id]
+            to_task = task_map[to_id]
+
+            if from_id not in to_task.blocked_by:
+                to_task.blocked_by.append(from_id)
+            if to_id not in from_task.blocks:
+                from_task.blocks.append(to_id)
+
+            # Store inferred deps for traceability
+            if not isinstance(to_task.metadata, dict):
+                to_task.metadata = {}
+            inferred = to_task.metadata.setdefault("inferred_deps", [])
+            inferred.append({"from": from_id, "reason": reason})
+
+            # Update adjacency for subsequent cycle checks
+            adj.setdefault(from_id, []).append(to_id)
+
+            self.container.tasks.upsert(from_task)
+            self.container.tasks.upsert(to_task)
+            self.bus.emit(
+                channel="tasks",
+                event_type="task.dependency_inferred",
+                entity_id=to_id,
+                payload={"from": from_id, "to": to_id, "reason": reason},
+            )
 
     def _execute_task(self, task: Task) -> None:
         try:

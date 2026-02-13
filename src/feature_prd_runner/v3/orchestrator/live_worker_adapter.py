@@ -26,6 +26,7 @@ _REPORT_STEPS = {"report", "summarize"}
 _SCAN_STEPS = {"scan", "scan_deps", "scan_code", "gather"}
 _TASK_GEN_STEPS = {"generate_tasks", "diagnose"}
 _MERGE_RESOLVE_STEPS = {"resolve_merge"}
+_DEP_ANALYSIS_STEPS = {"analyze_deps"}
 
 
 def _step_category(step: str) -> str:
@@ -45,6 +46,8 @@ def _step_category(step: str) -> str:
         return "task_generation"
     if step in _MERGE_RESOLVE_STEPS:
         return "merge_resolution"
+    if step in _DEP_ANALYSIS_STEPS:
+        return "dependency_analysis"
     return "general"
 
 
@@ -57,6 +60,23 @@ _CATEGORY_INSTRUCTIONS: dict[str, str] = {
     "scanning": "Scan and gather information for the following task.",
     "task_generation": "Generate subtasks for the following task.",
     "merge_resolution": "Resolve the merge conflicts in the following files. Both tasks' objectives must be fulfilled in the resolution.",
+    "dependency_analysis": (
+        "You are a software architect analyzing task dependencies for a codebase.\n\n"
+        "First, examine the project structure to understand what already exists:\n"
+        "- Look at the directory layout and key files\n"
+        "- Check existing modules, APIs, and shared code\n"
+        "- Identify what infrastructure is already in place\n\n"
+        "Then, given the pending tasks below, determine which tasks depend on others.\n"
+        "A task B depends on task A if:\n"
+        "- B requires code, APIs, schemas, or artifacts that task A will CREATE (not already existing)\n"
+        "- B imports or builds on modules that task A will introduce\n"
+        "- B cannot produce correct results without task A's changes being present\n\n"
+        "Do NOT create a dependency if:\n"
+        "- Both tasks touch the same area but don't actually need each other's output\n"
+        "- The dependency is based on vague thematic similarity\n"
+        "- The required code/API already exists in the codebase\n\n"
+        "If tasks can safely run in parallel, leave them independent."
+    ),
     "general": "Execute the following task step.",
 }
 
@@ -69,6 +89,7 @@ _CATEGORY_JSON_SCHEMAS: dict[str, str] = {
     "scanning": '{"findings": [{"severity": "critical|high|medium|low", "category": "string", "summary": "string", "file": "path"}]}',
     "task_generation": '{"tasks": [{"title": "string", "description": "string", "task_type": "feature|bugfix|research", "priority": "P0|P1|P2|P3"}]}',
     "merge_resolution": '{"status": "ok|error", "summary": "string"}',
+    "dependency_analysis": '{"edges": [{"from": "task_id_first", "to": "task_id_depends", "reason": "why"}]}',
     "general": '{"status": "ok|error", "summary": "string"}',
 }
 
@@ -77,6 +98,53 @@ def build_step_prompt(*, task: Task, step: str, attempt: int, is_codex: bool) ->
     """Build a prompt from Task fields with step-specific instructions."""
     category = _step_category(step)
     instruction = _CATEGORY_INSTRUCTIONS[category]
+
+    # Special prompt for dependency analysis
+    if category == "dependency_analysis" and isinstance(task.metadata, dict):
+        parts = [instruction, ""]
+
+        candidate_tasks = task.metadata.get("candidate_tasks")
+        if isinstance(candidate_tasks, list) and candidate_tasks:
+            parts.append("## Tasks to analyze")
+            parts.append("")
+            for ct in candidate_tasks:
+                if not isinstance(ct, dict):
+                    continue
+                parts.append(f"- ID: {ct.get('id', '?')}")
+                parts.append(f"  Title: {ct.get('title', '?')}")
+                desc = str(ct.get("description") or "")[:200]
+                if desc:
+                    parts.append(f"  Description: {desc}")
+                parts.append(f"  Type: {ct.get('task_type', 'feature')}")
+                labels = ct.get("labels")
+                if isinstance(labels, list) and labels:
+                    parts.append(f"  Labels: {', '.join(str(l) for l in labels)}")
+                parts.append("")
+
+        existing_tasks = task.metadata.get("existing_tasks")
+        if isinstance(existing_tasks, list) and existing_tasks:
+            parts.append("## Already-scheduled tasks (may be blockers)")
+            parts.append("")
+            for et in existing_tasks:
+                if not isinstance(et, dict):
+                    continue
+                parts.append(f"- ID: {et.get('id', '?')}")
+                parts.append(f"  Title: {et.get('title', '?')}")
+                parts.append(f"  Status: {et.get('status', '?')}")
+                parts.append("")
+
+        parts.append("## Rules")
+        parts.append("- Only output edges where one task MUST complete before another can start.")
+        parts.append("- Use the exact task IDs from above.")
+        parts.append("- If all tasks are independent, return an empty edges array.")
+        parts.append("- Do not create circular dependencies.")
+
+        if not is_codex:
+            schema = _CATEGORY_JSON_SCHEMAS["dependency_analysis"]
+            parts.append("")
+            parts.append(f"Respond with valid JSON matching this schema: {schema}")
+
+        return "\n".join(parts)
 
     parts = [instruction, ""]
 
@@ -222,11 +290,25 @@ class LiveWorkerAdapter:
                     pass
             return StepResult(status="error", summary=summary)
 
+        # Dependency analysis: always parse response text (both codex and ollama)
+        category = _step_category(step)
+        if category == "dependency_analysis" and result.response_text:
+            return self._parse_dep_analysis_output(result.response_text)
+
         # Parse structured output for ollama
         if spec.type == "ollama" and result.response_text:
             return self._parse_ollama_output(result.response_text, step)
 
         return StepResult(status="ok")
+
+    def _parse_dep_analysis_output(self, text: str) -> StepResult:
+        parsed = _extract_json(text)
+        if parsed is None:
+            return StepResult(status="ok", dependency_edges=[])
+        edges = parsed.get("edges")
+        if isinstance(edges, list):
+            return StepResult(status="ok", dependency_edges=edges)
+        return StepResult(status="ok", dependency_edges=[])
 
     def _parse_ollama_output(self, text: str, step: str) -> StepResult:
         parsed = _extract_json(text)
