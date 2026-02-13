@@ -59,3 +59,11 @@ export function buildWsUrl(pathname: string, projectDir?: string): string {
   }
   return url.toString()
 }
+
+export async function fetchExecutionOrder(projectDir?: string) {
+  const res = await fetch(buildApiUrl('/api/v3/tasks/execution-order', projectDir), {
+    headers: buildAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}

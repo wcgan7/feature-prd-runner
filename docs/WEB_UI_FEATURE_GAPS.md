@@ -1,87 +1,89 @@
-# Web UI vs Backend Capability Gaps (v3)
+# Web UI Review Findings (v3)
 
-Status: Updated after integration pass  
-Date: 2026-02-12  
+Status: Updated after cleanup + integration pass  
+Date: 2026-02-13  
 Scope: Mounted v3 web app (`web/src/App.tsx`) against v3 backend router (`src/feature_prd_runner/v3/api/router.py`).
 
-## Update (2026-02-12)
+## Closed From Prior Review
 
-Implemented in mounted UI:
-- Task lifecycle actions: `run`, `retry`, `cancel`, and manual `transition`.
-- Dependency management: add/remove blocker IDs from task detail.
-- Quick Action improvements: recent quick-action list and `promote` action.
-- Project management: pinned project list + unpin action.
-- Execution visibility: execution-order batches shown in Execution view.
-- Extended payload support:
-  - Create Task now supports `task_type`, `labels`, `blocked_by`, `approval_mode`, `parent_id`, `pipeline_template`, and `metadata`.
-  - Review actions now send optional `guidance`.
-  - Agent spawn now supports configurable `role`, `capacity`, and `override_provider`.
+These gaps are now addressed in mounted UI:
+- Settings surface for:
+  - `orchestrator.concurrency`
+  - `orchestrator.auto_deps`
+  - `orchestrator.max_review_attempts`
+  - `agent_routing.*`
+  - `defaults.quality_gate.*`
+  - `workers.default`
+  - `workers.routing`
+  - `workers.providers`
+- Dependency analysis actions:
+  - `POST /tasks/analyze-dependencies`
+  - `POST /tasks/{id}/reset-dep-analysis`
+- Gate approval action:
+  - `POST /tasks/{id}/approve-gate`
+- Per-task HITL mode editing (wired `HITLModeSelector` in task detail).
+- `ParallelPlanView` is now mounted in Execution.
+- Dependency graph visualization now exists in Task Detail (lightweight directed view around selected task).
+- Compatibility visibility endpoints are now mounted:
+  - `GET /api/v3/phases`
+  - `GET /api/v3/collaboration/presence`
+- Compatibility/collaboration endpoints are now mounted:
+  - `GET /api/v3/metrics`
+  - `GET /api/v3/agents/types`
+  - `GET /api/v3/collaboration/timeline/{task_id}`
+  - `GET/POST /api/v3/collaboration/feedback*`
+  - `GET/POST /api/v3/collaboration/comments*`
+- Realtime hardening for multi-project sustained websocket usage:
+  - client ignores `system` frames for reload decisions
+  - client coalesces reloads instead of refetching on every frame
+  - client reconnects with bounded exponential backoff
+  - client and websocket hub both support `project_id` scoped event filtering
+- Async stale-response race guards added for:
+  - task detail loading
+  - collaboration loading
+  - task explorer loading
+  - top-level `reloadAll` hydration
+- HITL mode selector accessibility/mobile hardening:
+  - button/listbox semantics and keyboard escape handling
+  - focus-visible styling and outside-click close
+  - mobile bottom-sheet presentation for mode options
+- Auth header propagation is now centralized through main request helper in mounted UI.
+- Unmounted MUI shell/theme surface was removed:
+  - deleted `web/src/ui/layout/AppShell.tsx`
+  - deleted `web/src/ui/theme.ts`
+  - deleted `web/src/ui/tokens.ts`
+- Nonexistent endpoint callers removed with legacy component cleanup:
+  - Task delete mismatch (`DELETE /api/v3/tasks/{id}`)
+  - Live log mismatch (`GET /api/v3/logs/{runId}`)
+  - Reasoning mismatch (`GET /api/v3/agents/reasoning/{taskId}`)
+- Production dependency audit cleanup:
+  - removed unused `recharts` dependency path (which pulled vulnerable lodash)
+  - `npm audit --omit=dev` now reports 0 vulnerabilities
 
-## Method
+## Current Findings (Ordered by Severity)
 
-1. Enumerated all v3 backend routes from `/api/v3/*`.
-2. Enumerated all mounted UI calls in `web/src/App.tsx`.
-3. Compared capability parity and noted partial payload support.
+No functional endpoint coverage gaps were found for mounted v3 UI flows after this pass.
 
-## Endpoint Coverage Summary
+### P3: Collaboration UX remains intentionally lightweight
 
-Now implemented in mounted UI (called from `web/src/App.tsx`):
-- `GET /projects`
-- `GET /projects/pinned`
-- `POST /projects/pinned`
-- `DELETE /projects/pinned/{project_id}`
-- `GET /projects/browse`
-- `POST /tasks`
-- `GET /tasks/board`
-- `GET /tasks/execution-order`
-- `POST /tasks/{task_id}/transition`
-- `POST /tasks/{task_id}/run`
-- `POST /tasks/{task_id}/retry`
-- `POST /tasks/{task_id}/cancel`
-- `POST /tasks/{task_id}/dependencies`
-- `DELETE /tasks/{task_id}/dependencies/{dep_id}`
-- `POST /import/prd/preview`
-- `POST /import/prd/commit`
-- `POST /quick-actions`
-- `GET /quick-actions`
-- `POST /quick-actions/{quick_action_id}/promote`
-- `GET /review-queue`
-- `POST /review/{task_id}/approve`
-- `POST /review/{task_id}/request-changes`
-- `GET /orchestrator/status`
-- `POST /orchestrator/control`
-- `GET /agents`
-- `POST /agents/spawn`
-- `POST /agents/{agent_id}/pause`
-- `POST /agents/{agent_id}/resume`
-- `POST /agents/{agent_id}/terminate`
+Timeline/feedback/comments are now wired, but currently implemented as simple inline forms/lists in Task Detail.
+This is functionally complete for API coverage and manual workflows, but not yet optimized for high-volume review ergonomics (threading, filtering, pagination).
 
-Still backend-supported but not yet exposed in mounted UI:
-- None in current mounted v3 surface.
+### P3: Confidence could be improved with deeper scenario testing
 
-## Residual Payload/UX Gaps
+Current frontend tests/build/lint are green, but most orchestration behavior is still validated through mocked unit-style tests rather than long-running realtime integration scenarios.
 
-1. Error states are still lightweight.
-- Inline retry controls now exist for Task Explorer, Import Job detail, and Quick Action detail.
-- Full structured failure analytics UX remains future work.
-- References: `web/src/components/AppPanels/TaskExplorerPanel.tsx`, `web/src/components/AppPanels/ImportJobPanel.tsx`, `web/src/components/AppPanels/QuickActionDetailPanel.tsx`
+## Cleanup Notes
 
-## Additional Drift Risk (Codebase Hygiene)
+Legacy/unmounted component surface was pruned heavily from `web/src/components`, plus unused contexts/hooks.
+Kept:
+- `web/src/components/HITLModeSelector/HITLModeSelector.tsx`
+- `web/src/components/ParallelPlanView.tsx` (now mounted in Execution)
 
-Compatibility endpoints were added in v3 router for legacy/unmounted component contracts:
-- `/api/v3/metrics`
-- `/api/v3/phases`
-- `/api/v3/agents/types`
-- `/api/v3/collaboration/*` (modes, presence, timeline, feedback, comments)
+Also cleaned up stale unused API helper exports in `web/src/api.ts` that no longer had callers.
 
-This removes endpoint-contract drift while mounted UI remains focused on `web/src/App.tsx`.
+## Validation Snapshot
 
-## Recommended Implementation Order
-
-1. Task lifecycle controls (`run`, `retry`, `cancel`, `transition`) + explicit task detail fetch/update.
-2. Dependency graph editor (add/remove blockers).
-3. Quick Action history + promote flow.
-4. Create Task advanced fields (`approval_mode`, `blocked_by`, labels/metadata).
-5. Project unpin/list-pinned UX.
-6. Execution-order visualization.
-7. Remove or migrate unmounted legacy components to avoid further backend/UI drift.
+- Frontend: `npm test` (25/25) and `npm run build` pass.
+- Frontend hardening checks: `npm run lint`, `npm run check`, and `npm audit --omit=dev` pass.
+- Backend (targeted): collaboration suites pass; settings endpoint round-trip passes (including workers settings).

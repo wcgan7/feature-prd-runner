@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Generic, Optional, TypeVar
 
@@ -129,7 +130,7 @@ class FileTaskRepository(TaskRepository):
                 self._repo._save(keep)
         return True
 
-    def claim_next_runnable(self, *, max_in_progress: int, repo_conflicts: set[str]) -> Optional[Task]:
+    def claim_next_runnable(self, *, max_in_progress: int) -> Optional[Task]:
         with self._repo._thread_lock:
             with self._repo._lock:
                 tasks = self._repo._load()
@@ -146,9 +147,6 @@ class FileTaskRepository(TaskRepository):
                         dep = by_id.get(dep_id)
                         if dep is None or dep.status not in terminal:
                             return False
-                    repo_hint = str(task.metadata.get("repo_path") or "")
-                    if repo_hint and repo_hint in repo_conflicts:
-                        return False
                     return True
 
                 runnable = [t for t in tasks if _is_runnable(t)]
@@ -284,6 +282,9 @@ class FileQuickActionRepository(QuickActionRepository):
                 runs = self._repo._load()
                 for idx, existing in enumerate(runs):
                     if existing.id == quick_action.id:
+                        # Preserve promotion linkage across async status updates.
+                        if existing.promoted_task_id and not quick_action.promoted_task_id:
+                            quick_action.promoted_task_id = existing.promoted_task_id
                         runs[idx] = quick_action
                         self._repo._save(runs)
                         return quick_action
@@ -322,8 +323,8 @@ class FileEventRepository(EventRepository):
             return []
         with self._thread_lock:
             with self._lock:
-                lines = self._path.read_text(encoding="utf-8").splitlines()
-        selected = lines[-limit:]
+                with self._path.open("r", encoding="utf-8") as handle:
+                    selected = list(deque(handle, maxlen=limit))
         events: list[dict[str, Any]] = []
         for line in selected:
             try:

@@ -78,9 +78,9 @@ def _run_codex_worker(
     uses_prompt_placeholder = "{prompt_file}" in command or "{prompt}" in command
     expects_stdin = "-" in command_parts
     if not uses_prompt_placeholder and not expects_stdin:
-        raise ValueError(
-            "Codex command must include {prompt_file}, {prompt}, or '-' to accept stdin input."
-        )
+        # Default to stdin for plain commands (e.g., "codex") so local-first
+        # setups work without requiring placeholder syntax.
+        expects_stdin = True
 
     stdout_path = run_dir / "stdout.log"
     stderr_path = run_dir / "stderr.log"

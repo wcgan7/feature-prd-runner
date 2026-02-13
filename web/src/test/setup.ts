@@ -71,7 +71,7 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {}
 }
 
-// Avoid real WebSocket connections in tests (LiveLog uses this).
+// Avoid real WebSocket connections in tests.
 class WebSocketMock {
   static CONNECTING = 0
   static OPEN = 1
