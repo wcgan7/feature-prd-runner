@@ -263,6 +263,9 @@ describe('App action coverage', () => {
       expect(screen.getByRole('button', { name: /^Run$/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /Approve gate/i })).toBeInTheDocument()
       expect(screen.getByText('Need production API token')).toBeInTheDocument()
+    })
+    // Collaboration timeline loads via a separate async request; give it its own waitFor window
+    await waitFor(() => {
       expect(screen.getByText(/Required human input/i)).toBeInTheDocument()
     })
 
