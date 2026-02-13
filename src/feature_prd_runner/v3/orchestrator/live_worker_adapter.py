@@ -114,6 +114,46 @@ def detect_project_languages(project_dir: Path) -> list[str]:
     return langs
 
 
+_LANGUAGE_DISPLAY_NAMES: dict[str, str] = {
+    "python": "Python",
+    "typescript": "TypeScript",
+    "javascript": "JavaScript",
+    "go": "Go",
+    "rust": "Rust",
+}
+
+
+def _format_project_commands(
+    project_commands: dict[str, dict[str, str]],
+    project_languages: list[str],
+) -> str:
+    """Format project commands for detected languages into a prompt section."""
+    _COMMAND_LABELS = {"test": "Test", "lint": "Lint", "typecheck": "Typecheck", "format": "Format"}
+    blocks: list[tuple[str, list[str]]] = []
+    for lang in project_languages:
+        cmds = project_commands.get(lang)
+        if not isinstance(cmds, dict):
+            continue
+        lines = []
+        for key in ("test", "lint", "typecheck", "format"):
+            val = cmds.get(key)
+            if isinstance(val, str) and val.strip():
+                lines.append(f"- {_COMMAND_LABELS[key]}: `{val.strip()}`")
+        if lines:
+            blocks.append((lang, lines))
+    if not blocks:
+        return ""
+    parts = ["## Project commands"]
+    if len(blocks) == 1:
+        parts.extend(blocks[0][1])
+    else:
+        for lang, lines in blocks:
+            display = _LANGUAGE_DISPLAY_NAMES.get(lang, lang.title())
+            parts.append(f"### {display}")
+            parts.extend(lines)
+    return "\n".join(parts)
+
+
 def _step_category(step: str) -> str:
     if step in _PLANNING_STEPS:
         return "planning"
@@ -220,6 +260,7 @@ def build_step_prompt(
     attempt: int,
     is_codex: bool,
     project_languages: list[str] | None = None,
+    project_commands: dict[str, dict[str, str]] | None = None,
 ) -> str:
     """Build a prompt from Task fields with step-specific instructions."""
     category = _step_category(step)
@@ -329,6 +370,13 @@ def build_step_prompt(
                 parts.append("")
                 parts.append(lang_block)
 
+    # Inject project commands for implementation and verification steps
+    if project_commands and project_languages and category in ("implementation", "verification"):
+        cmds_block = _format_project_commands(project_commands, project_languages)
+        if cmds_block:
+            parts.append("")
+            parts.append(cmds_block)
+
     parts.append("")
     parts.append(_GUARDRAILS)
 
@@ -432,9 +480,15 @@ class LiveWorkerAdapter:
         worktree_path = task.metadata.get("worktree_dir") if isinstance(task.metadata, dict) else None
         project_dir = Path(worktree_path) if worktree_path else self._container.project_dir
         langs = detect_project_languages(project_dir)
+        raw_commands = (cfg.get("project") or {}).get("commands") or {}
+        project_commands = {
+            lang: cmds for lang, cmds in raw_commands.items()
+            if isinstance(cmds, dict)
+        } or None
         prompt = build_step_prompt(
             task=task, step=step, attempt=attempt,
             is_codex=(spec.type == "codex"), project_languages=langs or None,
+            project_commands=project_commands,
         )
 
         # 3. Execute

@@ -776,3 +776,217 @@ def test_detect_languages_javascript_alone(tmp_path: Path) -> None:
     """package.json without tsconfig.json → javascript."""
     (tmp_path / "package.json").write_text("{}")
     assert detect_project_languages(tmp_path) == ["javascript"]
+
+
+# ---------------------------------------------------------------------------
+# Project commands injection
+# ---------------------------------------------------------------------------
+
+
+def test_verification_prompt_includes_project_commands() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands={"python": {"test": ".venv/bin/pytest -n auto", "lint": ".venv/bin/ruff check ."}},
+    )
+    assert "## Project commands" in prompt
+    assert ".venv/bin/pytest -n auto" in prompt
+    assert ".venv/bin/ruff check ." in prompt
+
+
+def test_implementation_prompt_includes_project_commands() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="implement", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands={"python": {"test": "pytest", "lint": "ruff check ."}},
+    )
+    assert "## Project commands" in prompt
+    assert "pytest" in prompt
+
+
+def test_prompt_no_commands_when_none() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands=None,
+    )
+    assert "Project commands" not in prompt
+
+
+def test_prompt_partial_commands() -> None:
+    """Only python test set → only test line appears, no lint/typecheck/format."""
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands={"python": {"test": "pytest -x"}},
+    )
+    assert "## Project commands" in prompt
+    assert "Test:" in prompt
+    assert "Lint:" not in prompt
+
+
+def test_multi_language_commands() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["python", "typescript"],
+        project_commands={
+            "python": {"test": "pytest", "lint": "ruff check ."},
+            "typescript": {"test": "npm test", "lint": "npx eslint ."},
+        },
+    )
+    assert "### Python" in prompt
+    assert "### TypeScript" in prompt
+    assert "pytest" in prompt
+    assert "npm test" in prompt
+
+
+def test_commands_filtered_by_detected_languages() -> None:
+    """Config has python+go but only python detected → only python shown."""
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands={
+            "python": {"test": "pytest"},
+            "go": {"test": "go test ./..."},
+        },
+    )
+    assert "pytest" in prompt
+    assert "go test" not in prompt
+
+
+def test_commands_not_injected_for_planning() -> None:
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="plan", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands={"python": {"test": "pytest"}},
+    )
+    assert "Project commands" not in prompt
+
+
+def test_single_language_omits_subheading() -> None:
+    """Single language uses flat list (no ### Python heading)."""
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands={"python": {"test": "pytest", "lint": "ruff check ."}},
+    )
+    assert "## Project commands" in prompt
+    assert "### Python" not in prompt
+
+
+def test_commands_not_injected_for_review() -> None:
+    """Review step gets language standards but not project commands."""
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="review", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands={"python": {"test": "pytest"}},
+    )
+    assert "Language standards" in prompt
+    assert "Project commands" not in prompt
+
+
+def test_commands_empty_strings_skipped() -> None:
+    """Empty or whitespace-only command values are not rendered."""
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands={"python": {"test": "", "lint": "   ", "typecheck": "mypy ."}},
+    )
+    assert "## Project commands" in prompt
+    assert "Typecheck:" in prompt
+    assert "Test:" not in prompt
+    assert "Lint:" not in prompt
+
+
+def test_multi_language_display_names_use_correct_casing() -> None:
+    """TypeScript/JavaScript get proper casing, not .title() casing."""
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["typescript", "javascript"],
+        project_commands={
+            "typescript": {"test": "npm test"},
+            "javascript": {"lint": "eslint ."},
+        },
+    )
+    assert "### TypeScript" in prompt
+    assert "### JavaScript" in prompt
+
+
+def test_commands_non_string_values_skipped() -> None:
+    """Non-string command values in config are silently skipped."""
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["python"],
+        project_commands={"python": {"test": 42, "lint": "ruff check ."}},  # type: ignore[dict-item]
+    )
+    assert "## Project commands" in prompt
+    assert "Lint:" in prompt
+    assert "Test:" not in prompt
+
+
+def test_commands_non_dict_language_entry_skipped() -> None:
+    """A non-dict language entry in project_commands is skipped."""
+    task = _make_task()
+    prompt = build_step_prompt(
+        task=task, step="verify", attempt=1, is_codex=True,
+        project_languages=["python", "go"],
+        project_commands={"python": {"test": "pytest"}, "go": "not a dict"},  # type: ignore[dict-item]
+    )
+    assert "## Project commands" in prompt
+    assert "pytest" in prompt
+    # "go" entry silently skipped — only one language block, so no subheading
+    assert "### Go" not in prompt
+
+
+def test_run_step_reads_project_commands_from_config(container: V3Container, adapter: LiveWorkerAdapter) -> None:
+    """run_step reads project.commands from config and passes them to the prompt."""
+    # Write project commands to config
+    cfg = container.config.load()
+    cfg["project"] = {"commands": {"python": {"test": ".venv/bin/pytest -x"}}}
+    container.config.save(cfg)
+
+    # Create a pyproject.toml so python is detected
+    (container.project_dir / "pyproject.toml").write_text("[build-system]")
+
+    captured_prompt = {}
+    run_result = _make_run_result(exit_code=0)
+
+    def _capture_run_worker(**kwargs):
+        captured_prompt["text"] = kwargs["prompt"]
+        return run_result
+
+    with (
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.get_workers_runtime_config"
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.resolve_worker_for_step",
+            return_value=_CODEX_SPEC,
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.test_worker",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "feature_prd_runner.v3.orchestrator.live_worker_adapter.run_worker",
+            side_effect=_capture_run_worker,
+        ),
+    ):
+        result = adapter.run_step(task=_make_task(), step="verify", attempt=1)
+
+    assert result.status == "ok"
+    prompt = captured_prompt["text"]
+    assert "## Project commands" in prompt
+    assert ".venv/bin/pytest -x" in prompt
