@@ -875,7 +875,7 @@ class OrchestratorService:
             self.container.runs.upsert(run)
 
             cfg = self.container.config.load()
-            max_review_attempts = int(dict(cfg.get("orchestrator") or {}).get("max_review_attempts", 3) or 3)
+            max_review_attempts = int(dict(cfg.get("orchestrator") or {}).get("max_review_attempts", 10) or 10)
 
             # Resolve pipeline template from registry
             registry = PipelineRegistry()

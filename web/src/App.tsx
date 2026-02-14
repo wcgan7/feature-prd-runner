@@ -16,6 +16,8 @@ type TaskRecord = {
   title: string
   description?: string
   task_type?: string
+  current_step?: string | null
+  current_agent_id?: string | null
   worker_model?: string | null
   priority: string
   status: string
@@ -67,6 +69,27 @@ type AgentRecord = {
   status: string
   capacity: number
   override_provider?: string | null
+}
+
+type WorkerHealthRecord = {
+  name: string
+  type: string
+  configured: boolean
+  healthy: boolean
+  status: 'connected' | 'unavailable' | 'not_configured'
+  detail: string
+  checked_at: string
+  command?: string | null
+  endpoint?: string | null
+  model?: string | null
+}
+
+type WorkerRoutingRow = {
+  step: string
+  provider: string
+  provider_type?: string | null
+  source: 'default' | 'explicit'
+  configured: boolean
 }
 
 type ProjectRef = {
@@ -176,14 +199,6 @@ type PhaseSnapshot = {
   progress: number
 }
 
-type PresenceUser = {
-  id: string
-  name: string
-  role: string
-  status: string
-  activity: string
-}
-
 type MetricsSnapshot = {
   tokens_used: number
   api_calls: number
@@ -202,13 +217,6 @@ type RootSnapshot = {
   project_id?: string
 }
 
-type AgentTypeRecord = {
-  role: string
-  display_name: string
-  description: string
-  task_type_affinity: string[]
-  allowed_steps: string[]
-}
 
 type CollaborationTimelineEvent = {
   id: string
@@ -267,7 +275,7 @@ const ROUTES: Array<{ key: RouteKey; label: string }> = [
   { key: 'board', label: 'Board' },
   { key: 'execution', label: 'Execution' },
   { key: 'review', label: 'Review Queue' },
-  { key: 'agents', label: 'Agents' },
+  { key: 'agents', label: 'Workers' },
   { key: 'settings', label: 'Settings' },
 ]
 
@@ -283,7 +291,6 @@ const TASK_TYPE_OPTIONS = [
 ]
 
 const TASK_STATUS_OPTIONS = ['backlog', 'ready', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled']
-const AGENT_ROLE_OPTIONS = ['general', 'implementer', 'reviewer', 'researcher', 'tester', 'planner', 'debugger']
 const DEFAULT_COLLABORATION_MODES: CollaborationMode[] = [
   { mode: 'autopilot', display_name: 'Autopilot', description: 'Agents run freely.' },
   { mode: 'supervised', display_name: 'Supervised', description: 'Approve each step.' },
@@ -294,7 +301,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   orchestrator: {
     concurrency: 2,
     auto_deps: true,
-    max_review_attempts: 3,
+    max_review_attempts: 10,
   },
   agent_routing: {
     default_role: 'general',
@@ -338,11 +345,13 @@ const WORKER_ROUTING_EXAMPLE = `{
 }`
 
 const WORKER_PROVIDERS_EXAMPLE = `{
-  "codex": {
-    "type": "codex",
-    "command": "codex exec"
+  "review-fastlane": {
+    "type": "claude",
+    "command": "claude -p",
+    "model": "sonnet",
+    "reasoning_effort": "high"
   },
-  "ollama": {
+  "local-lab-8b": {
     "type": "ollama",
     "endpoint": "http://localhost:11434",
     "model": "llama3.1:8b"
@@ -466,7 +475,7 @@ function formatJsonObjectInput(input: string, label: string): string {
 
 function parseWorkerProviders(input: string): Record<string, WorkerProviderSettings> {
   if (!input.trim()) {
-    return { codex: { type: 'codex', command: 'codex exec' } }
+    return {}
   }
   let parsed: unknown
   try {
@@ -485,7 +494,7 @@ function parseWorkerProviders(input: string): Record<string, WorkerProviderSetti
       throw new Error(`Worker provider "${name}" must be a JSON object`)
     }
     const record = rawValue as Record<string, unknown>
-    let type = String(record.type || (name === 'codex' ? 'codex' : name === 'claude' ? 'claude' : 'codex')).trim().toLowerCase()
+    let type = String(record.type || (name === 'codex' ? 'codex' : name === 'claude' ? 'claude' : '')).trim().toLowerCase()
     if (type === 'local') type = 'ollama'
     if (type !== 'codex' && type !== 'ollama' && type !== 'claude') {
       throw new Error(`Worker provider "${name}" has invalid type "${type}" (allowed: codex, ollama, claude)`)
@@ -517,11 +526,6 @@ function parseWorkerProviders(input: string): Record<string, WorkerProviderSetti
       provider.num_ctx = Math.floor(maybeNumCtx)
     }
     out[name] = provider
-  }
-  if (!out.codex || out.codex.type !== 'codex') {
-    out.codex = { type: 'codex', command: 'codex exec' }
-  } else {
-    out.codex.command = String(out.codex.command || 'codex exec').trim() || 'codex exec'
   }
   return out
 }
@@ -684,11 +688,6 @@ function normalizeHumanBlockingIssues(value: unknown): HumanBlockingIssue[] {
     .filter((item) => !!item.summary)
 }
 
-function presenceStatusClass(status: string): string {
-  const normalized = status.toLowerCase().replace(/[^a-z0-9_-]+/g, '-')
-  return `presence-${normalized || 'unknown'}`
-}
-
 function normalizePhases(payload: unknown): PhaseSnapshot[] {
   if (!Array.isArray(payload)) return []
   return payload
@@ -711,30 +710,6 @@ function normalizePhases(payload: unknown): PhaseSnapshot[] {
       }
     })
     .filter((phase) => !!phase.id)
-}
-
-function normalizePresenceUsers(payload: unknown): PresenceUser[] {
-  const usersRaw = Array.isArray(payload)
-    ? payload
-    : payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray((payload as { users?: unknown[] }).users)
-      ? (payload as { users: unknown[] }).users
-      : []
-  return usersRaw
-    .filter((user): user is Record<string, unknown> => !!user && typeof user === 'object' && !Array.isArray(user))
-    .map((user, index) => {
-      const id = String(user.id || user.user_id || user.user || `user-${index + 1}`).trim()
-      const name = String(user.name || user.display_name || user.user || id).trim()
-      const role = String(user.role || '').trim()
-      const status = String(user.status || user.state || 'online').trim()
-      const activity = String(user.activity || user.current_task || user.focus || '').trim()
-      return {
-        id,
-        name,
-        role,
-        status,
-        activity,
-      }
-    })
 }
 
 function normalizeMetrics(payload: unknown): MetricsSnapshot | null {
@@ -761,33 +736,57 @@ function normalizeMetrics(payload: unknown): MetricsSnapshot | null {
   }
 }
 
-function normalizeAgentTypes(payload: unknown): AgentTypeRecord[] {
-  const itemsRaw = Array.isArray(payload)
-    ? payload
-    : payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray((payload as { types?: unknown[] }).types)
-      ? (payload as { types: unknown[] }).types
-      : []
+function normalizeWorkerHealth(payload: unknown): WorkerHealthRecord[] {
+  const itemsRaw = payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray((payload as { providers?: unknown[] }).providers)
+    ? (payload as { providers: unknown[] }).providers
+    : []
   return itemsRaw
     .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
     .map((item) => {
-      const role = String(item.role || '').trim()
-      const displayName = String(item.display_name || role || '').trim()
-      const description = String(item.description || '').trim()
-      const taskTypeAffinity = Array.isArray(item.task_type_affinity)
-        ? item.task_type_affinity.map((entry) => String(entry || '').trim()).filter(Boolean)
-        : []
-      const allowedSteps = Array.isArray(item.allowed_steps)
-        ? item.allowed_steps.map((entry) => String(entry || '').trim()).filter(Boolean)
-        : []
+      const rawStatus = String(item.status || '').trim().toLowerCase()
+      const status: WorkerHealthRecord['status'] =
+        rawStatus === 'connected' || rawStatus === 'unavailable' || rawStatus === 'not_configured'
+          ? rawStatus
+          : 'unavailable'
       return {
-        role,
-        display_name: displayName || role,
-        description,
-        task_type_affinity: taskTypeAffinity,
-        allowed_steps: allowedSteps,
+        name: String(item.name || '').trim(),
+        type: String(item.type || '').trim(),
+        configured: Boolean(item.configured),
+        healthy: Boolean(item.healthy),
+        status,
+        detail: String(item.detail || '').trim(),
+        checked_at: String(item.checked_at || '').trim(),
+        command: item.command ? String(item.command) : null,
+        endpoint: item.endpoint ? String(item.endpoint) : null,
+        model: item.model ? String(item.model) : null,
       }
     })
-    .filter((item) => !!item.role)
+    .filter((item) => !!item.name)
+}
+
+function normalizeWorkerRouting(payload: unknown): { defaultProvider: string; rows: WorkerRoutingRow[] } {
+  const root = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as { default?: unknown; rows?: unknown[] }
+    : {}
+  const rowsRaw = Array.isArray(root.rows) ? root.rows : []
+  const rows = rowsRaw
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
+    .map((item) => {
+      const source: WorkerRoutingRow['source'] =
+        String(item.source || '').trim().toLowerCase() === 'explicit' ? 'explicit' : 'default'
+      return {
+        step: String(item.step || '').trim(),
+        provider: String(item.provider || '').trim(),
+        provider_type: item.provider_type ? String(item.provider_type) : null,
+        source,
+        configured: Boolean(item.configured),
+      }
+    })
+    .filter((item) => !!item.step && !!item.provider)
+  return {
+    defaultProvider: String(root.default || 'codex').trim() || 'codex',
+    rows,
+  }
 }
 
 function normalizeTimelineEvents(payload: unknown): CollaborationTimelineEvent[] {
@@ -880,15 +879,17 @@ export default function App() {
   const [orchestrator, setOrchestrator] = useState<OrchestratorStatus | null>(null)
   const [reviewQueue, setReviewQueue] = useState<TaskRecord[]>([])
   const [agents, setAgents] = useState<AgentRecord[]>([])
+  const [workerHealth, setWorkerHealth] = useState<WorkerHealthRecord[]>([])
+  const [workerRoutingRows, setWorkerRoutingRows] = useState<WorkerRoutingRow[]>([])
+  const [workerDefaultProvider, setWorkerDefaultProvider] = useState('codex')
+  const [workerHealthRefreshing, setWorkerHealthRefreshing] = useState(false)
   const [projects, setProjects] = useState<ProjectRef[]>([])
   const [pinnedProjects, setPinnedProjects] = useState<PinnedProjectRef[]>([])
   const [quickActions, setQuickActions] = useState<QuickActionRecord[]>([])
   const [taskExplorerItems, setTaskExplorerItems] = useState<TaskRecord[]>([])
   const [executionBatches, setExecutionBatches] = useState<string[][]>([])
   const [phases, setPhases] = useState<PhaseSnapshot[]>([])
-  const [presenceUsers, setPresenceUsers] = useState<PresenceUser[]>([])
   const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null)
-  const [agentTypes, setAgentTypes] = useState<AgentTypeRecord[]>([])
   const [activeProjectId, setActiveProjectId] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
@@ -965,9 +966,6 @@ export default function App() {
   const [selectedQuickActionError, setSelectedQuickActionError] = useState('')
   const [selectedQuickActionErrorAt, setSelectedQuickActionErrorAt] = useState('')
   const [reviewGuidance, setReviewGuidance] = useState('')
-  const [spawnRole, setSpawnRole] = useState('general')
-  const [spawnCapacity, setSpawnCapacity] = useState('1')
-  const [spawnProviderOverride, setSpawnProviderOverride] = useState('')
 
   const [manualPinPath, setManualPinPath] = useState('')
   const [allowNonGit, setAllowNonGit] = useState(false)
@@ -995,7 +993,7 @@ export default function App() {
   const [settingsWorkerDefault, setSettingsWorkerDefault] = useState(DEFAULT_SETTINGS.workers.default)
   const [settingsProviderView, setSettingsProviderView] = useState<'codex' | 'ollama' | 'claude'>('codex')
   const [settingsWorkerRouting, setSettingsWorkerRouting] = useState('')
-  const [settingsWorkerProviders, setSettingsWorkerProviders] = useState(JSON.stringify(DEFAULT_SETTINGS.workers.providers, null, 2))
+  const [settingsWorkerProviders, setSettingsWorkerProviders] = useState('')
   const [settingsCodexCommand, setSettingsCodexCommand] = useState('codex exec')
   const [settingsCodexModel, setSettingsCodexModel] = useState('')
   const [settingsCodexEffort, setSettingsCodexEffort] = useState('')
@@ -1128,7 +1126,12 @@ export default function App() {
     const workerRouting = payload.workers.routing || {}
     setSettingsWorkerRouting(Object.keys(workerRouting).length > 0 ? JSON.stringify(workerRouting, null, 2) : '')
     const providers = payload.workers.providers || {}
-    setSettingsWorkerProviders(JSON.stringify(providers, null, 2))
+    const advancedProviders = Object.fromEntries(
+      Object.entries(providers).filter(([name]) => name !== 'codex' && name !== 'claude' && name !== 'ollama')
+    )
+    setSettingsWorkerProviders(
+      Object.keys(advancedProviders).length > 0 ? JSON.stringify(advancedProviders, null, 2) : ''
+    )
     const entries = Object.entries(providers)
 
     const codexEntry = entries.find(([name, provider]) => name === 'codex' && provider?.type === 'codex')
@@ -1200,7 +1203,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (route !== 'settings') return
+    if (route !== 'settings' && route !== 'agents') return
     void loadSettings()
   }, [route, projectDir])
 
@@ -1222,42 +1225,6 @@ export default function App() {
     }
     void fetchModes()
   }, [projectDir])
-
-  useEffect(() => {
-    try {
-      const providers = parseWorkerProviders(settingsWorkerProviders)
-      const entries = Object.entries(providers)
-      const codexEntry = entries.find(([name, provider]) => name === 'codex' && provider.type === 'codex')
-        || entries.find(([, provider]) => provider.type === 'codex')
-      if (codexEntry) {
-        const [, provider] = codexEntry
-        setSettingsCodexCommand(String(provider.command || 'codex exec'))
-        setSettingsCodexModel(String(provider.model || ''))
-        setSettingsCodexEffort(String(provider.reasoning_effort || ''))
-      }
-      const claudeEntry = entries.find(([name, provider]) => name === 'claude' && provider.type === 'claude')
-        || entries.find(([, provider]) => provider.type === 'claude')
-      if (claudeEntry) {
-        const [, provider] = claudeEntry
-        setSettingsClaudeCommand(String(provider.command || 'claude -p'))
-        setSettingsClaudeModel(String(provider.model || ''))
-        setSettingsClaudeEffort(String(provider.reasoning_effort || ''))
-      }
-      const ollamaEntry = entries.find(([name, provider]) => name === 'ollama' && provider.type === 'ollama')
-        || entries.find(([, provider]) => provider.type === 'ollama')
-      if (ollamaEntry) {
-        const [, provider] = ollamaEntry
-        setSettingsOllamaEndpoint(String(provider.endpoint || 'http://localhost:11434'))
-        setSettingsOllamaModel(String(provider.model || ''))
-        setSettingsOllamaTemperature(
-          provider.temperature === undefined || provider.temperature === null ? '' : String(provider.temperature)
-        )
-        setSettingsOllamaNumCtx(provider.num_ctx === undefined || provider.num_ctx === null ? '' : String(provider.num_ctx))
-      }
-    } catch {
-      // Ignore JSON parse errors while user is editing.
-    }
-  }, [settingsWorkerProviders])
 
   async function loadTaskDetail(taskId: string): Promise<void> {
     if (!taskId) {
@@ -1527,22 +1494,24 @@ export default function App() {
   async function refreshAgentsSurface(): Promise<void> {
     const refreshProjectDir = projectDirRef.current
     try {
-      const [agentData, presenceData, agentTypesData] = await Promise.all([
+      const [agentData, healthData, routingData] = await Promise.all([
         requestJson<{ agents: AgentRecord[] }>(buildApiUrl('/api/agents', refreshProjectDir)),
-        requestJson<unknown>(buildApiUrl('/api/collaboration/presence', refreshProjectDir)).catch(() => ({ users: [] })),
-        requestJson<unknown>(buildApiUrl('/api/agents/types', refreshProjectDir)).catch(() => ({ types: [] })),
+        requestJson<unknown>(buildApiUrl('/api/workers/health', refreshProjectDir)).catch(() => ({ providers: [] })),
+        requestJson<unknown>(buildApiUrl('/api/workers/routing', refreshProjectDir)).catch(() => ({ default: 'codex', rows: [] })),
       ])
       if (refreshProjectDir !== projectDirRef.current) {
         return
       }
       setAgents(agentData.agents || [])
-      setPresenceUsers(normalizePresenceUsers(presenceData))
-      setAgentTypes(normalizeAgentTypes(agentTypesData))
+      setWorkerHealth(normalizeWorkerHealth(healthData))
+      const normalizedRouting = normalizeWorkerRouting(routingData)
+      setWorkerDefaultProvider(normalizedRouting.defaultProvider)
+      setWorkerRoutingRows(normalizedRouting.rows)
     } catch (err) {
       if (refreshProjectDir !== projectDirRef.current) {
         return
       }
-      setError(toErrorMessage('Failed to refresh agents surface', err))
+      setError(toErrorMessage('Failed to refresh workers surface', err))
     }
   }
 
@@ -1583,9 +1552,9 @@ export default function App() {
         quickActionData,
         executionOrderData,
         phasesData,
-        presenceData,
         metricsData,
-        agentTypesData,
+        workerHealthData,
+        workerRoutingData,
       ] = await Promise.all([
         requestJson<BoardResponse>(buildApiUrl('/api/tasks/board', projectDir)),
         requestJson<OrchestratorStatus>(buildApiUrl('/api/orchestrator/status', projectDir)),
@@ -1596,9 +1565,9 @@ export default function App() {
         requestJson<{ quick_actions: QuickActionRecord[] }>(buildApiUrl('/api/quick-actions', projectDir)),
         requestJson<{ batches: string[][] }>(buildApiUrl('/api/tasks/execution-order', projectDir)),
         requestJson<unknown>(buildApiUrl('/api/phases', projectDir)).catch(() => []),
-        requestJson<unknown>(buildApiUrl('/api/collaboration/presence', projectDir)).catch(() => ({ users: [] })),
         requestJson<unknown>(buildApiUrl('/api/metrics', projectDir)).catch(() => null),
-        requestJson<unknown>(buildApiUrl('/api/agents/types', projectDir)).catch(() => ({ types: [] })),
+        requestJson<unknown>(buildApiUrl('/api/workers/health', projectDir)).catch(() => ({ providers: [] })),
+        requestJson<unknown>(buildApiUrl('/api/workers/routing', projectDir)).catch(() => ({ default: 'codex', rows: [] })),
       ])
       if (requestSeq !== reloadAllSeqRef.current) {
         return
@@ -1612,9 +1581,11 @@ export default function App() {
       setQuickActions(quickActionData.quick_actions || [])
       setExecutionBatches(executionOrderData.batches || [])
       setPhases(normalizePhases(phasesData))
-      setPresenceUsers(normalizePresenceUsers(presenceData))
       setMetrics(normalizeMetrics(metricsData))
-      setAgentTypes(normalizeAgentTypes(agentTypesData))
+      setWorkerHealth(normalizeWorkerHealth(workerHealthData))
+      const normalizedRouting = normalizeWorkerRouting(workerRoutingData)
+      setWorkerDefaultProvider(normalizedRouting.defaultProvider)
+      setWorkerRoutingRows(normalizedRouting.rows)
     } catch (err) {
       if (requestSeq !== reloadAllSeqRef.current) {
         return
@@ -2067,6 +2038,61 @@ export default function App() {
     await loadTaskDetail(taskId)
   }
 
+  function buildWorkerProvidersPayload(extraProviders: Record<string, WorkerProviderSettings>): Record<string, WorkerProviderSettings> {
+    const providers: Record<string, WorkerProviderSettings> = {}
+
+    const codexProvider: WorkerProviderSettings = {
+      type: 'codex',
+      command: settingsCodexCommand.trim() || 'codex exec',
+    }
+    const codexModel = settingsCodexModel.trim()
+    if (codexModel) codexProvider.model = codexModel
+    const codexEffort = settingsCodexEffort.trim().toLowerCase()
+    if (codexEffort === 'low' || codexEffort === 'medium' || codexEffort === 'high') {
+      codexProvider.reasoning_effort = codexEffort
+    }
+    providers.codex = codexProvider
+
+    const claudeProvider: WorkerProviderSettings = {
+      type: 'claude',
+      command: settingsClaudeCommand.trim() || 'claude -p',
+    }
+    const claudeModel = settingsClaudeModel.trim()
+    if (claudeModel) claudeProvider.model = claudeModel
+    const claudeEffort = settingsClaudeEffort.trim().toLowerCase()
+    if (claudeEffort === 'low' || claudeEffort === 'medium' || claudeEffort === 'high') {
+      claudeProvider.reasoning_effort = claudeEffort
+    }
+    providers.claude = claudeProvider
+
+    const ollamaEndpoint = settingsOllamaEndpoint.trim()
+    const ollamaModel = settingsOllamaModel.trim()
+    if (ollamaEndpoint || ollamaModel || settingsWorkerDefault === 'ollama') {
+      if (!ollamaEndpoint || !ollamaModel) {
+        throw new Error('Ollama provider requires endpoint and model')
+      }
+      const ollamaProvider: WorkerProviderSettings = {
+        type: 'ollama',
+        endpoint: ollamaEndpoint,
+        model: ollamaModel,
+      }
+      const temperature = Number(settingsOllamaTemperature)
+      if (settingsOllamaTemperature.trim() && Number.isFinite(temperature)) {
+        ollamaProvider.temperature = temperature
+      }
+      const numCtx = Number(settingsOllamaNumCtx)
+      if (settingsOllamaNumCtx.trim() && Number.isFinite(numCtx) && numCtx > 0) {
+        ollamaProvider.num_ctx = Math.floor(numCtx)
+      }
+      providers.ollama = ollamaProvider
+    }
+
+    for (const [name, provider] of Object.entries(extraProviders)) {
+      providers[name] = provider
+    }
+    return providers
+  }
+
   async function saveSettings(event: FormEvent): Promise<void> {
     event.preventDefault()
     setSettingsSaving(true)
@@ -2075,54 +2101,18 @@ export default function App() {
     try {
       const taskTypeRoles = parseStringMap(settingsTaskTypeRoles, 'Task type role map')
       const roleProviderOverrides = parseStringMap(settingsRoleProviderOverrides, 'Role provider overrides')
-      const workerRouting = parseStringMap(settingsWorkerRouting, 'Worker routing map')
-      const workerProviders = parseWorkerProviders(settingsWorkerProviders)
-
-      const codexProvider: WorkerProviderSettings = {
-        type: 'codex',
-        command: settingsCodexCommand.trim() || 'codex exec',
+      const workerRouting = Object.fromEntries(
+        workerRoutingRows
+          .filter((row) => row.source === 'explicit' && row.step.trim() && row.provider.trim())
+          .map((row) => [row.step.trim(), row.provider.trim()])
+      )
+      let advancedWorkerProviders: Record<string, WorkerProviderSettings> = {}
+      try {
+        advancedWorkerProviders = parseWorkerProviders(settingsWorkerProviders)
+      } catch {
+        advancedWorkerProviders = {}
       }
-      const codexModel = settingsCodexModel.trim()
-      if (codexModel) codexProvider.model = codexModel
-      const codexEffort = settingsCodexEffort.trim().toLowerCase()
-      if (codexEffort === 'low' || codexEffort === 'medium' || codexEffort === 'high') {
-        codexProvider.reasoning_effort = codexEffort
-      }
-      workerProviders.codex = codexProvider
-
-      const claudeProvider: WorkerProviderSettings = {
-        type: 'claude',
-        command: settingsClaudeCommand.trim() || 'claude -p',
-      }
-      const claudeModel = settingsClaudeModel.trim()
-      if (claudeModel) claudeProvider.model = claudeModel
-      const claudeEffort = settingsClaudeEffort.trim().toLowerCase()
-      if (claudeEffort === 'low' || claudeEffort === 'medium' || claudeEffort === 'high') {
-        claudeProvider.reasoning_effort = claudeEffort
-      }
-      workerProviders.claude = claudeProvider
-
-      const ollamaEndpoint = settingsOllamaEndpoint.trim()
-      const ollamaModel = settingsOllamaModel.trim()
-      if (ollamaEndpoint || ollamaModel || settingsWorkerDefault === 'ollama') {
-        if (!ollamaEndpoint || !ollamaModel) {
-          throw new Error('Ollama provider requires endpoint and model')
-        }
-        const ollamaProvider: WorkerProviderSettings = {
-          type: 'ollama',
-          endpoint: ollamaEndpoint,
-          model: ollamaModel,
-        }
-        const temperature = Number(settingsOllamaTemperature)
-        if (settingsOllamaTemperature.trim() && Number.isFinite(temperature)) {
-          ollamaProvider.temperature = temperature
-        }
-        const numCtx = Number(settingsOllamaNumCtx)
-        if (settingsOllamaNumCtx.trim() && Number.isFinite(numCtx) && numCtx > 0) {
-          ollamaProvider.num_ctx = Math.floor(numCtx)
-        }
-        workerProviders.ollama = ollamaProvider
-      }
+      const workerProviders = buildWorkerProvidersPayload(advancedWorkerProviders)
       const projectCommands = parseProjectCommands(settingsProjectCommands)
       const payload: SystemSettings = {
         orchestrator: {
@@ -2169,6 +2159,66 @@ export default function App() {
     }
   }
 
+  async function saveWorkerMaps(event: FormEvent): Promise<void> {
+    event.preventDefault()
+    setSettingsSaving(true)
+    setSettingsError('')
+    setSettingsSuccess('')
+    try {
+      const workerRouting = parseStringMap(settingsWorkerRouting, 'Worker routing map')
+      const advancedWorkerProviders = parseWorkerProviders(settingsWorkerProviders)
+      const workerProviders = buildWorkerProvidersPayload(advancedWorkerProviders)
+      const updated = await requestJson<Partial<SystemSettings>>(buildApiUrl('/api/settings', projectDir), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workers: {
+            default: (settingsWorkerDefault === 'ollama' || settingsWorkerDefault === 'claude') ? settingsWorkerDefault : 'codex',
+            default_model: '',
+            routing: workerRouting,
+            providers: workerProviders,
+          },
+        }),
+      })
+      applySettings(normalizeSettings(updated))
+      setSettingsSuccess('Worker routing saved.')
+      await reloadAll()
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'unknown error'
+      setSettingsError(`Failed to save worker routing (${detail})`)
+    } finally {
+      setSettingsSaving(false)
+    }
+  }
+
+  async function handleRecheckProviders(): Promise<void> {
+    setWorkerHealthRefreshing(true)
+    try {
+      await refreshAgentsSurface()
+    } finally {
+      setWorkerHealthRefreshing(false)
+    }
+  }
+
+  function updateWorkerRoute(step: string, provider: string): void {
+    try {
+      const current = parseStringMap(settingsWorkerRouting, 'Worker routing map')
+      const next = { ...current }
+      const normalizedStep = step.trim()
+      if (!normalizedStep) return
+      if (!provider.trim() || provider.trim() === workerDefaultProvider) {
+        delete next[normalizedStep]
+      } else {
+        next[normalizedStep] = provider.trim()
+      }
+      setSettingsWorkerRouting(Object.keys(next).length > 0 ? JSON.stringify(next, null, 2) : '')
+      setSettingsError('')
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'invalid routing JSON'
+      setSettingsError(detail)
+    }
+  }
+
   function handleFormatJsonField(
     label: string,
     value: string,
@@ -2212,34 +2262,6 @@ export default function App() {
       body: JSON.stringify({ guidance: reviewGuidance.trim() || undefined }),
     })
     setReviewGuidance('')
-    await reloadAll()
-  }
-
-  async function spawnAgent(): Promise<void> {
-    await requestJson<{ agent: AgentRecord }>(buildApiUrl('/api/agents/spawn', projectDir), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        role: spawnRole,
-        capacity: Math.max(1, Number(spawnCapacity) || 1),
-        override_provider: spawnProviderOverride.trim() || undefined,
-      }),
-    })
-    setSpawnProviderOverride('')
-    await reloadAll()
-  }
-
-  async function agentAction(agentId: string, action: 'pause' | 'resume' | 'terminate'): Promise<void> {
-    await requestJson<{ agent: AgentRecord }>(buildApiUrl(`/api/agents/${agentId}/${action}`, projectDir), { method: 'POST' })
-    await reloadAll()
-  }
-
-  async function agentRemove(agentId: string): Promise<void> {
-    try {
-      await requestJson<{ removed: boolean }>(buildApiUrl(`/api/agents/${agentId}`, projectDir), { method: 'DELETE' })
-    } catch {
-      await requestJson<{ removed: boolean }>(buildApiUrl(`/api/agents/${agentId}/remove`, projectDir), { method: 'POST' })
-    }
     await reloadAll()
   }
 
@@ -2677,7 +2699,7 @@ export default function App() {
             {mobileTaskDetailOpen ? <p className="field-label">Task detail is open in full-screen mode.</p> : taskDetailContent}
           </article>
           <article className="workbench-pane">
-            <h3>Queue & Agents</h3>
+            <h3>Queue & Workers</h3>
             <div className="list-stack">
               <p className="field-label">Queue depth: {orchestrator?.queue_depth ?? 0}</p>
               <p className="field-label">In progress: {orchestrator?.in_progress ?? 0}</p>
@@ -2688,7 +2710,7 @@ export default function App() {
                 </div>
               ))}
               {queueTasks.length === 0 ? <p className="empty">No queued or running tasks.</p> : null}
-              <p className="field-label">Agents ({agents.length})</p>
+              <p className="field-label">Workers ({agents.length})</p>
               {agents.slice(0, 4).map((agent) => (
                 <div key={agent.id} className="row-card">
                   <p className="task-title">{humanizeLabel(agent.role)}</p>
@@ -2860,118 +2882,210 @@ export default function App() {
   }
 
   function renderAgents(): JSX.Element {
-    const runningAgents = agents.filter((agent) => String(agent.status || '').toLowerCase() === 'running')
-    const pausedAgents = agents.filter((agent) => String(agent.status || '').toLowerCase() === 'paused')
+    const healthOrder = ['codex', 'claude', 'ollama']
+    const providerHealth = [...workerHealth].sort((a, b) => {
+      const aIndex = healthOrder.indexOf(a.name)
+      const bIndex = healthOrder.indexOf(b.name)
+      const aRank = aIndex === -1 ? 999 : aIndex
+      const bRank = bIndex === -1 ? 999 : bIndex
+      if (aRank !== bRank) return aRank - bRank
+      return a.name.localeCompare(b.name)
+    })
+    const inProgressTasks = board.columns?.in_progress || []
+    const routingByStep = new Map(workerRoutingRows.map((row) => [row.step, row]))
+    let editableRoutingMap: Record<string, string> = {}
+    try {
+      editableRoutingMap = parseStringMap(settingsWorkerRouting, 'Worker routing map')
+    } catch {
+      editableRoutingMap = {}
+    }
+    const dropdownProviders = Array.from(
+      new Set(
+        workerHealth
+          .filter((item) => item.configured || item.healthy)
+          .map((item) => item.name)
+          .concat(workerDefaultProvider || 'codex')
+      )
+    ).sort((a, b) => a.localeCompare(b))
+
+    const statusClass = (status: WorkerHealthRecord['status']): string => {
+      if (status === 'connected') return 'status-pill status-running'
+      if (status === 'not_configured') return 'status-pill status-paused'
+      return 'status-pill status-failed'
+    }
+
+    const resolvedProviderForTask = (task: TaskRecord): string => {
+      const step = String(task.current_step || '').trim() || (task.task_type === 'plan' ? 'plan' : 'implement')
+      return routingByStep.get(step)?.provider || workerDefaultProvider
+    }
+
+    const stepLabel = (step: string): string => {
+      const normalized = String(step || '').trim().toLowerCase()
+      if (normalized === 'plan') return 'Task Planning'
+      if (normalized === 'plan_impl') return 'Execution Plan'
+      return humanizeLabel(normalized)
+    }
 
     return (
       <section className="panel">
         <header className="panel-head">
-          <h2>Agents</h2>
+          <h2>Workers</h2>
         </header>
         <div className="agents-layout">
-          <article className="settings-card agents-spawn-card">
-            <h3>Spawn Agent</h3>
-            <p className="field-label">Create an additional worker with role-specific behavior.</p>
-            <div className="form-stack">
-              <label className="field-label" htmlFor="spawn-role-input">Role</label>
-              <select id="spawn-role-input" value={spawnRole} onChange={(event) => setSpawnRole(event.target.value)}>
-                {AGENT_ROLE_OPTIONS.map((role) => (
-                  <option key={role} value={role}>{humanizeLabel(role)}</option>
-                ))}
-              </select>
-              <label className="field-label" htmlFor="spawn-capacity-input">Capacity</label>
-              <input
-                id="spawn-capacity-input"
-                value={spawnCapacity}
-                onChange={(event) => setSpawnCapacity(event.target.value)}
-                placeholder="1"
-                aria-label="Spawn capacity"
-              />
-              <label className="field-label" htmlFor="spawn-provider-override-input">Provider override (optional)</label>
-              <input
-                id="spawn-provider-override-input"
-                value={spawnProviderOverride}
-                onChange={(event) => setSpawnProviderOverride(event.target.value)}
-                placeholder="codex / ollama / claude"
-                aria-label="Provider override"
-              />
-              <button className="button button-primary" onClick={() => void spawnAgent()}>Spawn agent</button>
-            </div>
-          </article>
-
           <article className="settings-card agents-active-card">
-            <h3>Active Agents</h3>
-            <p className="field-label">
-              Running: {runningAgents.length} · Paused: {pausedAgents.length}
-            </p>
+            <h3>Provider Status</h3>
+            <p className="field-label">Availability of configured worker providers.</p>
+            <div className="inline-actions workers-recheck-actions">
+              <button
+                className={`button ${workerHealthRefreshing ? 'is-loading' : ''}`}
+                onClick={() => void handleRecheckProviders()}
+                disabled={workerHealthRefreshing}
+                aria-busy={workerHealthRefreshing}
+              >
+                {workerHealthRefreshing ? 'Rechecking...' : 'Recheck providers'}
+              </button>
+            </div>
             <div className="list-stack">
-              {agents.map((agent) => (
-                <div className="row-card" key={agent.id}>
+              {providerHealth.map((provider) => (
+                <div className="row-card" key={provider.name}>
                   <div>
-                    <p className="task-title">{humanizeLabel(agent.role)}</p>
-                    <p className="task-meta">{agent.id} · {humanizeLabel(agent.status)} · capacity {agent.capacity}</p>
-                    {agent.override_provider ? <p className="task-meta">provider: {agent.override_provider}</p> : null}
+                    <p className="task-title">{humanizeLabel(provider.name)}</p>
+                    <p className="task-meta">
+                      type: {provider.type}
+                      {provider.model ? ` · model: ${provider.model}` : ''}
+                    </p>
+                    {provider.command ? <p className="task-meta">command: {provider.command}</p> : null}
+                    {provider.endpoint ? <p className="task-meta">endpoint: {provider.endpoint}</p> : null}
+                    <p className="task-meta">{provider.detail || 'No diagnostics message.'}</p>
                   </div>
                   <div className="inline-actions">
-                    {String(agent.status || '').toLowerCase() === 'terminated' ? (
-                      <button className="button button-danger" onClick={() => void agentRemove(agent.id)}>Remove</button>
-                    ) : (
-                      <>
-                        <button className="button" onClick={() => void agentAction(agent.id, 'pause')}>Pause</button>
-                        <button className="button" onClick={() => void agentAction(agent.id, 'resume')}>Resume</button>
-                        <button className="button button-danger" onClick={() => void agentAction(agent.id, 'terminate')}>Terminate</button>
-                      </>
-                    )}
+                    <span className={statusClass(provider.status)}>{humanizeLabel(provider.status)}</span>
                   </div>
                 </div>
               ))}
-              {agents.length === 0 ? <p className="empty">No agents active.</p> : null}
+              {providerHealth.length === 0 ? <p className="empty">No providers detected.</p> : null}
             </div>
           </article>
 
           <article className="settings-card agents-presence-card">
-            <h3>Collaboration Presence</h3>
-            {presenceUsers.length > 0 ? (
-              <div className="presence-grid">
-                {presenceUsers.map((user) => (
-                  <div className="presence-card" key={user.id}>
-                    <div className="presence-head">
-                      <span className={`presence-dot ${presenceStatusClass(user.status)}`} />
-                      <p className="task-title">{user.name}</p>
-                    </div>
-                    <p className="task-meta">
-                      {user.role ? `${humanizeLabel(user.role)} · ` : ''}{humanizeLabel(user.status)}
-                    </p>
-                    {user.activity ? <p className="task-desc">{user.activity}</p> : null}
+            <h3>Routing Table</h3>
+            <p className="field-label">Default provider: {workerDefaultProvider}</p>
+            <div className="list-stack">
+              {workerRoutingRows.map((row) => (
+                <div className="row-card" key={row.step}>
+                  <div>
+                    <p className="task-title">{stepLabel(row.step)}</p>
+                    <p className="task-meta">{row.source === 'explicit' ? 'Explicit route' : 'Default route'}</p>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="empty">No active collaborators.</p>
-            )}
+                  <div className="inline-actions">
+                    <select
+                      aria-label={`Route ${row.step} provider`}
+                      value={editableRoutingMap[row.step] ?? ''}
+                      onChange={(event) => updateWorkerRoute(row.step, event.target.value)}
+                    >
+                      <option value="">Use default ({workerDefaultProvider})</option>
+                      {dropdownProviders.map((providerName) => (
+                        <option key={`${row.step}-${providerName}`} value={providerName}>
+                          {providerName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ))}
+              {workerRoutingRows.length === 0 ? <p className="empty">No routing rules configured; default applies to all steps.</p> : null}
+            </div>
+            <details className="advanced-fields workers-advanced">
+              <summary>Advanced</summary>
+              <form className="advanced-fields-body form-stack" onSubmit={(event) => void saveWorkerMaps(event)}>
+                <label className="field-label" htmlFor="settings-worker-routing">Worker routing map (JSON object: step {'->'} provider)</label>
+                <div className="json-editor-group">
+                  <textarea
+                    id="settings-worker-routing"
+                    className="json-editor-textarea"
+                    rows={4}
+                    value={settingsWorkerRouting}
+                    onChange={(event) => setSettingsWorkerRouting(event.target.value)}
+                    placeholder={WORKER_ROUTING_EXAMPLE}
+                  />
+                  <div className="inline-actions json-editor-actions">
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={() => handleFormatJsonField('Worker routing map', settingsWorkerRouting, setSettingsWorkerRouting)}
+                    >
+                      Format
+                    </button>
+                    <button className="button" type="button" onClick={() => setSettingsWorkerRouting('')}>
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <label
+                  className="field-label"
+                  htmlFor="settings-worker-providers"
+                  title="Configure reasoning effort in your CLI setup first (Codex/Claude profile or config). Agent Orchestrator only passes flags supported by your installed CLI version."
+                >
+                  Worker providers (JSON object, optional advanced overrides)
+                </label>
+                <div className="json-editor-group">
+                  <textarea
+                    id="settings-worker-providers"
+                    className="json-editor-textarea"
+                    rows={8}
+                    value={settingsWorkerProviders}
+                    onChange={(event) => setSettingsWorkerProviders(event.target.value)}
+                    placeholder={WORKER_PROVIDERS_EXAMPLE}
+                  />
+                  <div className="inline-actions json-editor-actions">
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={() => handleFormatJsonField('Worker providers', settingsWorkerProviders, setSettingsWorkerProviders)}
+                    >
+                      Format
+                    </button>
+                    <button className="button" type="button" onClick={() => setSettingsWorkerProviders('')}>
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="inline-actions">
+                  <button className="button button-primary" type="submit" disabled={settingsSaving}>
+                    {settingsSaving ? 'Saving...' : 'Save worker routing'}
+                  </button>
+                  <button className="button" type="button" onClick={() => void loadSettings()} disabled={settingsLoading}>
+                    {settingsLoading ? 'Loading...' : 'Reload'}
+                  </button>
+                </div>
+                {settingsError ? <p className="error-banner">{settingsError}</p> : null}
+                {settingsSuccess ? <p className="field-label">{settingsSuccess}</p> : null}
+              </form>
+            </details>
           </article>
 
           <article className="settings-card agents-catalog-card">
-            <h3>Agent Catalog</h3>
-            {agentTypes.length > 0 ? (
-              <div className="presence-grid">
-                {agentTypes.map((agentType) => (
-                  <div className="presence-card" key={agentType.role}>
-                    <p className="task-title">{agentType.display_name}</p>
-                    <p className="task-meta">{agentType.role}</p>
-                    {agentType.description ? <p className="task-desc">{agentType.description}</p> : null}
+            <h3>Execution Snapshot</h3>
+            <p className="field-label">
+              Queue depth: {orchestrator?.queue_depth ?? 0} · In progress: {orchestrator?.in_progress ?? inProgressTasks.length}
+            </p>
+            <div className="list-stack">
+              {inProgressTasks.map((task) => (
+                <div className="row-card" key={task.id}>
+                  <div>
+                    <p className="task-title">{task.title}</p>
                     <p className="task-meta">
-                      affinity: {agentType.task_type_affinity.length > 0 ? agentType.task_type_affinity.join(', ') : 'none'}
-                    </p>
-                    <p className="task-meta">
-                      steps: {agentType.allowed_steps.length > 0 ? agentType.allowed_steps.join(', ') : 'n/a'}
+                      {task.id} · step: {task.current_step || 'implement'}
                     </p>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="empty">No agent types returned.</p>
-            )}
+                  <div className="inline-actions">
+                    <span className="status-pill status-running">{resolvedProviderForTask(task)}</span>
+                  </div>
+                </div>
+              ))}
+              {inProgressTasks.length === 0 ? <p className="empty">No tasks currently in progress.</p> : null}
+              <p className="task-meta">Worker labels are derived from settings routing and default provider.</p>
+            </div>
           </article>
         </div>
       </section>
@@ -3246,59 +3360,6 @@ export default function App() {
                   </select>
                   </div>
                 ) : null}
-              </div>
-              <p className="settings-subheading">Advanced Worker Maps</p>
-              <label className="field-label" htmlFor="settings-worker-routing">Worker routing map (JSON object: step {'->'} provider)</label>
-              <div className="json-editor-group">
-                <textarea
-                  id="settings-worker-routing"
-                  className="json-editor-textarea"
-                  rows={4}
-                  value={settingsWorkerRouting}
-                  onChange={(event) => setSettingsWorkerRouting(event.target.value)}
-                  placeholder={WORKER_ROUTING_EXAMPLE}
-                />
-                <div className="inline-actions json-editor-actions">
-                  <button
-                    className="button"
-                    type="button"
-                    onClick={() => handleFormatJsonField('Worker routing map', settingsWorkerRouting, setSettingsWorkerRouting)}
-                  >
-                    Format
-                  </button>
-                  <button className="button" type="button" onClick={() => setSettingsWorkerRouting('')}>
-                    Clear
-                  </button>
-                </div>
-              </div>
-              <label
-                className="field-label"
-                htmlFor="settings-worker-providers"
-                title="Configure reasoning effort in your CLI setup first (Codex/Claude profile or config). Agent Orchestrator only passes flags supported by your installed CLI version."
-              >
-                Worker providers (JSON object, optional advanced overrides)
-              </label>
-              <div className="json-editor-group">
-                <textarea
-                  id="settings-worker-providers"
-                  className="json-editor-textarea"
-                  rows={8}
-                  value={settingsWorkerProviders}
-                  onChange={(event) => setSettingsWorkerProviders(event.target.value)}
-                  placeholder={WORKER_PROVIDERS_EXAMPLE}
-                />
-                <div className="inline-actions json-editor-actions">
-                  <button
-                    className="button"
-                    type="button"
-                    onClick={() => handleFormatJsonField('Worker providers', settingsWorkerProviders, setSettingsWorkerProviders)}
-                  >
-                    Format
-                  </button>
-                  <button className="button" type="button" onClick={() => setSettingsWorkerProviders('')}>
-                    Clear
-                  </button>
-                </div>
               </div>
               <p className="settings-subheading">Project Commands</p>
               <label className="field-label" htmlFor="settings-project-commands">Project commands by language (JSON object)</label>

@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 
 from ...collaboration.modes import MODE_CONFIGS
 from ...pipelines.registry import PipelineRegistry
+from ...workers.config import WorkerProviderSpec, get_workers_runtime_config
+from ...workers.diagnostics import test_worker
 from ..domain.models import AgentRecord, QuickActionRun, Task, now_iso
 from ..events.bus import EventBus
 from ..orchestrator.service import OrchestratorService
@@ -89,7 +91,7 @@ class OrchestratorControlRequest(BaseModel):
 class OrchestratorSettingsRequest(BaseModel):
     concurrency: int = Field(2, ge=1, le=128)
     auto_deps: bool = True
-    max_review_attempts: int = Field(3, ge=1, le=50)
+    max_review_attempts: int = Field(10, ge=1, le=50)
 
 
 class AgentRoutingSettingsRequest(BaseModel):
@@ -374,7 +376,7 @@ def _settings_payload(cfg: dict[str, Any]) -> dict[str, Any]:
         "orchestrator": {
             "concurrency": _coerce_int(orchestrator.get("concurrency"), 2, minimum=1, maximum=128),
             "auto_deps": _coerce_bool(orchestrator.get("auto_deps"), True),
-            "max_review_attempts": _coerce_int(orchestrator.get("max_review_attempts"), 3, minimum=1, maximum=50),
+            "max_review_attempts": _coerce_int(orchestrator.get("max_review_attempts"), 10, minimum=1, maximum=50),
         },
         "agent_routing": {
             "default_role": str(routing.get("default_role") or "general"),
@@ -399,6 +401,98 @@ def _settings_payload(cfg: dict[str, Any]) -> dict[str, Any]:
             "commands": dict((cfg.get("project") or {}).get("commands") or {}),
         },
     }
+
+
+def _workers_health_payload(cfg: dict[str, Any]) -> dict[str, Any]:
+    runtime = get_workers_runtime_config(config=cfg, codex_command_fallback="codex exec")
+    known_provider_names: list[str] = ["codex", "claude", "ollama"]
+    for name in sorted(runtime.providers.keys()):
+        if name not in known_provider_names:
+            known_provider_names.append(name)
+
+    providers: list[dict[str, Any]] = []
+    checked_at = now_iso()
+    for name in known_provider_names:
+        spec = runtime.providers.get(name)
+        if spec is None:
+            # Probe common CLI providers even when not configured, so users can
+            # see local availability before adding explicit settings.
+            probe_spec: Optional[WorkerProviderSpec] = None
+            if name == "codex":
+                probe_spec = WorkerProviderSpec(name="codex", type="codex", command="codex exec")
+            elif name == "claude":
+                probe_spec = WorkerProviderSpec(name="claude", type="claude", command="claude -p")
+
+            if probe_spec is not None:
+                healthy, detail = test_worker(probe_spec)
+                providers.append(
+                    {
+                        "name": name,
+                        "type": probe_spec.type,
+                        "configured": False,
+                        "healthy": healthy,
+                        "status": "connected" if healthy else "not_configured",
+                        "detail": detail if healthy else f"Provider not configured. {detail}",
+                        "checked_at": checked_at,
+                        "command": probe_spec.command,
+                    }
+                )
+                continue
+            providers.append(
+                {
+                    "name": name,
+                    "type": name if name in {"codex", "claude", "ollama"} else "unknown",
+                    "configured": False,
+                    "healthy": False,
+                    "status": "not_configured",
+                    "detail": "Provider is not configured.",
+                    "checked_at": checked_at,
+                }
+            )
+            continue
+
+        healthy, detail = test_worker(spec)
+        item: dict[str, Any] = {
+            "name": spec.name,
+            "type": spec.type,
+            "configured": True,
+            "healthy": healthy,
+            "status": "connected" if healthy else "unavailable",
+            "detail": detail,
+            "checked_at": checked_at,
+        }
+        if spec.command:
+            item["command"] = spec.command
+        if spec.endpoint:
+            item["endpoint"] = spec.endpoint
+        if spec.model:
+            item["model"] = spec.model
+        providers.append(item)
+
+    return {"providers": providers}
+
+
+def _workers_routing_payload(cfg: dict[str, Any]) -> dict[str, Any]:
+    runtime = get_workers_runtime_config(config=cfg, codex_command_fallback="codex exec")
+    default_provider = runtime.default_worker if runtime.default_worker in runtime.providers else "codex"
+    canonical_steps = ["plan", "analyze", "plan_impl", "generate_tasks", "implement", "verify", "review", "commit"]
+    ordered_steps = list(dict.fromkeys(canonical_steps + sorted(runtime.routing.keys())))
+
+    rows: list[dict[str, Any]] = []
+    for step in ordered_steps:
+        provider_name = runtime.routing.get(step) or default_provider
+        provider = runtime.providers.get(provider_name)
+        rows.append(
+            {
+                "step": step,
+                "provider": provider_name,
+                "provider_type": provider.type if provider else None,
+                "source": "explicit" if step in runtime.routing else "default",
+                "configured": provider is not None,
+            }
+        )
+
+    return {"default": default_provider, "rows": rows}
 
 
 def _execution_batches(tasks: list[Task]) -> list[list[str]]:
@@ -1364,6 +1458,18 @@ def create_router(
         container, _, _ = _ctx(project_dir)
         cfg = container.config.load()
         return _settings_payload(cfg)
+
+    @router.get("/workers/health")
+    async def workers_health(project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
+        container, _, _ = _ctx(project_dir)
+        cfg = container.config.load()
+        return _workers_health_payload(cfg)
+
+    @router.get("/workers/routing")
+    async def workers_routing(project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
+        container, _, _ = _ctx(project_dir)
+        cfg = container.config.load()
+        return _workers_routing_payload(cfg)
 
     @router.patch("/settings")
     async def patch_settings(body: UpdateSettingsRequest, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
