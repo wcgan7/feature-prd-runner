@@ -1,9 +1,12 @@
-# Feature PRD Runner
+# Agent Orchestrator
 
-Feature PRD Runner is a local orchestration control center for AI-assisted software delivery.
+Agent Orchestrator is a local orchestration control center for AI-assisted software delivery.
 It gives you a task board, execution controls, review gates, and agent operations in one place.
 
-![Feature PRD Runner Dashboard](web/public/homepage-screenshot.png)
+Orchestrator autonomously plans and executes work across repositories — parallelizing independent changes, sequencing dependencies, and resolving conflicts as delivery progress.
+Execution runs under enforced coding standards and a continuous review-and-fix cycle, producing resilient, merge-ready results instead of fragile one-pass output.
+
+![Agent Orchestrator Dashboard](web/public/homepage-screenshot.png)
 
 ## What You Can Do
 
@@ -21,7 +24,7 @@ It gives you a task board, execution controls, review gates, and agent operation
 
 ```bash
 python -m pip install -e ".[server]"
-feature-prd-runner server --project-dir /absolute/path/to/your/repo
+agent-orchestrator server --project-dir /absolute/path/to/your/repo
 ```
 
 Backend URL:

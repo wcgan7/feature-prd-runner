@@ -254,8 +254,8 @@ type CollaborationCommentItem = {
   parent_id?: string | null
 }
 
-const STORAGE_PROJECT = 'feature-prd-runner-v3-project'
-const STORAGE_ROUTE = 'feature-prd-runner-v3-route'
+const STORAGE_PROJECT = 'agent-orchestrator-v3-project'
+const STORAGE_ROUTE = 'agent-orchestrator-v3-route'
 const ADD_REPO_VALUE = '__add_new_repo__'
 const WS_RELOAD_CHANNELS = new Set(['tasks', 'queue', 'agents', 'review', 'quick_actions', 'notifications'])
 
@@ -2849,7 +2849,7 @@ export default function App() {
       <header className="topbar">
         <div>
           <p className="kicker">orchestrator-first</p>
-          <h1>Feature PRD Runner</h1>
+          <h1>Agent Orchestrator</h1>
         </div>
         <div className="topbar-actions">
           <select

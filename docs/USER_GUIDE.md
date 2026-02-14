@@ -2,7 +2,7 @@
 
 ## What This Tool Does
 
-Feature PRD Runner is an orchestration-first AI engineering control center.
+Agent Orchestrator is an orchestration-first AI engineering control center.
 The primary unit is a `Task`. You can create tasks directly, import them from a PRD,
 or run one-off quick actions.
 
@@ -19,7 +19,7 @@ Install backend dependencies and run server:
 
 ```bash
 python -m pip install -e ".[server]"
-feature-prd-runner server --project-dir /absolute/path/to/your/repo
+agent-orchestrator server --project-dir /absolute/path/to/your/repo
 ```
 
 Run the web dashboard:

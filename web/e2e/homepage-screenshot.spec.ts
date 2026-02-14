@@ -114,7 +114,7 @@ test('captures seeded homepage screenshot with varied board stages', async ({ pa
   await moveTaskTo(request, doneTaskId, 'done')
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Feature PRD Runner' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Agent Orchestrator' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Board' })).toBeVisible()
 
   const backlogColumn = page.locator('.board-col').filter({ has: page.getByRole('heading', { name: 'Backlog' }) })

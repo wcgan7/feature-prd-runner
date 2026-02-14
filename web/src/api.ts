@@ -1,4 +1,4 @@
-export const STORAGE_KEY_TOKEN = 'feature-prd-runner-auth-token'
+export const STORAGE_KEY_TOKEN = 'agent-orchestrator-auth-token'
 
 type QueryValue = string | number | boolean | null | undefined
 

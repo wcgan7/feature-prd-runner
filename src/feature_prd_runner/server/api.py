@@ -39,7 +39,7 @@ def create_app(
             app.state.import_jobs = {}
 
     app = FastAPI(
-        title="Feature PRD Runner",
+        title="Agent Orchestrator",
         description="Orchestrator-first AI engineering control center",
         version="3.0.0",
         lifespan=_lifespan,
@@ -91,7 +91,7 @@ def create_app(
     async def root(project_dir: Optional[str] = Query(None)) -> dict[str, object]:
         container = _resolve_container(project_dir)
         return {
-            "name": "Feature PRD Runner",
+            "name": "Agent Orchestrator",
             "version": "3.0.0",
             "project": str(container.project_dir),
             "project_id": container.project_id,

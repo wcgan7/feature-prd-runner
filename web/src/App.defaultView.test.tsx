@@ -358,7 +358,7 @@ describe('App default route', () => {
 
   it('ignores websocket events from other projects', async () => {
     const mockedFetch = global.fetch as unknown as ReturnType<typeof vi.fn>
-    localStorage.setItem('feature-prd-runner-v3-project', '/tmp/repo-alpha')
+    localStorage.setItem('agent-orchestrator-v3-project', '/tmp/repo-alpha')
     render(<App />)
 
     const boardCallCount = () =>
