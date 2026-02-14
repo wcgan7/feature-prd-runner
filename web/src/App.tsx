@@ -2067,7 +2067,8 @@ export default function App() {
 
     const ollamaEndpoint = settingsOllamaEndpoint.trim()
     const ollamaModel = settingsOllamaModel.trim()
-    if (ollamaEndpoint || ollamaModel || settingsWorkerDefault === 'ollama') {
+    const shouldConfigureOllama = Boolean(ollamaModel) || settingsWorkerDefault === 'ollama'
+    if (shouldConfigureOllama) {
       if (!ollamaEndpoint || !ollamaModel) {
         throw new Error('Ollama provider requires endpoint and model')
       }

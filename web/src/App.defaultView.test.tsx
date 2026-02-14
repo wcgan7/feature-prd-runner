@@ -84,13 +84,14 @@ describe('App default route', () => {
     })
   })
 
-  it('requests metrics and agent type compatibility endpoints during reload', async () => {
+  it('requests metrics and worker compatibility endpoints during reload', async () => {
     const mockedFetch = global.fetch as unknown as ReturnType<typeof vi.fn>
     render(<App />)
 
     await waitFor(() => {
       expect(mockedFetch.mock.calls.some(([url]) => String(url).includes('/api/metrics'))).toBe(true)
-      expect(mockedFetch.mock.calls.some(([url]) => String(url).includes('/api/agents/types'))).toBe(true)
+      expect(mockedFetch.mock.calls.some(([url]) => String(url).includes('/api/workers/health'))).toBe(true)
+      expect(mockedFetch.mock.calls.some(([url]) => String(url).includes('/api/workers/routing'))).toBe(true)
     })
   })
 
