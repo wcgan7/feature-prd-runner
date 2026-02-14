@@ -310,7 +310,7 @@ describe('App action coverage', () => {
       expect(body.status).toBe('in_progress')
     })
 
-    fireEvent.change(screen.getByLabelText(/Add blocker task ID/i), { target: { value: 'task-99' } })
+    fireEvent.change(screen.getByLabelText(/Add dependency task ID/i), { target: { value: 'task-99' } })
     fireEvent.click(screen.getByRole('button', { name: /Add dependency/i }))
     await waitFor(() => {
       const addDepCall = mockedFetch.mock.calls.find(([url, init]) =>

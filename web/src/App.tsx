@@ -2724,6 +2724,15 @@ export default function App() {
     const effectiveGenerateRevisionId = planGenerateRevisionId || selectedPlanRevisionId || selectedTaskPlan?.latest_revision_id || ''
     const blockerIds = selectedTaskView?.blocked_by || []
     const blockedIds = selectedTaskView?.blocks || []
+    const hasHumanBlockingIssues = Array.isArray(selectedTaskView?.human_blocking_issues) && selectedTaskView.human_blocking_issues.length > 0
+    const isBlockedTask = selectedTaskView?.status === 'blocked'
+    const isPlanTask = selectedTaskView?.task_type === 'plan' || selectedTaskView?.task_type === 'plan_only'
+    const hasPlanContent = planRevisions.length > 0 || selectedTaskPlanJobs.length > 0 || !!selectedTaskPlan?.active_refine_job
+    const openDependencies = isBlockedTask || blockerIds.length > 0 || blockedIds.length > 0
+    const openPlanning = isPlanTask || hasPlanContent || planJobLoading || planGenerateLoading || planSavingManual || planCommitting
+    const openTimeline = isBlockedTask || hasHumanBlockingIssues
+    const openFeedback = collaborationFeedback.length > 0
+    const openComments = collaborationComments.length > 0
     const queueTasks = [...(board.columns.ready || []), ...(board.columns.in_progress || [])]
     const totalExplorerItems = taskExplorerItems.length
     const explorerStart = (taskExplorerPage - 1) * taskExplorerPageSize
@@ -2735,65 +2744,7 @@ export default function App() {
         <p className="task-title">{selectedTaskView.title}</p>
         <p className="task-meta">{selectedTaskView.id} · {selectedTaskView.priority} · {humanizeLabel(selectedTaskView.status)} · {humanizeLabel(selectedTaskView.task_type || 'feature')}</p>
         {selectedTaskView.description ? <p className="task-desc">{selectedTaskView.description}</p> : <p className="task-desc">No description.</p>}
-        <p className="field-label">Blockers: {(selectedTaskView.blocked_by || []).join(', ') || 'None'}</p>
-        <div className="dependency-graph-panel">
-          <p className="field-label">Dependency graph</p>
-          <div className="dependency-graph-grid">
-            <div className="dependency-graph-column">
-              <p className="field-label">Blocked by</p>
-              {blockerIds.length > 0 ? (
-                blockerIds.map((depId) => {
-                  const dep = describeTask(depId, taskIndex)
-                  return (
-                    <div className="dependency-node dependency-node-blocker" key={`blocker-${depId}`}>
-                      <p className="dependency-node-title">{dep.label}</p>
-                      <p className="dependency-node-meta">{humanizeLabel(dep.status)} {'->'} depends on</p>
-                    </div>
-                  )
-                })
-              ) : (
-                <p className="empty">No blockers</p>
-              )}
-            </div>
-            <div className="dependency-graph-column dependency-graph-center">
-              <p className="field-label">Selected task</p>
-              <div className="dependency-node dependency-node-current">
-                <p className="dependency-node-title">{selectedTaskView.title} ({selectedTaskView.id})</p>
-                <p className="dependency-node-meta">{humanizeLabel(selectedTaskView.status)}</p>
-              </div>
-            </div>
-            <div className="dependency-graph-column">
-              <p className="field-label">Blocks</p>
-              {blockedIds.length > 0 ? (
-                blockedIds.map((depId) => {
-                  const dep = describeTask(depId, taskIndex)
-                  return (
-                    <div className="dependency-node dependency-node-dependent" key={`dependent-${depId}`}>
-                      <p className="dependency-node-title">{dep.label}</p>
-                      <p className="dependency-node-meta">blocked until done · {humanizeLabel(dep.status)}</p>
-                    </div>
-                  )
-                })
-              ) : (
-                <p className="empty">No dependents</p>
-              )}
-            </div>
-          </div>
-          {blockerIds.length > 0 || blockedIds.length > 0 ? (
-            <div className="dependency-edge-list">
-              {blockerIds.map((depId) => (
-                <p key={`edge-in-${depId}`} className="dependency-edge">
-                  {describeTask(depId, taskIndex).label} {'->'} {selectedTaskView.id}
-                </p>
-              ))}
-              {blockedIds.map((depId) => (
-                <p key={`edge-out-${depId}`} className="dependency-edge">
-                  {selectedTaskView.id} {'->'} {describeTask(depId, taskIndex).label}
-                </p>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        <p className="field-label">Depends on: {(selectedTaskView.blocked_by || []).join(', ') || 'None'}</p>
         {selectedTaskView.pending_gate ? (
           <div className="preview-box">
             <p className="field-label">
@@ -2826,89 +2777,160 @@ export default function App() {
             ))}
           </div>
         ) : null}
-        <div className="form-stack">
-          <label className="field-label" htmlFor="edit-task-title">Edit title</label>
-          <input id="edit-task-title" value={editTaskTitle} onChange={(event) => setEditTaskTitle(event.target.value)} />
-          <label className="field-label" htmlFor="edit-task-description">Edit description</label>
-          <textarea id="edit-task-description" rows={3} value={editTaskDescription} onChange={(event) => setEditTaskDescription(event.target.value)} />
-          <div className="inline-actions">
-            <select value={editTaskType} onChange={(event) => setEditTaskType(event.target.value)}>
-              {TASK_TYPE_OPTIONS.map((taskType) => (
-                <option key={taskType} value={taskType}>{humanizeLabel(taskType)}</option>
-              ))}
-            </select>
-            <select value={editTaskPriority} onChange={(event) => setEditTaskPriority(event.target.value)}>
-              <option value="P0">P0</option>
-              <option value="P1">P1</option>
-              <option value="P2">P2</option>
-              <option value="P3">P3</option>
-            </select>
-            <select value={editTaskApprovalMode} onChange={(event) => setEditTaskApprovalMode(event.target.value as 'human_review' | 'auto_approve')}>
-              <option value="human_review">{humanizeLabel('human_review')}</option>
-              <option value="auto_approve">{humanizeLabel('auto_approve')}</option>
-            </select>
-          </div>
-          <label className="field-label" htmlFor="edit-task-labels">Labels (comma-separated)</label>
-          <input id="edit-task-labels" value={editTaskLabels} onChange={(event) => setEditTaskLabels(event.target.value)} />
-          <label className="field-label">HITL mode</label>
-          <HITLModeSelector
-            currentMode={editTaskHitlMode}
-            onModeChange={setEditTaskHitlMode}
-            projectDir={projectDir}
-          />
-          <button className="button" onClick={() => void saveTaskEdits(selectedTaskView.id)}>Save edits</button>
-        </div>
-        <div className="inline-actions">
-          <button className="button" onClick={() => void taskAction(selectedTaskView.id, 'run')}>Run</button>
-          <button className="button" onClick={() => void taskAction(selectedTaskView.id, 'retry')}>Retry</button>
-          <button className="button button-danger" onClick={() => void taskAction(selectedTaskView.id, 'cancel')}>Cancel</button>
-        </div>
-        <div className="inline-actions">
-          <select value={selectedTaskTransition} onChange={(event) => setSelectedTaskTransition(event.target.value)}>
-            {TASK_STATUS_OPTIONS.map((status) => (
-              <option key={status} value={status}>{humanizeLabel(status)}</option>
-            ))}
-          </select>
-          <button className="button" onClick={() => void transitionTask(selectedTaskView.id)}>Transition</button>
-        </div>
-        <div className="form-stack">
-          <label className="field-label" htmlFor="task-blocker-input">Add blocker task ID</label>
-          <div className="inline-actions">
-            <input
-              id="task-blocker-input"
-              value={newDependencyId}
-              onChange={(event) => setNewDependencyId(event.target.value)}
-              placeholder="task-xxxxxxxxxx"
-            />
-            <button className="button" onClick={() => void addDependency(selectedTaskView.id)}>Add dependency</button>
-          </div>
-          {(selectedTaskView.blocked_by || []).map((depId) => (
-            <div className="row-card" key={depId}>
-              <p className="task-meta">{depId}</p>
-              <button className="button button-danger" onClick={() => void removeDependency(selectedTaskView.id, depId)}>
-                Remove
-              </button>
+        <details className="task-detail-section" open>
+          <summary>Task Controls</summary>
+          <div className="task-detail-section-body">
+            <div className="form-stack">
+              <label className="field-label" htmlFor="edit-task-title">Edit title</label>
+              <input id="edit-task-title" value={editTaskTitle} onChange={(event) => setEditTaskTitle(event.target.value)} />
+              <label className="field-label" htmlFor="edit-task-description">Edit description</label>
+              <textarea id="edit-task-description" rows={3} value={editTaskDescription} onChange={(event) => setEditTaskDescription(event.target.value)} />
+              <div className="inline-actions">
+                <select value={editTaskType} onChange={(event) => setEditTaskType(event.target.value)}>
+                  {TASK_TYPE_OPTIONS.map((taskType) => (
+                    <option key={taskType} value={taskType}>{humanizeLabel(taskType)}</option>
+                  ))}
+                </select>
+                <select value={editTaskPriority} onChange={(event) => setEditTaskPriority(event.target.value)}>
+                  <option value="P0">P0</option>
+                  <option value="P1">P1</option>
+                  <option value="P2">P2</option>
+                  <option value="P3">P3</option>
+                </select>
+                <select value={editTaskApprovalMode} onChange={(event) => setEditTaskApprovalMode(event.target.value as 'human_review' | 'auto_approve')}>
+                  <option value="human_review">{humanizeLabel('human_review')}</option>
+                  <option value="auto_approve">{humanizeLabel('auto_approve')}</option>
+                </select>
+              </div>
+              <label className="field-label" htmlFor="edit-task-labels">Labels (comma-separated)</label>
+              <input id="edit-task-labels" value={editTaskLabels} onChange={(event) => setEditTaskLabels(event.target.value)} />
+              <label className="field-label">HITL mode</label>
+              <HITLModeSelector
+                currentMode={editTaskHitlMode}
+                onModeChange={setEditTaskHitlMode}
+                projectDir={projectDir}
+              />
+              <button className="button" onClick={() => void saveTaskEdits(selectedTaskView.id)}>Save edits</button>
             </div>
-          ))}
-          <div className="inline-actions">
-            <button
-              className="button"
-              onClick={() => void analyzeDependencies()}
-              disabled={dependencyActionLoading}
-            >
-              Analyze dependencies
-            </button>
-            <button
-              className="button"
-              onClick={() => void resetDependencyAnalysis(selectedTaskView.id)}
-              disabled={dependencyActionLoading}
-            >
-              Reset inferred deps
-            </button>
+            <div className="inline-actions">
+              <button className="button" onClick={() => void taskAction(selectedTaskView.id, 'run')}>Run</button>
+              <button className="button" onClick={() => void taskAction(selectedTaskView.id, 'retry')}>Retry</button>
+              <button className="button button-danger" onClick={() => void taskAction(selectedTaskView.id, 'cancel')}>Cancel</button>
+            </div>
+            <div className="inline-actions">
+              <select value={selectedTaskTransition} onChange={(event) => setSelectedTaskTransition(event.target.value)}>
+                {TASK_STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>{humanizeLabel(status)}</option>
+                ))}
+              </select>
+              <button className="button" onClick={() => void transitionTask(selectedTaskView.id)}>Transition</button>
+            </div>
           </div>
-          {dependencyActionMessage ? <p className="field-label">{dependencyActionMessage}</p> : null}
-        </div>
-        <div className="list-stack">
+        </details>
+        <details className="task-detail-section" {...(openDependencies ? { open: true } : {})}>
+          <summary>Dependencies</summary>
+          <div className="task-detail-section-body">
+            <div className="dependency-graph-panel">
+              <p className="field-label">Dependency graph</p>
+              <div className="dependency-graph-grid">
+                <div className="dependency-graph-column">
+                  <p className="field-label">Depends on</p>
+                  {blockerIds.length > 0 ? (
+                    blockerIds.map((depId) => {
+                      const dep = describeTask(depId, taskIndex)
+                      return (
+                        <div className="dependency-node dependency-node-blocker" key={`blocker-${depId}`}>
+                          <p className="dependency-node-title">{dep.label}</p>
+                          <p className="dependency-node-meta">{humanizeLabel(dep.status)} {'->'} depends on</p>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <p className="empty">No dependencies</p>
+                  )}
+                </div>
+                <div className="dependency-graph-column dependency-graph-center">
+                  <p className="field-label">Selected task</p>
+                  <div className="dependency-node dependency-node-current">
+                    <p className="dependency-node-title">{selectedTaskView.title} ({selectedTaskView.id})</p>
+                    <p className="dependency-node-meta">{humanizeLabel(selectedTaskView.status)}</p>
+                  </div>
+                </div>
+                <div className="dependency-graph-column">
+                  <p className="field-label">Blocks</p>
+                  {blockedIds.length > 0 ? (
+                    blockedIds.map((depId) => {
+                      const dep = describeTask(depId, taskIndex)
+                      return (
+                        <div className="dependency-node dependency-node-dependent" key={`dependent-${depId}`}>
+                          <p className="dependency-node-title">{dep.label}</p>
+                          <p className="dependency-node-meta">depends on current task · {humanizeLabel(dep.status)}</p>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <p className="empty">No dependents</p>
+                  )}
+                </div>
+              </div>
+              {blockerIds.length > 0 || blockedIds.length > 0 ? (
+                <div className="dependency-edge-list">
+                  {blockerIds.map((depId) => (
+                    <p key={`edge-in-${depId}`} className="dependency-edge">
+                      {describeTask(depId, taskIndex).label} {'->'} {selectedTaskView.id}
+                    </p>
+                  ))}
+                  {blockedIds.map((depId) => (
+                    <p key={`edge-out-${depId}`} className="dependency-edge">
+                      {selectedTaskView.id} {'->'} {describeTask(depId, taskIndex).label}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className="form-stack">
+              <label className="field-label" htmlFor="task-blocker-input">Add dependency task ID</label>
+              <div className="inline-actions">
+                <input
+                  id="task-blocker-input"
+                  value={newDependencyId}
+                  onChange={(event) => setNewDependencyId(event.target.value)}
+                  placeholder="task-xxxxxxxxxx"
+                />
+                <button className="button" onClick={() => void addDependency(selectedTaskView.id)}>Add dependency</button>
+              </div>
+              {(selectedTaskView.blocked_by || []).map((depId) => (
+                <div className="row-card" key={depId}>
+                  <p className="task-meta">{depId}</p>
+                  <button className="button button-danger" onClick={() => void removeDependency(selectedTaskView.id, depId)}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <div className="inline-actions">
+                <button
+                  className="button"
+                  onClick={() => void analyzeDependencies()}
+                  disabled={dependencyActionLoading}
+                >
+                  Analyze dependencies
+                </button>
+                <button
+                  className="button"
+                  onClick={() => void resetDependencyAnalysis(selectedTaskView.id)}
+                  disabled={dependencyActionLoading}
+                >
+                  Reset inferred deps
+                </button>
+              </div>
+              {dependencyActionMessage ? <p className="field-label">{dependencyActionMessage}</p> : null}
+            </div>
+          </div>
+        </details>
+        <details className="task-detail-section" {...(openPlanning ? { open: true } : {})}>
+          <summary>Planning</summary>
+          <div className="task-detail-section-body">
+            <div className="list-stack">
           <p className="field-label">Planning</p>
           <div className="row-card">
             <p className="task-meta">
@@ -3112,32 +3134,42 @@ export default function App() {
           </div>
           {planActionError ? <p className="error-banner">{planActionError}</p> : null}
           {planActionMessage ? <p className="field-label">{planActionMessage}</p> : null}
-        </div>
-        <div className="list-stack">
-          <p className="field-label">Collaboration timeline</p>
-          {collaborationLoading ? <p className="field-label">Loading collaboration activity...</p> : null}
-          {collaborationTimeline.slice(0, 8).map((event) => (
-            <div className="row-card" key={event.id}>
-              <div>
-                <p className="task-title">{event.summary || humanizeLabel(event.type)}</p>
-                <p className="task-meta">{humanizeLabel(event.type)} · {event.actor} · {toLocaleTimestamp(event.timestamp) || '-'}</p>
-              </div>
-              {event.details ? <p className="task-desc">{event.details}</p> : null}
-              {event.human_blocking_issues && event.human_blocking_issues.length > 0 ? (
-                <div className="list-stack">
-                  <p className="field-label">Required human input</p>
-                  {event.human_blocking_issues.map((issue, idx) => (
-                    <p className="task-meta" key={`${event.id}-issue-${idx}`}>- {issue.summary}</p>
-                  ))}
-                </div>
-              ) : null}
             </div>
-          ))}
-          {collaborationTimeline.length === 0 && !collaborationLoading ? <p className="empty">No collaboration events for this task yet.</p> : null}
-        </div>
-        <div className="list-stack">
-          <p className="field-label">Feedback</p>
-          <div className="form-stack">
+          </div>
+        </details>
+        <details className="task-detail-section" {...(openTimeline ? { open: true } : {})}>
+          <summary>Collaboration Timeline</summary>
+          <div className="task-detail-section-body">
+            <div className="list-stack">
+              <p className="field-label">Collaboration timeline</p>
+              {collaborationLoading ? <p className="field-label">Loading collaboration activity...</p> : null}
+              {collaborationTimeline.slice(0, 8).map((event) => (
+                <div className="row-card timeline-event-card" key={event.id}>
+                  <div>
+                    <p className="task-title">{event.summary || humanizeLabel(event.type)}</p>
+                    <p className="task-meta">{humanizeLabel(event.type)} · {event.actor} · {toLocaleTimestamp(event.timestamp) || '-'}</p>
+                  </div>
+                  {event.details ? <p className="task-desc">{event.details}</p> : null}
+                  {event.human_blocking_issues && event.human_blocking_issues.length > 0 ? (
+                    <div className="list-stack">
+                      <p className="field-label">Required human input</p>
+                      {event.human_blocking_issues.map((issue, idx) => (
+                        <p className="task-meta" key={`${event.id}-issue-${idx}`}>- {issue.summary}</p>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+              {collaborationTimeline.length === 0 && !collaborationLoading ? <p className="empty">No collaboration events for this task yet.</p> : null}
+            </div>
+          </div>
+        </details>
+        <details className="task-detail-section" {...(openFeedback ? { open: true } : {})}>
+          <summary>Feedback</summary>
+          <div className="task-detail-section-body">
+            <div className="list-stack">
+              <p className="field-label">Feedback</p>
+              <div className="form-stack">
             <label className="field-label" htmlFor="feedback-summary">Summary</label>
             <input
               id="feedback-summary"
@@ -3175,29 +3207,34 @@ export default function App() {
             <button className="button" onClick={() => void submitFeedback(selectedTaskView.id)}>
               Add feedback
             </button>
-          </div>
-          {collaborationFeedback.map((item) => (
-            <div className="row-card" key={item.id}>
-              <div>
-                <p className="task-title">{item.summary}</p>
-                <p className="task-meta">
-                  {humanizeLabel(item.feedback_type)} · {humanizeLabel(item.priority)} · {humanizeLabel(item.status)}
-                </p>
-                {item.details ? <p className="task-desc">{item.details}</p> : null}
-                {item.target_file ? <p className="task-meta">file: {item.target_file}</p> : null}
               </div>
-              {item.status !== 'addressed' ? (
-                <button className="button" onClick={() => void dismissFeedback(selectedTaskView.id, item.id)}>
-                  Dismiss
-                </button>
-              ) : null}
+              {collaborationFeedback.map((item) => (
+                <div className="row-card" key={item.id}>
+                  <div>
+                    <p className="task-title">{item.summary}</p>
+                    <p className="task-meta">
+                      {humanizeLabel(item.feedback_type)} · {humanizeLabel(item.priority)} · {humanizeLabel(item.status)}
+                    </p>
+                    {item.details ? <p className="task-desc">{item.details}</p> : null}
+                    {item.target_file ? <p className="task-meta">file: {item.target_file}</p> : null}
+                  </div>
+                  {item.status !== 'addressed' ? (
+                    <button className="button" onClick={() => void dismissFeedback(selectedTaskView.id, item.id)}>
+                      Dismiss
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+              {collaborationFeedback.length === 0 ? <p className="empty">No feedback yet.</p> : null}
             </div>
-          ))}
-          {collaborationFeedback.length === 0 ? <p className="empty">No feedback yet.</p> : null}
-        </div>
-        <div className="list-stack">
-          <p className="field-label">Comments</p>
-          <div className="form-stack">
+          </div>
+        </details>
+        <details className="task-detail-section" {...(openComments ? { open: true } : {})}>
+          <summary>Comments</summary>
+          <div className="task-detail-section-body">
+            <div className="list-stack">
+              <p className="field-label">Comments</p>
+              <div className="form-stack">
             <label className="field-label" htmlFor="comment-file-path">File path</label>
             <input
               id="comment-file-path"
@@ -3222,24 +3259,26 @@ export default function App() {
             <button className="button" onClick={() => void submitComment(selectedTaskView.id)}>
               Add comment
             </button>
-          </div>
-          {collaborationComments.map((comment) => (
-            <div className="row-card" key={comment.id}>
-              <div>
-                <p className="task-title">{comment.file_path}:{comment.line_number}</p>
-                <p className="task-meta">{comment.author || 'human'} · {toLocaleTimestamp(comment.created_at) || '-'}</p>
-                <p className="task-desc">{comment.body}</p>
-                {comment.resolved ? <p className="task-meta">Resolved</p> : null}
               </div>
-              {!comment.resolved ? (
-                <button className="button" onClick={() => void resolveComment(selectedTaskView.id, comment.id)}>
-                  Resolve
-                </button>
-              ) : null}
+              {collaborationComments.map((comment) => (
+                <div className="row-card" key={comment.id}>
+                  <div>
+                    <p className="task-title">{comment.file_path}:{comment.line_number}</p>
+                    <p className="task-meta">{comment.author || 'human'} · {toLocaleTimestamp(comment.created_at) || '-'}</p>
+                    <p className="task-desc">{comment.body}</p>
+                    {comment.resolved ? <p className="task-meta">Resolved</p> : null}
+                  </div>
+                  {!comment.resolved ? (
+                    <button className="button" onClick={() => void resolveComment(selectedTaskView.id, comment.id)}>
+                      Resolve
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+              {collaborationComments.length === 0 ? <p className="empty">No comments yet.</p> : null}
             </div>
-          ))}
-          {collaborationComments.length === 0 ? <p className="empty">No comments yet.</p> : null}
-        </div>
+          </div>
+        </details>
         {collaborationError ? <p className="error-banner">{collaborationError}</p> : null}
         <p className="field-label">Activity: Review queue size is {reviewQueue.length}. Trigger actions from Review Queue.</p>
       </div>
@@ -3416,7 +3455,7 @@ export default function App() {
                   <span className="phase-progress-fill" style={{ width: `${progressPercent}%` }} />
                 </div>
                 <p className="task-meta">
-                  {progressPercent}% complete · {phase.deps.length > 0 ? `deps: ${phase.deps.join(', ')}` : 'no blockers'}
+                  {progressPercent}% complete{phase.deps.length > 0 ? ` · depends on: ${phase.deps.join(', ')}` : ''}
                 </p>
               </div>
             )
@@ -4217,7 +4256,7 @@ export default function App() {
                         onChange={(event) => setNewTaskLabels(event.target.value)}
                         placeholder="frontend, urgent"
                       />
-                      <label className="field-label" htmlFor="task-blocked-by">Blocked by task IDs (comma-separated)</label>
+                      <label className="field-label" htmlFor="task-blocked-by">Depends on task IDs (comma-separated)</label>
                       <input
                         id="task-blocked-by"
                         value={newTaskBlockedBy}
