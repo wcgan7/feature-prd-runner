@@ -20,7 +20,7 @@ from .worker_adapter import StepResult
 logger = logging.getLogger(__name__)
 
 # Step category mapping
-_PLANNING_STEPS = {"plan", "plan_impl", "analyze"}
+_PLANNING_STEPS = {"plan", "plan_impl", "analyze", "plan_refine"}
 _IMPL_STEPS = {"implement", "implement_fix", "prototype"}
 _VERIFY_STEPS = {"verify", "benchmark", "reproduce"}
 _REVIEW_STEPS = {"review"}
@@ -356,6 +356,27 @@ def build_step_prompt(
             "(array of task indices) to specify execution order where needed."
         )
 
+    # Include context for iterative plan refinement.
+    if category == "planning" and step == "plan_refine" and isinstance(task.metadata, dict):
+        base_plan = str(task.metadata.get("plan_refine_base") or "").strip()
+        feedback = str(task.metadata.get("plan_refine_feedback") or "").strip()
+        instructions = str(task.metadata.get("plan_refine_instructions") or "").strip()
+        if base_plan:
+            parts.append("")
+            parts.append("## Base plan")
+            parts.append(base_plan)
+        if feedback:
+            parts.append("")
+            parts.append("## Feedback to address")
+            parts.append(feedback)
+        if instructions:
+            parts.append("")
+            parts.append("## Additional instructions")
+            parts.append(instructions)
+        if not is_codex:
+            parts.append("")
+            parts.append("Return a full rewritten plan in the `plan` field.")
+
     # Include merge conflict context for resolve_merge step
     if category == "merge_resolution" and isinstance(task.metadata, dict):
         conflict_files = task.metadata.get("merge_conflict_files")
@@ -562,6 +583,21 @@ class LiveWorkerAdapter:
         category = _step_category(step)
         if category == "dependency_analysis" and result.response_text:
             return self._parse_dep_analysis_output(result.response_text)
+
+        if category == "planning" and result.response_text:
+            parsed = _extract_json(result.response_text)
+            if isinstance(parsed, dict):
+                summary = parsed.get("plan") or parsed.get("summary")
+                if summary:
+                    return StepResult(status="ok", summary=str(summary))
+            return StepResult(status="ok", summary=result.response_text[:20000])
+
+        if category == "task_generation" and result.response_text:
+            parsed = _extract_json(result.response_text)
+            if isinstance(parsed, dict):
+                tasks = parsed.get("tasks")
+                if isinstance(tasks, list):
+                    return StepResult(status="ok", generated_tasks=tasks)
 
         # Parse structured output for ollama
         if spec.type == "ollama" and result.response_text:

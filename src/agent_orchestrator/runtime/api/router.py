@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -75,7 +75,26 @@ class PromoteQuickActionRequest(BaseModel):
     priority: str = "P2"
 
 
+class PlanRefineRequest(BaseModel):
+    base_revision_id: Optional[str] = None
+    feedback: str
+    instructions: Optional[str] = None
+    priority: Literal["normal", "high"] = "normal"
+
+
+class CommitPlanRequest(BaseModel):
+    revision_id: str
+
+
+class CreatePlanRevisionRequest(BaseModel):
+    content: str
+    parent_revision_id: Optional[str] = None
+    feedback_note: Optional[str] = None
+
+
 class GenerateTasksRequest(BaseModel):
+    source: Optional[Literal["committed", "revision", "override", "latest"]] = None
+    revision_id: Optional[str] = None
     plan_override: Optional[str] = None
     infer_deps: bool = True
 
@@ -968,11 +987,102 @@ def create_router(
         task = container.tasks.get(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-        plans = metadata.get("plans")
-        if not isinstance(plans, list):
-            plans = []
-        return {"plans": plans, "latest": plans[-1] if plans else None}
+        orchestrator = resolve_orchestrator(project_dir)
+        try:
+            return orchestrator.get_plan_document(task_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @router.post("/tasks/{task_id}/plan/refine")
+    async def refine_task_plan(
+        task_id: str,
+        body: PlanRefineRequest,
+        project_dir: Optional[str] = Query(None),
+    ) -> dict[str, Any]:
+        container, _, orchestrator = _ctx(project_dir)
+        if not container.tasks.get(task_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not str(body.feedback or "").strip():
+            raise HTTPException(status_code=400, detail="feedback is required")
+        try:
+            job = orchestrator.queue_plan_refine_job(
+                task_id=task_id,
+                base_revision_id=body.base_revision_id,
+                feedback=body.feedback,
+                instructions=body.instructions,
+                priority=body.priority,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"job": job.to_dict()}
+
+    @router.get("/tasks/{task_id}/plan/jobs")
+    async def list_plan_refine_jobs(task_id: str, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
+        container, _, orchestrator = _ctx(project_dir)
+        if not container.tasks.get(task_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+        try:
+            jobs = orchestrator.list_plan_refine_jobs(task_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"jobs": [job.to_dict() for job in jobs]}
+
+    @router.get("/tasks/{task_id}/plan/jobs/{job_id}")
+    async def get_plan_refine_job(task_id: str, job_id: str, project_dir: Optional[str] = Query(None)) -> dict[str, Any]:
+        container, _, orchestrator = _ctx(project_dir)
+        if not container.tasks.get(task_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+        try:
+            job = orchestrator.get_plan_refine_job(task_id, job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"job": job.to_dict()}
+
+    @router.post("/tasks/{task_id}/plan/commit")
+    async def commit_plan_revision(
+        task_id: str,
+        body: CommitPlanRequest,
+        project_dir: Optional[str] = Query(None),
+    ) -> dict[str, Any]:
+        container, _, orchestrator = _ctx(project_dir)
+        if not container.tasks.get(task_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+        try:
+            committed_revision_id = orchestrator.commit_plan_revision(task_id, body.revision_id)
+            plan_doc = orchestrator.get_plan_document(task_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {
+            "committed_revision_id": committed_revision_id,
+            "latest_revision_id": plan_doc.get("latest_revision_id"),
+            "committed_plan_revision_id": plan_doc.get("committed_revision_id"),
+        }
+
+    @router.post("/tasks/{task_id}/plan/revisions")
+    async def create_plan_revision(
+        task_id: str,
+        body: CreatePlanRevisionRequest,
+        project_dir: Optional[str] = Query(None),
+    ) -> dict[str, Any]:
+        container, _, orchestrator = _ctx(project_dir)
+        if not container.tasks.get(task_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not str(body.content or "").strip():
+            raise HTTPException(status_code=400, detail="content is required")
+        try:
+            revision = orchestrator.create_plan_revision(
+                task_id=task_id,
+                content=body.content,
+                source="human_edit",
+                parent_revision_id=body.parent_revision_id,
+                feedback_note=body.feedback_note,
+                step=None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"revision": revision.to_dict()}
 
     @router.post("/tasks/{task_id}/generate-tasks")
     async def generate_tasks_from_plan(
@@ -982,17 +1092,27 @@ def create_router(
         task = container.tasks.get(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-
-        # Determine plan text: explicit override or latest stored plan
-        plan_text = body.plan_override
-        if not plan_text:
-            plans = metadata.get("plans")
-            if not isinstance(plans, list) or not plans:
-                raise HTTPException(status_code=400, detail="No plan available. Run a plan step first or provide plan_override.")
-            plan_text = str(plans[-1].get("content") or "")
-            if not plan_text.strip():
-                raise HTTPException(status_code=400, detail="Latest plan has no content. Provide plan_override.")
+        source = body.source
+        if source is None:
+            # Backward compatibility: previous API accepted only optional plan_override.
+            source = "override" if str(body.plan_override or "").strip() else "latest"
+        if source == "revision" and not body.revision_id:
+            raise HTTPException(status_code=400, detail="revision_id is required when source=revision")
+        if source == "override" and not str(body.plan_override or "").strip():
+            raise HTTPException(status_code=400, detail="plan_override is required when source=override")
+        if source != "revision" and body.revision_id:
+            raise HTTPException(status_code=400, detail="revision_id is only valid when source=revision")
+        if source != "override" and str(body.plan_override or "").strip():
+            raise HTTPException(status_code=400, detail="plan_override is only valid when source=override")
+        try:
+            plan_text, resolved_revision_id = orchestrator.resolve_plan_text_for_generation(
+                task_id=task_id,
+                source=source,
+                revision_id=body.revision_id,
+                plan_override=body.plan_override,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
         try:
             created_ids = orchestrator.generate_tasks_from_plan(task_id, plan_text, infer_deps=body.infer_deps)
@@ -1006,6 +1126,8 @@ def create_router(
             "task": _task_payload(updated_task) if updated_task else None,
             "created_task_ids": created_ids,
             "children": children,
+            "source": source,
+            "source_revision_id": resolved_revision_id,
         }
 
     @router.post("/import/prd/preview")

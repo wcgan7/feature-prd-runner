@@ -265,6 +265,46 @@ type CollaborationCommentItem = {
   parent_id?: string | null
 }
 
+type PlanRevisionRecord = {
+  id: string
+  task_id: string
+  created_at: string
+  source: 'worker_plan' | 'worker_refine' | 'human_edit' | 'import'
+  parent_revision_id?: string | null
+  step?: string | null
+  feedback_note?: string | null
+  provider?: string | null
+  model?: string | null
+  content: string
+  content_hash: string
+  status: 'draft' | 'committed'
+}
+
+type PlanRefineJobRecord = {
+  id: string
+  task_id: string
+  base_revision_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  created_at: string
+  started_at?: string | null
+  finished_at?: string | null
+  feedback: string
+  instructions?: string | null
+  priority?: 'normal' | 'high'
+  result_revision_id?: string | null
+  error?: string | null
+}
+
+type TaskPlanDocument = {
+  task_id: string
+  latest_revision_id?: string | null
+  committed_revision_id?: string | null
+  revisions: PlanRevisionRecord[]
+  active_refine_job?: PlanRefineJobRecord | null
+  plans: Array<{ step?: string | null; ts?: string | null; content?: string }>
+  latest?: { step?: string | null; ts?: string | null; content?: string } | null
+}
+
 const STORAGE_PROJECT = 'agent-orchestrator-project'
 const STORAGE_ROUTE = 'agent-orchestrator-route'
 const ADD_REPO_VALUE = '__add_new_repo__'
@@ -281,6 +321,7 @@ const ROUTES: Array<{ key: RouteKey; label: string }> = [
 
 const TASK_TYPE_OPTIONS = [
   'feature',
+  'plan',
   'bug',
   'refactor',
   'research',
@@ -851,6 +892,98 @@ function normalizeComments(payload: unknown): CollaborationCommentItem[] {
     .filter((item) => !!item.id)
 }
 
+function normalizePlanRevision(item: unknown): PlanRevisionRecord | null {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return null
+  const raw = item as Record<string, unknown>
+  const id = String(raw.id || '').trim()
+  const taskId = String(raw.task_id || '').trim()
+  const content = String(raw.content || '')
+  if (!id || !taskId) return null
+  const sourceRaw = String(raw.source || 'human_edit').trim()
+  const source: PlanRevisionRecord['source'] = (
+    sourceRaw === 'worker_plan' || sourceRaw === 'worker_refine' || sourceRaw === 'import'
+  ) ? sourceRaw : 'human_edit'
+  const statusRaw = String(raw.status || 'draft').trim()
+  const status: PlanRevisionRecord['status'] = statusRaw === 'committed' ? 'committed' : 'draft'
+  return {
+    id,
+    task_id: taskId,
+    created_at: String(raw.created_at || ''),
+    source,
+    parent_revision_id: raw.parent_revision_id ? String(raw.parent_revision_id) : null,
+    step: raw.step ? String(raw.step) : null,
+    feedback_note: raw.feedback_note ? String(raw.feedback_note) : null,
+    provider: raw.provider ? String(raw.provider) : null,
+    model: raw.model ? String(raw.model) : null,
+    content,
+    content_hash: String(raw.content_hash || ''),
+    status,
+  }
+}
+
+function normalizePlanRefineJob(item: unknown): PlanRefineJobRecord | null {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return null
+  const raw = item as Record<string, unknown>
+  const id = String(raw.id || '').trim()
+  const taskId = String(raw.task_id || '').trim()
+  const baseRevisionId = String(raw.base_revision_id || '').trim()
+  if (!id || !taskId || !baseRevisionId) return null
+  const statusRaw = String(raw.status || 'queued').trim()
+  const status: PlanRefineJobRecord['status'] = (
+    statusRaw === 'running' || statusRaw === 'completed' || statusRaw === 'failed' || statusRaw === 'cancelled'
+  ) ? statusRaw : 'queued'
+  const priorityRaw = String(raw.priority || 'normal').trim()
+  const priority: PlanRefineJobRecord['priority'] = priorityRaw === 'high' ? 'high' : 'normal'
+  return {
+    id,
+    task_id: taskId,
+    base_revision_id: baseRevisionId,
+    status,
+    created_at: String(raw.created_at || ''),
+    started_at: raw.started_at ? String(raw.started_at) : null,
+    finished_at: raw.finished_at ? String(raw.finished_at) : null,
+    feedback: String(raw.feedback || ''),
+    instructions: raw.instructions ? String(raw.instructions) : null,
+    priority,
+    result_revision_id: raw.result_revision_id ? String(raw.result_revision_id) : null,
+    error: raw.error ? String(raw.error) : null,
+  }
+}
+
+function normalizeTaskPlan(payload: unknown): TaskPlanDocument {
+  const root = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {}
+  const revisionsRaw = Array.isArray(root.revisions) ? root.revisions : []
+  const revisions = revisionsRaw.map((item) => normalizePlanRevision(item)).filter((item): item is PlanRevisionRecord => item !== null)
+  const plansRaw = Array.isArray(root.plans) ? root.plans : []
+  const plans = plansRaw
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
+    .map((item) => ({ step: item.step ? String(item.step) : null, ts: item.ts ? String(item.ts) : null, content: item.content ? String(item.content) : '' }))
+  const latestRaw = root.latest && typeof root.latest === 'object' && !Array.isArray(root.latest)
+    ? root.latest as Record<string, unknown>
+    : null
+  return {
+    task_id: String(root.task_id || ''),
+    latest_revision_id: root.latest_revision_id ? String(root.latest_revision_id) : null,
+    committed_revision_id: root.committed_revision_id ? String(root.committed_revision_id) : null,
+    revisions,
+    active_refine_job: normalizePlanRefineJob(root.active_refine_job || null),
+    plans,
+    latest: latestRaw ? { step: latestRaw.step ? String(latestRaw.step) : null, ts: latestRaw.ts ? String(latestRaw.ts) : null, content: latestRaw.content ? String(latestRaw.content) : '' } : null,
+  }
+}
+
+function normalizePlanRefineJobs(payload: unknown): PlanRefineJobRecord[] {
+  const root = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {}
+  const jobsRaw = Array.isArray(root.jobs) ? root.jobs : []
+  return jobsRaw
+    .map((item) => normalizePlanRefineJob(item))
+    .filter((item): item is PlanRefineJobRecord => item !== null)
+}
+
 function toLocaleTimestamp(value?: string | null): string {
   if (!value) return ''
   const parsed = new Date(value)
@@ -870,6 +1003,25 @@ function repoNameFromPath(projectPath: string): string {
   if (!normalized) return ''
   const parts = normalized.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] || normalized
+}
+
+function summarizePlanDiff(nextText: string, prevText: string): { added: number; removed: number; preview: string[] } {
+  const nextLines = nextText.split('\n')
+  const prevSet = new Set(prevText.split('\n'))
+  const nextSet = new Set(nextLines)
+  let added = 0
+  for (const line of nextLines) {
+    if (!prevSet.has(line)) added += 1
+  }
+  let removed = 0
+  for (const line of prevSet) {
+    if (!nextSet.has(line)) removed += 1
+  }
+  const preview = nextLines
+    .filter((line) => !prevSet.has(line))
+    .map((line) => `+ ${line}`.trimEnd())
+    .slice(0, 8)
+  return { added, removed, preview }
 }
 
 export default function App() {
@@ -899,6 +1051,23 @@ export default function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string>('')
   const [selectedTaskDetail, setSelectedTaskDetail] = useState<TaskRecord | null>(null)
   const [selectedTaskDetailLoading, setSelectedTaskDetailLoading] = useState(false)
+  const [selectedTaskPlan, setSelectedTaskPlan] = useState<TaskPlanDocument | null>(null)
+  const [selectedTaskPlanJobs, setSelectedTaskPlanJobs] = useState<PlanRefineJobRecord[]>([])
+  const [selectedPlanRevisionId, setSelectedPlanRevisionId] = useState('')
+  const [planManualContent, setPlanManualContent] = useState('')
+  const [planManualFeedbackNote, setPlanManualFeedbackNote] = useState('')
+  const [planRefineFeedback, setPlanRefineFeedback] = useState('')
+  const [planRefineInstructions, setPlanRefineInstructions] = useState('')
+  const [planJobLoading, setPlanJobLoading] = useState(false)
+  const [planSavingManual, setPlanSavingManual] = useState(false)
+  const [planCommitting, setPlanCommitting] = useState(false)
+  const [planGenerateLoading, setPlanGenerateLoading] = useState(false)
+  const [planGenerateSource, setPlanGenerateSource] = useState<'committed' | 'revision' | 'override' | 'latest'>('latest')
+  const [planGenerateRevisionId, setPlanGenerateRevisionId] = useState('')
+  const [planGenerateOverride, setPlanGenerateOverride] = useState('')
+  const [planGenerateInferDeps, setPlanGenerateInferDeps] = useState(true)
+  const [planActionMessage, setPlanActionMessage] = useState('')
+  const [planActionError, setPlanActionError] = useState('')
   const [mobileTaskDetailOpen, setMobileTaskDetailOpen] = useState(false)
   const [editTaskTitle, setEditTaskTitle] = useState('')
   const [editTaskDescription, setEditTaskDescription] = useState('')
@@ -1241,6 +1410,7 @@ export default function App() {
       }
       const task = detail.task
       setSelectedTaskDetail(task)
+      void loadTaskPlan(taskId)
       setEditTaskTitle(task.title || '')
       setEditTaskDescription(task.description || '')
       setEditTaskType(task.task_type || 'feature')
@@ -1253,6 +1423,7 @@ export default function App() {
         return
       }
       setSelectedTaskDetail(null)
+      setSelectedTaskPlan(null)
     } finally {
       if (requestSeq === taskDetailRequestSeqRef.current) {
         setSelectedTaskDetailLoading(false)
@@ -1260,8 +1431,67 @@ export default function App() {
     }
   }
 
+  async function loadTaskPlan(taskId: string): Promise<void> {
+    if (!taskId) {
+      setSelectedTaskPlan(null)
+      setSelectedTaskPlanJobs([])
+      setSelectedPlanRevisionId('')
+      return
+    }
+    try {
+      const payload = await requestJson<unknown>(buildApiUrl(`/api/tasks/${taskId}/plan`, projectDir))
+      if (selectedTaskIdRef.current !== taskId) {
+        return
+      }
+      const planDoc = normalizeTaskPlan(payload)
+      setSelectedTaskPlan(planDoc)
+      void loadTaskPlanJobs(taskId)
+      const committedOrLatest = planDoc.committed_revision_id || planDoc.latest_revision_id || ''
+      setSelectedPlanRevisionId((prev) => {
+        if (prev && planDoc.revisions.some((item) => item.id === prev)) {
+          return prev
+        }
+        return committedOrLatest
+      })
+      setPlanGenerateRevisionId((prev) => {
+        if (prev && planDoc.revisions.some((item) => item.id === prev)) {
+          return prev
+        }
+        return committedOrLatest
+      })
+      setPlanActionError('')
+    } catch (err) {
+      if (selectedTaskIdRef.current !== taskId) {
+        return
+      }
+      setSelectedTaskPlan(null)
+      setSelectedTaskPlanJobs([])
+      setPlanActionError(toErrorMessage('Failed to load planning data', err))
+    }
+  }
+
+  async function loadTaskPlanJobs(taskId: string): Promise<void> {
+    try {
+      const payload = await requestJson<unknown>(buildApiUrl(`/api/tasks/${taskId}/plan/jobs`, projectDir))
+      if (selectedTaskIdRef.current !== taskId) return
+      setSelectedTaskPlanJobs(normalizePlanRefineJobs(payload))
+    } catch {
+      if (selectedTaskIdRef.current !== taskId) return
+      setSelectedTaskPlanJobs([])
+    }
+  }
+
   useEffect(() => {
-    if (!selectedTaskId) return
+    if (!selectedTaskId) {
+      setSelectedTaskPlan(null)
+      setSelectedTaskPlanJobs([])
+      setSelectedPlanRevisionId('')
+      setPlanActionMessage('')
+      setPlanActionError('')
+      return
+    }
+    setPlanActionMessage('')
+    setPlanActionError('')
     void loadTaskDetail(selectedTaskId)
   }, [selectedTaskId, projectDir])
 
@@ -1427,6 +1657,17 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [workOpen, createTab, selectedImportJobId, selectedImportJob, projectDir])
 
+  useEffect(() => {
+    if (!selectedTaskId) return
+    const activeJob = selectedTaskPlan?.active_refine_job
+    if (!activeJob) return
+    if (!(activeJob.status === 'queued' || activeJob.status === 'running')) return
+    const timer = window.setInterval(() => {
+      void loadTaskPlan(selectedTaskId)
+    }, 2_000)
+    return () => window.clearInterval(timer)
+  }, [selectedTaskId, selectedTaskPlan?.active_refine_job?.id, selectedTaskPlan?.active_refine_job?.status, projectDir])
+
   async function loadQuickActionDetail(quickActionId: string): Promise<void> {
     if (!quickActionId) {
       setSelectedQuickActionDetail(null)
@@ -1482,6 +1723,7 @@ export default function App() {
       const selectedTask = String(selectedTaskIdRef.current || '').trim()
       if (selectedTask) {
         void loadTaskDetail(selectedTask)
+        void loadTaskPlan(selectedTask)
       }
     } catch (err) {
       if (refreshProjectDir !== projectDirRef.current) {
@@ -1946,6 +2188,127 @@ export default function App() {
     }
   }
 
+  async function refineTaskPlan(taskId: string): Promise<void> {
+    if (!planRefineFeedback.trim()) {
+      setPlanActionError('Refine feedback is required.')
+      return
+    }
+    setPlanJobLoading(true)
+    setPlanActionMessage('')
+    setPlanActionError('')
+    try {
+      const baseRevisionId = selectedPlanRevisionId || selectedTaskPlan?.latest_revision_id || undefined
+      await requestJson<{ job: PlanRefineJobRecord }>(buildApiUrl(`/api/tasks/${taskId}/plan/refine`, projectDir), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base_revision_id: baseRevisionId,
+          feedback: planRefineFeedback.trim(),
+          instructions: planRefineInstructions.trim() || undefined,
+          priority: 'normal',
+        }),
+      })
+      setPlanActionMessage('Plan refine job queued.')
+      setPlanRefineFeedback('')
+      setPlanRefineInstructions('')
+      await loadTaskPlan(taskId)
+    } catch (err) {
+      setPlanActionError(toErrorMessage('Failed to queue plan refine job', err))
+    } finally {
+      setPlanJobLoading(false)
+    }
+  }
+
+  async function saveManualPlanRevision(taskId: string): Promise<void> {
+    if (!planManualContent.trim()) {
+      setPlanActionError('Manual revision content is required.')
+      return
+    }
+    setPlanSavingManual(true)
+    setPlanActionMessage('')
+    setPlanActionError('')
+    try {
+      const resp = await requestJson<{ revision: PlanRevisionRecord }>(buildApiUrl(`/api/tasks/${taskId}/plan/revisions`, projectDir), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: planManualContent,
+          parent_revision_id: selectedPlanRevisionId || selectedTaskPlan?.latest_revision_id || undefined,
+          feedback_note: planManualFeedbackNote.trim() || undefined,
+        }),
+      })
+      setPlanManualContent('')
+      setPlanManualFeedbackNote('')
+      setSelectedPlanRevisionId(resp.revision.id)
+      setPlanActionMessage('Manual plan revision saved.')
+      await loadTaskPlan(taskId)
+    } catch (err) {
+      setPlanActionError(toErrorMessage('Failed to save manual plan revision', err))
+    } finally {
+      setPlanSavingManual(false)
+    }
+  }
+
+  async function commitPlanRevision(taskId: string, revisionId: string): Promise<void> {
+    if (!revisionId) {
+      setPlanActionError('Select a plan revision to commit.')
+      return
+    }
+    setPlanCommitting(true)
+    setPlanActionMessage('')
+    setPlanActionError('')
+    try {
+      await requestJson<{ committed_revision_id: string }>(buildApiUrl(`/api/tasks/${taskId}/plan/commit`, projectDir), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revision_id: revisionId }),
+      })
+      setPlanActionMessage('Committed selected plan revision.')
+      await loadTaskPlan(taskId)
+    } catch (err) {
+      setPlanActionError(toErrorMessage('Failed to commit plan revision', err))
+    } finally {
+      setPlanCommitting(false)
+    }
+  }
+
+  async function generateTasksFromPlan(taskId: string): Promise<void> {
+    setPlanGenerateLoading(true)
+    setPlanActionMessage('')
+    setPlanActionError('')
+    try {
+      const payload: Record<string, unknown> = {
+        source: planGenerateSource,
+        infer_deps: planGenerateInferDeps,
+      }
+      if (planGenerateSource === 'revision') {
+        const revisionId = planGenerateRevisionId || selectedPlanRevisionId || selectedTaskPlan?.latest_revision_id || ''
+        if (!revisionId) {
+          throw new Error('Choose a revision source before generating.')
+        }
+        payload.revision_id = revisionId
+      }
+      if (planGenerateSource === 'override') {
+        if (!planGenerateOverride.trim()) {
+          throw new Error('Manual override plan text is required.')
+        }
+        payload.plan_override = planGenerateOverride
+      }
+      const result = await requestJson<{ created_task_ids: string[] }>(buildApiUrl(`/api/tasks/${taskId}/generate-tasks`, projectDir), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      setPlanActionMessage(`Generated ${result.created_task_ids?.length || 0} task(s) from plan.`)
+      await reloadAll()
+      await loadTaskPlan(taskId)
+    } catch (err) {
+      setPlanActionError(toErrorMessage('Failed to generate tasks', err))
+    } finally {
+      setPlanGenerateLoading(false)
+    }
+  }
+
   async function submitFeedback(taskId: string): Promise<void> {
     if (!feedbackSummary.trim()) return
     setCollaborationError('')
@@ -2350,6 +2713,15 @@ export default function App() {
     }
     const selectedTask = allTasks.find((task) => task.id === selectedTaskId) || allTasks[0]
     const selectedTaskView = selectedTaskDetail && selectedTask && selectedTaskDetail.id === selectedTask.id ? selectedTaskDetail : selectedTask
+    const planRevisions = selectedTaskPlan?.revisions || []
+    const selectedPlanRevision = planRevisions.find((item) => item.id === selectedPlanRevisionId) || null
+    const selectedPlanParentRevision = selectedPlanRevision?.parent_revision_id
+      ? planRevisions.find((item) => item.id === selectedPlanRevision.parent_revision_id) || null
+      : null
+    const selectedPlanDiff = selectedPlanRevision && selectedPlanParentRevision
+      ? summarizePlanDiff(selectedPlanRevision.content || '', selectedPlanParentRevision.content || '')
+      : null
+    const effectiveGenerateRevisionId = planGenerateRevisionId || selectedPlanRevisionId || selectedTaskPlan?.latest_revision_id || ''
     const blockerIds = selectedTaskView?.blocked_by || []
     const blockedIds = selectedTaskView?.blocks || []
     const queueTasks = [...(board.columns.ready || []), ...(board.columns.in_progress || [])]
@@ -2535,6 +2907,211 @@ export default function App() {
             </button>
           </div>
           {dependencyActionMessage ? <p className="field-label">{dependencyActionMessage}</p> : null}
+        </div>
+        <div className="list-stack">
+          <p className="field-label">Planning</p>
+          <div className="row-card">
+            <p className="task-meta">
+              Latest: {selectedTaskPlan?.latest_revision_id || '-'} · Committed: {selectedTaskPlan?.committed_revision_id || '-'}
+            </p>
+            {selectedTaskPlan?.active_refine_job ? (
+              <p className="task-meta">
+                Refine job: {selectedTaskPlan.active_refine_job.id} · {humanizeLabel(selectedTaskPlan.active_refine_job.status)}
+              </p>
+            ) : (
+              <p className="task-meta">No active refine job.</p>
+            )}
+          </div>
+          <label className="field-label" htmlFor="plan-revision-selector">Select revision</label>
+          <select
+            id="plan-revision-selector"
+            value={selectedPlanRevisionId}
+            onChange={(event) => {
+              setSelectedPlanRevisionId(event.target.value)
+              setPlanGenerateRevisionId(event.target.value)
+            }}
+          >
+            <option value="">(latest)</option>
+            {planRevisions.map((revision) => (
+              <option key={revision.id} value={revision.id}>
+                {revision.id} · {humanizeLabel(revision.source)} · {toLocaleTimestamp(revision.created_at) || revision.created_at}
+              </option>
+            ))}
+          </select>
+          {selectedPlanRevision ? (
+            <div className="preview-box">
+              <p className="task-meta">
+                {humanizeLabel(selectedPlanRevision.source)}
+                {selectedPlanRevision.step ? ` · ${humanizeLabel(selectedPlanRevision.step)}` : ''}
+                {selectedPlanRevision.provider ? ` · ${selectedPlanRevision.provider}` : ''}
+                {selectedPlanRevision.model ? `/${selectedPlanRevision.model}` : ''}
+                {' · '}
+                {humanizeLabel(selectedPlanRevision.status)}
+              </p>
+              <p className="task-meta">
+                revision: {selectedPlanRevision.id}
+                {selectedPlanRevision.parent_revision_id ? ` · parent: ${selectedPlanRevision.parent_revision_id}` : ''}
+                {selectedPlanRevision.feedback_note ? ` · note: ${selectedPlanRevision.feedback_note}` : ''}
+              </p>
+              <p className="task-meta">
+                created: {toLocaleTimestamp(selectedPlanRevision.created_at) || selectedPlanRevision.created_at}
+                {selectedPlanRevision.content_hash ? ` · sha256: ${selectedPlanRevision.content_hash.slice(0, 12)}...` : ''}
+              </p>
+              <textarea
+                rows={7}
+                value={selectedPlanRevision.content}
+                readOnly
+                aria-label="Selected plan revision content"
+              />
+              {selectedPlanDiff ? (
+                <div className="list-stack">
+                  <p className="task-meta">
+                    Compared to parent: +{selectedPlanDiff.added} / -{selectedPlanDiff.removed} lines
+                  </p>
+                  {selectedPlanDiff.preview.length > 0 ? (
+                    <textarea
+                      rows={4}
+                      value={selectedPlanDiff.preview.join('\n')}
+                      readOnly
+                      aria-label="Plan diff preview"
+                    />
+                  ) : (
+                    <p className="empty">No added lines versus parent revision.</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="empty">No plan revision selected.</p>
+          )}
+
+          <div className="form-stack">
+            <label className="field-label" htmlFor="plan-refine-feedback">Refine with worker: feedback</label>
+            <textarea
+              id="plan-refine-feedback"
+              rows={3}
+              value={planRefineFeedback}
+              onChange={(event) => setPlanRefineFeedback(event.target.value)}
+              placeholder="Describe what should change in the plan."
+            />
+            <label className="field-label" htmlFor="plan-refine-instructions">Additional instructions (optional)</label>
+            <textarea
+              id="plan-refine-instructions"
+              rows={2}
+              value={planRefineInstructions}
+              onChange={(event) => setPlanRefineInstructions(event.target.value)}
+              placeholder="Constraints, acceptance criteria, sequencing preferences."
+            />
+            <button
+              className="button"
+              onClick={() => void refineTaskPlan(selectedTaskView.id)}
+              disabled={planJobLoading}
+            >
+              {planJobLoading ? 'Queueing refine job...' : 'Refine with Worker'}
+            </button>
+          </div>
+
+          <div className="form-stack">
+            <label className="field-label" htmlFor="plan-manual-content">Save manual revision</label>
+            <textarea
+              id="plan-manual-content"
+              rows={5}
+              value={planManualContent}
+              onChange={(event) => setPlanManualContent(event.target.value)}
+              placeholder="Paste or edit full plan text."
+            />
+            <input
+              value={planManualFeedbackNote}
+              onChange={(event) => setPlanManualFeedbackNote(event.target.value)}
+              placeholder="Optional note for this revision"
+              aria-label="Manual revision note"
+            />
+            <div className="inline-actions">
+              <button
+                className="button"
+                onClick={() => void saveManualPlanRevision(selectedTaskView.id)}
+                disabled={planSavingManual}
+              >
+                {planSavingManual ? 'Saving...' : 'Save Revision'}
+              </button>
+              <button
+                className="button button-primary"
+                onClick={() => void commitPlanRevision(selectedTaskView.id, selectedPlanRevisionId || selectedTaskPlan?.latest_revision_id || '')}
+                disabled={planCommitting}
+              >
+                {planCommitting ? 'Committing...' : 'Commit Selected Revision'}
+              </button>
+            </div>
+          </div>
+
+          <div className="form-stack">
+            <label className="field-label" htmlFor="plan-generate-source">Generate tasks from</label>
+            <select
+              id="plan-generate-source"
+              value={planGenerateSource}
+              onChange={(event) => setPlanGenerateSource(event.target.value as 'committed' | 'revision' | 'override' | 'latest')}
+            >
+              <option value="latest">Latest revision</option>
+              <option value="committed">Committed revision</option>
+              <option value="revision">Selected revision</option>
+              <option value="override">Manual override text</option>
+            </select>
+            {planGenerateSource === 'revision' ? (
+              <select
+                value={effectiveGenerateRevisionId}
+                onChange={(event) => setPlanGenerateRevisionId(event.target.value)}
+                aria-label="Generate from revision"
+              >
+                <option value="">Select revision</option>
+                {planRevisions.map((revision) => (
+                  <option key={`gen-${revision.id}`} value={revision.id}>{revision.id}</option>
+                ))}
+              </select>
+            ) : null}
+            {planGenerateSource === 'override' ? (
+              <textarea
+                rows={4}
+                value={planGenerateOverride}
+                onChange={(event) => setPlanGenerateOverride(event.target.value)}
+                placeholder="Provide full plan text override."
+                aria-label="Manual generate override"
+              />
+            ) : null}
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={planGenerateInferDeps}
+                onChange={(event) => setPlanGenerateInferDeps(event.target.checked)}
+              />
+              Infer dependencies between generated tasks
+            </label>
+            <button
+              className="button button-primary"
+              onClick={() => void generateTasksFromPlan(selectedTaskView.id)}
+              disabled={planGenerateLoading}
+            >
+              {planGenerateLoading ? 'Generating...' : 'Generate Tasks'}
+            </button>
+          </div>
+          <div className="list-stack">
+            <p className="field-label">Refine job history</p>
+            {selectedTaskPlanJobs.slice(0, 8).map((job) => (
+              <div className="row-card" key={job.id}>
+                <p className="task-meta">
+                  {job.id} · {humanizeLabel(job.status)} · base {job.base_revision_id}
+                </p>
+                <p className="task-meta">
+                  created: {toLocaleTimestamp(job.created_at) || job.created_at}
+                  {job.result_revision_id ? ` · result: ${job.result_revision_id}` : ''}
+                </p>
+                {job.feedback ? <p className="task-desc">{job.feedback}</p> : null}
+                {job.error ? <p className="task-meta">error: {job.error}</p> : null}
+              </div>
+            ))}
+            {selectedTaskPlanJobs.length === 0 ? <p className="empty">No refine jobs yet.</p> : null}
+          </div>
+          {planActionError ? <p className="error-banner">{planActionError}</p> : null}
+          {planActionMessage ? <p className="field-label">{planActionMessage}</p> : null}
         </div>
         <div className="list-stack">
           <p className="field-label">Collaboration timeline</p>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -710,13 +711,153 @@ def test_generate_tasks_with_override(tmp_path: Path) -> None:
             json={},
         )
         assert resp_fail.status_code == 400
-        assert "No plan available" in resp_fail.json()["detail"]
+        assert "No plan revision exists" in resp_fail.json()["detail"]
 
         # With override → success
         resp = client.post(
             f"/api/tasks/{task['id']}/generate-tasks",
-            json={"plan_override": "Custom plan text"},
+            json={"source": "override", "plan_override": "Custom plan text"},
         )
         assert resp.status_code == 200
         assert len(resp.json()["created_task_ids"]) == 1
         assert resp.json()["children"][0]["title"] == "From override"
+
+
+def test_plan_refine_job_lifecycle_and_commit(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        task = client.post(
+            "/api/tasks",
+            json={
+                "title": "Iterative plan",
+                "metadata": {
+                    "plans": [{"step": "plan", "ts": "2025-01-01T00:00:00Z", "content": "Initial plan"}],
+                    "scripted_steps": {
+                        "plan_refine": {"status": "ok", "summary": "Refined plan with rollout"}
+                    },
+                },
+            },
+        ).json()["task"]
+
+        initial_doc = client.get(f"/api/tasks/{task['id']}/plan").json()
+        assert len(initial_doc["revisions"]) == 1
+        base_revision_id = initial_doc["latest_revision_id"]
+
+        queued = client.post(
+            f"/api/tasks/{task['id']}/plan/refine",
+            json={"base_revision_id": base_revision_id, "feedback": "Add rollout and risk checks"},
+        )
+        assert queued.status_code == 200
+        job_id = queued.json()["job"]["id"]
+
+        status = ""
+        for _ in range(50):
+            job = client.get(f"/api/tasks/{task['id']}/plan/jobs/{job_id}").json()["job"]
+            status = job["status"]
+            if status in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.05)
+        assert status == "completed"
+        result_revision_id = job["result_revision_id"]
+        assert result_revision_id
+
+        doc = client.get(f"/api/tasks/{task['id']}/plan").json()
+        assert doc["latest_revision_id"] == result_revision_id
+        assert len(doc["revisions"]) == 2
+        refined = next(item for item in doc["revisions"] if item["id"] == result_revision_id)
+        assert refined["source"] == "worker_refine"
+        assert refined["parent_revision_id"] == base_revision_id
+
+        commit = client.post(
+            f"/api/tasks/{task['id']}/plan/commit",
+            json={"revision_id": result_revision_id},
+        )
+        assert commit.status_code == 200
+        assert commit.json()["committed_revision_id"] == result_revision_id
+
+        doc_after_commit = client.get(f"/api/tasks/{task['id']}/plan").json()
+        assert doc_after_commit["committed_revision_id"] == result_revision_id
+
+
+def test_plan_refine_failure_path(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        task = client.post(
+            "/api/tasks",
+            json={
+                "title": "Broken refine",
+                "metadata": {
+                    "plans": [{"step": "plan", "ts": "2025-01-01T00:00:00Z", "content": "Base"}],
+                    "scripted_steps": {"plan_refine": {"status": "error", "summary": "worker failed"}},
+                },
+            },
+        ).json()["task"]
+
+        queued = client.post(
+            f"/api/tasks/{task['id']}/plan/refine",
+            json={"feedback": "Refine this"},
+        )
+        assert queued.status_code == 200
+        job_id = queued.json()["job"]["id"]
+
+        status = ""
+        for _ in range(50):
+            job = client.get(f"/api/tasks/{task['id']}/plan/jobs/{job_id}").json()["job"]
+            status = job["status"]
+            if status in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.05)
+        assert status == "failed"
+        assert "worker failed" in str(job.get("error") or "")
+
+
+def test_generate_tasks_with_explicit_plan_sources(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        task = client.post(
+            "/api/tasks",
+            json={
+                "title": "Source selection",
+                "metadata": {
+                    "plans": [{"step": "plan", "ts": "2025-01-01T00:00:00Z", "content": "Base plan"}],
+                    "scripted_generated_tasks": [{"title": "From selected source", "task_type": "feature"}],
+                },
+            },
+        ).json()["task"]
+
+        plan_doc = client.get(f"/api/tasks/{task['id']}/plan").json()
+        latest_revision_id = plan_doc["latest_revision_id"]
+
+        manual = client.post(
+            f"/api/tasks/{task['id']}/plan/revisions",
+            json={"content": "Manual plan text", "parent_revision_id": latest_revision_id, "feedback_note": "manual tweak"},
+        )
+        assert manual.status_code == 200
+        manual_revision_id = manual.json()["revision"]["id"]
+
+        bad_revision = client.post(
+            f"/api/tasks/{task['id']}/generate-tasks",
+            json={"source": "revision"},
+        )
+        assert bad_revision.status_code == 400
+
+        good_revision = client.post(
+            f"/api/tasks/{task['id']}/generate-tasks",
+            json={"source": "revision", "revision_id": manual_revision_id},
+        )
+        assert good_revision.status_code == 200
+        assert good_revision.json()["source"] == "revision"
+        assert good_revision.json()["source_revision_id"] == manual_revision_id
+
+        commit = client.post(
+            f"/api/tasks/{task['id']}/plan/commit",
+            json={"revision_id": manual_revision_id},
+        )
+        assert commit.status_code == 200
+
+        committed_source = client.post(
+            f"/api/tasks/{task['id']}/generate-tasks",
+            json={"source": "committed"},
+        )
+        assert committed_source.status_code == 200
+        assert committed_source.json()["source_revision_id"] == manual_revision_id

@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Any, Literal, Optional
 
 
@@ -18,6 +19,9 @@ TaskStatus = Literal[
 
 Priority = Literal["P0", "P1", "P2", "P3"]
 ApprovalMode = Literal["human_review", "auto_approve"]
+PlanRevisionSource = Literal["worker_plan", "worker_refine", "human_edit", "import"]
+PlanRevisionStatus = Literal["draft", "committed"]
+PlanRefineJobStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
 
 def now_iso() -> str:
@@ -26,6 +30,10 @@ def now_iso() -> str:
 
 def _id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
+
+
+def content_sha256(value: str) -> str:
+    return sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -220,4 +228,91 @@ class AgentRecord:
             capacity=int(data.get("capacity") or 1),
             override_provider=data.get("override_provider"),
             last_seen_at=str(data.get("last_seen_at") or now_iso()),
+        )
+
+
+@dataclass
+class PlanRevision:
+    id: str = field(default_factory=lambda: _id("pr"))
+    task_id: str = ""
+    created_at: str = field(default_factory=now_iso)
+    source: PlanRevisionSource = "human_edit"
+    parent_revision_id: Optional[str] = None
+    step: Optional[str] = None
+    feedback_note: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    content: str = ""
+    content_hash: str = ""
+    status: PlanRevisionStatus = "draft"
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["content_hash"] = self.content_hash or content_sha256(self.content)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PlanRevision":
+        source = str(data.get("source") or "human_edit")
+        if source not in {"worker_plan", "worker_refine", "human_edit", "import"}:
+            source = "human_edit"
+        status = str(data.get("status") or "draft")
+        if status not in {"draft", "committed"}:
+            status = "draft"
+        content = str(data.get("content") or "")
+        return cls(
+            id=str(data.get("id") or _id("pr")),
+            task_id=str(data.get("task_id") or ""),
+            created_at=str(data.get("created_at") or now_iso()),
+            source=source,
+            parent_revision_id=(str(data.get("parent_revision_id")).strip() if data.get("parent_revision_id") else None),
+            step=(str(data.get("step")).strip() if data.get("step") else None),
+            feedback_note=(str(data.get("feedback_note")).strip() if data.get("feedback_note") else None),
+            provider=(str(data.get("provider")).strip() if data.get("provider") else None),
+            model=(str(data.get("model")).strip() if data.get("model") else None),
+            content=content,
+            content_hash=str(data.get("content_hash") or content_sha256(content)),
+            status=status,
+        )
+
+
+@dataclass
+class PlanRefineJob:
+    id: str = field(default_factory=lambda: _id("prj"))
+    task_id: str = ""
+    base_revision_id: str = ""
+    status: PlanRefineJobStatus = "queued"
+    created_at: str = field(default_factory=now_iso)
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    feedback: str = ""
+    instructions: Optional[str] = None
+    priority: str = "normal"
+    result_revision_id: Optional[str] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PlanRefineJob":
+        status = str(data.get("status") or "queued")
+        if status not in {"queued", "running", "completed", "failed", "cancelled"}:
+            status = "queued"
+        priority = str(data.get("priority") or "normal").lower()
+        if priority not in {"normal", "high"}:
+            priority = "normal"
+        return cls(
+            id=str(data.get("id") or _id("prj")),
+            task_id=str(data.get("task_id") or ""),
+            base_revision_id=str(data.get("base_revision_id") or ""),
+            status=status,
+            created_at=str(data.get("created_at") or now_iso()),
+            started_at=(str(data.get("started_at")) if data.get("started_at") else None),
+            finished_at=(str(data.get("finished_at")) if data.get("finished_at") else None),
+            feedback=str(data.get("feedback") or ""),
+            instructions=(str(data.get("instructions")) if data.get("instructions") else None),
+            priority=priority,
+            result_revision_id=(str(data.get("result_revision_id")) if data.get("result_revision_id") else None),
+            error=(str(data.get("error")) if data.get("error") else None),
         )
