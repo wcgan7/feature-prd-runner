@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -470,6 +471,14 @@ class LiveWorkerAdapter:
             cfg = self._container.config.load()
             runtime = get_workers_runtime_config(config=cfg, codex_command_fallback="codex")
             spec = resolve_worker_for_step(runtime, step)
+            if spec.type == "codex":
+                task_model = str(getattr(task, "worker_model", "") or "").strip()
+                if not task_model and isinstance(task.metadata, dict):
+                    task_model = str(task.metadata.get("worker_model") or "").strip()
+                default_model = str(getattr(runtime, "default_model", "") or "").strip()
+                effective_model = task_model or default_model or str(spec.model or "").strip()
+                if effective_model and effective_model != (spec.model or ""):
+                    spec = replace(spec, model=effective_model)
             available, reason = test_worker(spec)
             if not available:
                 return StepResult(status="error", summary=f"Worker not available: {reason}")

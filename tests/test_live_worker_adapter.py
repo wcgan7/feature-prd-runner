@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -130,7 +131,74 @@ def test_codex_success_maps_to_ok(adapter: LiveWorkerAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Step timeout can be overridden per task metadata
+# 3. Codex model selection prefers task override over runtime default
+# ---------------------------------------------------------------------------
+
+
+def test_codex_model_prefers_task_override(adapter: LiveWorkerAdapter) -> None:
+    run_result = _make_run_result(exit_code=0)
+    runtime = SimpleNamespace(default_model="gpt-5-codex-default")
+    task = _make_task(worker_model="gpt-5-codex-task")
+
+    with (
+        patch(
+            "agent_orchestrator.runtime.orchestrator.live_worker_adapter.get_workers_runtime_config",
+            return_value=runtime,
+        ),
+        patch(
+            "agent_orchestrator.runtime.orchestrator.live_worker_adapter.resolve_worker_for_step",
+            return_value=_CODEX_SPEC,
+        ),
+        patch(
+            "agent_orchestrator.runtime.orchestrator.live_worker_adapter.test_worker",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "agent_orchestrator.runtime.orchestrator.live_worker_adapter.run_worker",
+            return_value=run_result,
+        ) as run_worker_mock,
+    ):
+        result = adapter.run_step(task=task, step="implement", attempt=1)
+
+    assert result.status == "ok"
+    assert run_worker_mock.call_args.kwargs["spec"].model == "gpt-5-codex-task"
+
+
+# ---------------------------------------------------------------------------
+# 4. Codex model falls back to runtime default when task override absent
+# ---------------------------------------------------------------------------
+
+
+def test_codex_model_falls_back_to_runtime_default(adapter: LiveWorkerAdapter) -> None:
+    run_result = _make_run_result(exit_code=0)
+    runtime = SimpleNamespace(default_model="gpt-5-codex-default")
+
+    with (
+        patch(
+            "agent_orchestrator.runtime.orchestrator.live_worker_adapter.get_workers_runtime_config",
+            return_value=runtime,
+        ),
+        patch(
+            "agent_orchestrator.runtime.orchestrator.live_worker_adapter.resolve_worker_for_step",
+            return_value=_CODEX_SPEC,
+        ),
+        patch(
+            "agent_orchestrator.runtime.orchestrator.live_worker_adapter.test_worker",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "agent_orchestrator.runtime.orchestrator.live_worker_adapter.run_worker",
+            return_value=run_result,
+        ) as run_worker_mock,
+    ):
+        result = adapter.run_step(task=_make_task(), step="implement", attempt=1)
+
+    assert result.status == "ok"
+    assert run_worker_mock.call_args.kwargs["spec"].model == "gpt-5-codex-default"
+
+
+# ---------------------------------------------------------------------------
+# 5. Step timeout can be overridden per task metadata
 # ---------------------------------------------------------------------------
 
 
@@ -162,7 +230,7 @@ def test_timeout_override_from_task_metadata(adapter: LiveWorkerAdapter) -> None
 
 
 # ---------------------------------------------------------------------------
-# 4. Template timeout is used when no metadata override exists
+# 6. Template timeout is used when no metadata override exists
 # ---------------------------------------------------------------------------
 
 
@@ -194,7 +262,7 @@ def test_timeout_defaults_from_pipeline_template(adapter: LiveWorkerAdapter) -> 
 
 
 # ---------------------------------------------------------------------------
-# 5. Codex failure maps to error
+# 7. Codex failure maps to error
 # ---------------------------------------------------------------------------
 
 
@@ -225,7 +293,7 @@ def test_codex_failure_maps_to_error(adapter: LiveWorkerAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. Codex timeout maps to error
+# 8. Codex timeout maps to error
 # ---------------------------------------------------------------------------
 
 
@@ -256,7 +324,7 @@ def test_codex_timeout_maps_to_error(adapter: LiveWorkerAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. Codex no-heartbeat maps to explicit stall error
+# 9. Codex no-heartbeat maps to explicit stall error
 # ---------------------------------------------------------------------------
 
 

@@ -290,9 +290,15 @@ def test_settings_endpoint_round_trip(tmp_path: Path) -> None:
                 "defaults": {"quality_gate": {"critical": 1, "high": 2, "medium": 3, "low": 4}},
                 "workers": {
                     "default": "ollama-dev",
+                    "default_model": "gpt-5-codex",
                     "routing": {"plan": "codex", "implement": "ollama-dev"},
                     "providers": {
-                        "codex": {"type": "codex", "command": "codex"},
+                        "codex": {
+                            "type": "codex",
+                            "command": "codex",
+                            "model": "gpt-5-codex",
+                            "reasoning_effort": "high",
+                        },
                         "ollama-dev": {
                             "type": "ollama",
                             "endpoint": "http://localhost:11434",
@@ -317,15 +323,31 @@ def test_settings_endpoint_round_trip(tmp_path: Path) -> None:
         assert body["defaults"]["quality_gate"]["medium"] == 3
         assert body["defaults"]["quality_gate"]["low"] == 4
         assert body["workers"]["default"] == "ollama-dev"
+        assert body["workers"]["default_model"] == "gpt-5-codex"
         assert body["workers"]["routing"]["plan"] == "codex"
         assert body["workers"]["routing"]["implement"] == "ollama-dev"
         assert body["workers"]["providers"]["codex"]["type"] == "codex"
+        assert body["workers"]["providers"]["codex"]["model"] == "gpt-5-codex"
+        assert body["workers"]["providers"]["codex"]["reasoning_effort"] == "high"
         assert body["workers"]["providers"]["ollama-dev"]["type"] == "ollama"
         assert body["workers"]["providers"]["ollama-dev"]["model"] == "llama3.1:8b"
 
         reloaded = client.get("/api/settings")
         assert reloaded.status_code == 200
         assert reloaded.json() == body
+
+
+def test_create_task_worker_model_round_trip(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        created = client.post("/api/tasks", json={"title": "Model override", "worker_model": "gpt-5-codex"})
+        assert created.status_code == 200
+        task = created.json()["task"]
+        assert task["worker_model"] == "gpt-5-codex"
+
+        loaded = client.get(f"/api/tasks/{task['id']}")
+        assert loaded.status_code == 200
+        assert loaded.json()["task"]["worker_model"] == "gpt-5-codex"
 
 
 def test_project_commands_settings_round_trip(tmp_path: Path) -> None:

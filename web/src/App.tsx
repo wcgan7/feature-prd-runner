@@ -16,6 +16,7 @@ type TaskRecord = {
   title: string
   description?: string
   task_type?: string
+  worker_model?: string | null
   priority: string
   status: string
   labels?: string[]
@@ -127,6 +128,7 @@ type CollaborationMode = {
 type WorkerProviderSettings = {
   type: 'codex' | 'ollama'
   command?: string
+  reasoning_effort?: 'low' | 'medium' | 'high'
   endpoint?: string
   model?: string
   temperature?: number
@@ -156,6 +158,7 @@ type SystemSettings = {
   }
   workers: {
     default: string
+    default_model: string
     routing: Record<string, string>
     providers: Record<string, WorkerProviderSettings>
   }
@@ -307,6 +310,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   },
   workers: {
     default: 'codex',
+    default_model: '',
     routing: {},
     providers: {
       codex: { type: 'codex', command: 'codex' },
@@ -430,7 +434,14 @@ function parseWorkerProviders(input: string): Record<string, WorkerProviderSetti
     }
     if (type === 'codex') {
       const command = String(record.command || 'codex').trim() || 'codex'
-      out[name] = { type: 'codex', command }
+      const provider: WorkerProviderSettings = { type: 'codex', command }
+      const model = String(record.model || '').trim()
+      if (model) provider.model = model
+      const reasoningEffort = String(record.reasoning_effort || '').trim().toLowerCase()
+      if (reasoningEffort === 'low' || reasoningEffort === 'medium' || reasoningEffort === 'high') {
+        provider.reasoning_effort = reasoningEffort
+      }
+      out[name] = provider
       continue
     }
     const provider: WorkerProviderSettings = { type: 'ollama' }
@@ -464,6 +475,7 @@ function parseNonNegativeInt(input: string, fallback: number): number {
 
 function normalizeWorkers(payload: Partial<SystemSettings['workers']> | null | undefined): SystemSettings['workers'] {
   const defaultWorker = String(payload?.default || DEFAULT_SETTINGS.workers.default).trim() || 'codex'
+  const defaultModel = String(payload?.default_model || '').trim()
   const routingRaw = payload?.routing && typeof payload.routing === 'object' ? payload.routing : {}
   const providersRaw = payload?.providers && typeof payload.providers === 'object' ? payload.providers : {}
   const routing: Record<string, string> = {}
@@ -484,7 +496,17 @@ function normalizeWorkers(payload: Partial<SystemSettings['workers']> | null | u
     if (type === 'local') type = 'ollama'
     if (type !== 'codex' && type !== 'ollama') continue
     if (type === 'codex') {
-      providers[name] = { type: 'codex', command: String(value.command || 'codex').trim() || 'codex' }
+      const provider: WorkerProviderSettings = {
+        type: 'codex',
+        command: String(value.command || 'codex').trim() || 'codex',
+      }
+      const model = String(value.model || '').trim()
+      if (model) provider.model = model
+      const reasoningEffort = String(value.reasoning_effort || '').trim().toLowerCase()
+      if (reasoningEffort === 'low' || reasoningEffort === 'medium' || reasoningEffort === 'high') {
+        provider.reasoning_effort = reasoningEffort
+      }
+      providers[name] = provider
       continue
     }
     const provider: WorkerProviderSettings = { type: 'ollama' }
@@ -504,6 +526,7 @@ function normalizeWorkers(payload: Partial<SystemSettings['workers']> | null | u
   const effectiveDefault = providers[defaultWorker] ? defaultWorker : 'codex'
   return {
     default: effectiveDefault,
+    default_model: defaultModel,
     routing,
     providers,
   }
@@ -827,6 +850,7 @@ export default function App() {
   const [newTaskParentId, setNewTaskParentId] = useState('')
   const [newTaskPipelineTemplate, setNewTaskPipelineTemplate] = useState('')
   const [newTaskMetadata, setNewTaskMetadata] = useState('')
+  const [newTaskWorkerModel, setNewTaskWorkerModel] = useState('')
   const [collaborationModes, setCollaborationModes] = useState<CollaborationMode[]>(DEFAULT_COLLABORATION_MODES)
   const [selectedTaskTransition, setSelectedTaskTransition] = useState('ready')
   const [newDependencyId, setNewDependencyId] = useState('')
@@ -900,6 +924,7 @@ export default function App() {
   const [settingsTaskTypeRoles, setSettingsTaskTypeRoles] = useState('{}')
   const [settingsRoleProviderOverrides, setSettingsRoleProviderOverrides] = useState('{}')
   const [settingsWorkerDefault, setSettingsWorkerDefault] = useState(DEFAULT_SETTINGS.workers.default)
+  const [settingsWorkerDefaultModel, setSettingsWorkerDefaultModel] = useState(DEFAULT_SETTINGS.workers.default_model)
   const [settingsWorkerRouting, setSettingsWorkerRouting] = useState('{}')
   const [settingsWorkerProviders, setSettingsWorkerProviders] = useState(JSON.stringify(DEFAULT_SETTINGS.workers.providers, null, 2))
   const [settingsProjectCommands, setSettingsProjectCommands] = useState(JSON.stringify(DEFAULT_SETTINGS.project.commands, null, 2))
@@ -1015,6 +1040,7 @@ export default function App() {
     setSettingsTaskTypeRoles(JSON.stringify(payload.agent_routing.task_type_roles || {}, null, 2))
     setSettingsRoleProviderOverrides(JSON.stringify(payload.agent_routing.role_provider_overrides || {}, null, 2))
     setSettingsWorkerDefault(payload.workers.default || 'codex')
+    setSettingsWorkerDefaultModel(payload.workers.default_model || '')
     setSettingsWorkerRouting(JSON.stringify(payload.workers.routing || {}, null, 2))
     setSettingsWorkerProviders(JSON.stringify(payload.workers.providers || {}, null, 2))
     setSettingsProjectCommands(JSON.stringify(payload.project.commands || {}, null, 2))
@@ -1595,6 +1621,7 @@ export default function App() {
         blocked_by: newTaskBlockedBy.split(',').map((item) => item.trim()).filter(Boolean),
         approval_mode: newTaskApprovalMode,
         hitl_mode: newTaskHitlMode,
+        worker_model: newTaskWorkerModel.trim() || undefined,
         parent_id: newTaskParentId.trim() || undefined,
         pipeline_template: parsedPipelineTemplate.length > 0 ? parsedPipelineTemplate : undefined,
         metadata: parsedMetadata,
@@ -1613,6 +1640,7 @@ export default function App() {
     setNewTaskParentId('')
     setNewTaskPipelineTemplate('')
     setNewTaskMetadata('')
+    setNewTaskWorkerModel('')
     setWorkOpen(false)
     await reloadAll()
   }
@@ -1890,6 +1918,7 @@ export default function App() {
         },
         workers: {
           default: settingsWorkerDefault.trim() || 'codex',
+          default_model: settingsWorkerDefaultModel.trim(),
           routing: workerRouting,
           providers: workerProviders,
         },
@@ -2763,6 +2792,13 @@ export default function App() {
                 onChange={(event) => setSettingsWorkerDefault(event.target.value)}
                 placeholder="codex"
               />
+              <label className="field-label" htmlFor="settings-worker-default-model">Default worker model (optional)</label>
+              <input
+                id="settings-worker-default-model"
+                value={settingsWorkerDefaultModel}
+                onChange={(event) => setSettingsWorkerDefaultModel(event.target.value)}
+                placeholder="gpt-5-codex"
+              />
               <label className="field-label" htmlFor="settings-worker-routing">Worker routing map (JSON object: step {'->'} provider)</label>
               <textarea
                 id="settings-worker-routing"
@@ -2771,7 +2807,13 @@ export default function App() {
                 onChange={(event) => setSettingsWorkerRouting(event.target.value)}
                 placeholder='{"plan":"codex","implement":"ollama-dev","review":"codex"}'
               />
-              <label className="field-label" htmlFor="settings-worker-providers">Worker providers (JSON object)</label>
+              <label
+                className="field-label"
+                htmlFor="settings-worker-providers"
+                title="Configure Codex reasoning effort in your Codex CLI setup first (for example via profile/config). Agent Orchestrator only passes flags supported by your installed codex version."
+              >
+                Worker providers (JSON object)
+              </label>
               <textarea
                 id="settings-worker-providers"
                 rows={8}
@@ -2996,6 +3038,13 @@ export default function App() {
                         value={newTaskPipelineTemplate}
                         onChange={(event) => setNewTaskPipelineTemplate(event.target.value)}
                         placeholder="plan, implement, verify, review"
+                      />
+                      <label className="field-label" htmlFor="task-worker-model">Worker model override (optional)</label>
+                      <input
+                        id="task-worker-model"
+                        value={newTaskWorkerModel}
+                        onChange={(event) => setNewTaskWorkerModel(event.target.value)}
+                        placeholder="gpt-5-codex"
                       />
                       <label className="field-label" htmlFor="task-metadata">Metadata JSON object (optional)</label>
                       <textarea

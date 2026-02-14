@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import socket
+import shlex
+import subprocess
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -32,6 +35,45 @@ class WorkerRunResult:
     no_heartbeat: bool
     response_text: str = ""
     human_blocking_issues: list[dict[str, str]] = field(default_factory=list)
+
+
+def _build_codex_command(spec: WorkerProviderSpec) -> str:
+    """Build a codex command string with optional model/reasoning flags."""
+    base = str(spec.command or "codex").strip() or "codex"
+    parts = shlex.split(base)
+    if not parts:
+        parts = ["codex"]
+
+    # Avoid duplicating flags if user already encoded them in command.
+    has_model_flag = "--model" in parts
+    has_reasoning_flag = "--reasoning-effort" in parts
+
+    if spec.model and not has_model_flag:
+        parts.extend(["--model", str(spec.model)])
+    if (
+        spec.reasoning_effort
+        and not has_reasoning_flag
+        and _codex_supports_reasoning_effort(parts[0])
+    ):
+        parts.extend(["--reasoning-effort", str(spec.reasoning_effort)])
+    return shlex.join(parts)
+
+
+@lru_cache(maxsize=16)
+def _codex_supports_reasoning_effort(executable: str) -> bool:
+    """Best-effort check whether the codex CLI exposes --reasoning-effort."""
+    try:
+        completed = subprocess.run(
+            [executable, "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    help_text = f"{completed.stdout}\n{completed.stderr}".lower()
+    return "--reasoning-effort" in help_text
 
 
 def _extract_human_blocking_issues(progress_path: Path) -> list[dict[str, str]]:
@@ -216,8 +258,9 @@ def run_worker(
     """Run the selected provider and return a normalized run result."""
     if spec.type == "codex":
         logger.info("Starting Codex worker provider='{}' (timeout={}s)", spec.name, timeout_seconds)
+        codex_command = _build_codex_command(spec)
         run_result = _run_codex_worker(
-            command=str(spec.command),
+            command=codex_command,
             prompt=prompt,
             project_dir=project_dir,
             run_dir=run_dir,

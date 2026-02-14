@@ -100,6 +100,9 @@ Primary configurable areas:
 # Backend tests
 pytest
 
+# Optional integration tests (skipped by default and in CI)
+AGENT_ORCHESTRATOR_RUN_INTEGRATION=1 pytest tests/test_integration_worker_model_fallback.py
+
 # Frontend checks
 npm --prefix web run check
 
