@@ -206,6 +206,47 @@ def test_health_endpoints_available(tmp_path: Path) -> None:
         assert ready.json()["status"] == "ready"
 
 
+def test_agent_remove_supports_delete_and_post(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        first = client.post("/api/agents/spawn", json={"role": "general", "capacity": 1})
+        assert first.status_code == 200
+        first_id = first.json()["agent"]["id"]
+
+        delete_resp = client.delete(f"/api/agents/{first_id}")
+        assert delete_resp.status_code == 200
+        assert delete_resp.json()["removed"] is True
+
+        second = client.post("/api/agents/spawn", json={"role": "general", "capacity": 1})
+        assert second.status_code == 200
+        second_id = second.json()["agent"]["id"]
+
+        post_resp = client.post(f"/api/agents/{second_id}/remove")
+        assert post_resp.status_code == 200
+        assert post_resp.json()["removed"] is True
+
+        missing = client.delete("/api/agents/does-not-exist")
+        assert missing.status_code == 404
+
+
+def test_workers_health_and_routing_endpoints(tmp_path: Path) -> None:
+    app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
+    with TestClient(app) as client:
+        health = client.get("/api/workers/health")
+        assert health.status_code == 200
+        providers = health.json()["providers"]
+        names = {item["name"] for item in providers}
+        assert "codex" in names
+        assert "claude" in names
+        assert "ollama" in names
+
+        routing = client.get("/api/workers/routing")
+        assert routing.status_code == 200
+        payload = routing.json()
+        assert payload["default"] == "codex"
+        assert any(item["step"] == "implement" for item in payload["rows"])
+
+
 def test_legacy_compat_endpoints_available(tmp_path: Path) -> None:
     app = create_app(project_dir=tmp_path, worker_adapter=DefaultWorkerAdapter())
     with TestClient(app) as client:
@@ -272,7 +313,7 @@ def test_settings_endpoint_round_trip(tmp_path: Path) -> None:
         assert baseline.status_code == 200
         assert baseline.json()["orchestrator"]["concurrency"] == 2
         assert baseline.json()["orchestrator"]["auto_deps"] is True
-        assert baseline.json()["orchestrator"]["max_review_attempts"] == 3
+        assert baseline.json()["orchestrator"]["max_review_attempts"] == 10
         assert baseline.json()["agent_routing"]["default_role"] == "general"
         assert baseline.json()["defaults"]["quality_gate"]["high"] == 0
         assert baseline.json()["workers"]["default"] == "codex"
@@ -295,7 +336,7 @@ def test_settings_endpoint_round_trip(tmp_path: Path) -> None:
                     "providers": {
                         "codex": {
                             "type": "codex",
-                            "command": "codex",
+                            "command": "codex exec",
                             "model": "gpt-5-codex",
                             "reasoning_effort": "high",
                         },

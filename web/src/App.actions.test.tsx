@@ -59,7 +59,7 @@ function installFetchMock() {
   }
 
   const settingsPayload = {
-    orchestrator: { concurrency: 2, auto_deps: true, max_review_attempts: 3 },
+    orchestrator: { concurrency: 2, auto_deps: true, max_review_attempts: 10 },
     agent_routing: {
       default_role: 'general',
       task_type_roles: {},
@@ -71,7 +71,7 @@ function installFetchMock() {
       default_model: '',
       routing: {},
       providers: {
-        codex: { type: 'codex', command: 'codex' },
+        codex: { type: 'codex', command: 'codex exec' },
         claude: { type: 'claude', command: 'claude -p', model: 'sonnet', reasoning_effort: 'medium' },
       },
     },
@@ -119,11 +119,24 @@ function installFetchMock() {
     }
     if (u.includes('/api/review/task-r1/approve') && method === 'POST') return jsonResponse({ task })
     if (u.includes('/api/review/task-r1/request-changes') && method === 'POST') return jsonResponse({ task })
-    if (u.includes('/api/agents/spawn') && method === 'POST') {
-      return jsonResponse({ agent: { id: 'agent-2', role: 'general', status: 'running' } })
+    if (u.includes('/api/workers/health') && method === 'GET') {
+      return jsonResponse({
+        providers: [
+          { name: 'codex', type: 'codex', configured: true, healthy: true, status: 'connected', detail: 'ok', checked_at: '2026-02-14T00:00:00Z', command: 'codex exec' },
+          { name: 'claude', type: 'claude', configured: true, healthy: true, status: 'connected', detail: 'ok', checked_at: '2026-02-14T00:00:00Z', command: 'claude -p', model: 'sonnet' },
+          { name: 'ollama', type: 'ollama', configured: false, healthy: false, status: 'not_configured', detail: 'Provider is not configured.', checked_at: '2026-02-14T00:00:00Z' },
+        ],
+      })
     }
-    if (u.includes('/api/agents/agent-1/terminate') && method === 'POST') {
-      return jsonResponse({ agent: { id: 'agent-1', role: 'general', status: 'terminated' } })
+    if (u.includes('/api/workers/routing') && method === 'GET') {
+      return jsonResponse({
+        default: 'codex',
+        rows: [
+          { step: 'plan', provider: 'claude', source: 'explicit', configured: true },
+          { step: 'implement', provider: 'codex', source: 'default', configured: true },
+          { step: 'review', provider: 'claude', source: 'explicit', configured: true },
+        ],
+      })
     }
 
     if (u.includes('/api/settings') && method === 'GET') return jsonResponse(settingsPayload)
@@ -357,7 +370,7 @@ describe('App action coverage', () => {
     })
   }, 15000)
 
-  it('executes execution, review, and agent control actions', async () => {
+  it('executes execution, review, and worker dashboard actions', async () => {
     const mockedFetch = installFetchMock()
     render(<App />)
 
@@ -398,32 +411,23 @@ describe('App action coverage', () => {
       expect(body.guidance).toBe('Looks solid.')
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /Agents/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Workers/i }))
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /^Agents$/i })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: /^Workers$/i })).toBeInTheDocument()
     })
-
-    fireEvent.change(screen.getByLabelText(/Spawn capacity/i), { target: { value: '2' } })
-    fireEvent.change(screen.getByLabelText(/Provider override/i), { target: { value: 'openai' } })
-    fireEvent.click(screen.getByRole('button', { name: /Spawn agent/i }))
-
-    await waitFor(() => {
-      const spawnCall = mockedFetch.mock.calls.find(([url, init]) =>
-        String(url).includes('/api/agents/spawn') && (init as RequestInit | undefined)?.method === 'POST'
-      )
-      expect(spawnCall).toBeTruthy()
-      const body = JSON.parse(String((spawnCall?.[1] as RequestInit).body))
-      expect(body.capacity).toBe(2)
-      expect(body.override_provider).toBe('openai')
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: /^Terminate$/i }))
     await waitFor(() => {
       expect(
         mockedFetch.mock.calls.some(([url, init]) =>
-          String(url).includes('/api/agents/agent-1/terminate') && (init as RequestInit | undefined)?.method === 'POST'
+          String(url).includes('/api/workers/health') && (init as RequestInit | undefined)?.method === undefined
         )
       ).toBe(true)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Recheck providers/i }))
+    await waitFor(() => {
+      expect(
+        mockedFetch.mock.calls.filter(([url]) => String(url).includes('/api/workers/health')).length
+      ).toBeGreaterThan(1)
     })
   })
 
@@ -443,16 +447,18 @@ describe('App action coverage', () => {
     fireEvent.change(screen.getByLabelText(/Default role/i), { target: { value: 'reviewer' } })
     fireEvent.change(screen.getByLabelText(/Task type role map/i), { target: { value: '{"bug":"debugger"}' } })
     fireEvent.change(screen.getByLabelText(/Role provider overrides/i), { target: { value: '{"reviewer":"codex"}' } })
-    fireEvent.change(screen.getByLabelText(/Default worker model/i), { target: { value: 'gpt-5-codex' } })
-    fireEvent.change(screen.getByLabelText(/Claude provider name/i), { target: { value: 'claude-dev' } })
+    fireEvent.change(screen.getByLabelText(/Default worker provider/i), { target: { value: 'claude' } })
+    fireEvent.change(screen.getByLabelText(/Configure provider/i), { target: { value: 'codex' } })
+    fireEvent.change(screen.getByLabelText(/Codex command/i), { target: { value: 'codex exec' } })
+    fireEvent.change(screen.getByLabelText(/Codex model/i), { target: { value: 'gpt-5-codex' } })
+    fireEvent.change(screen.getByLabelText(/Codex effort/i), { target: { value: 'high' } })
+    fireEvent.change(screen.getByLabelText(/Configure provider/i), { target: { value: 'ollama' } })
+    fireEvent.change(screen.getByLabelText(/Ollama endpoint/i), { target: { value: 'http://localhost:11434' } })
+    fireEvent.change(screen.getByLabelText(/Ollama model/i), { target: { value: 'llama3.1:8b' } })
+    fireEvent.change(screen.getByLabelText(/Configure provider/i), { target: { value: 'claude' } })
     fireEvent.change(screen.getByLabelText(/Claude command/i), { target: { value: 'claude -p' } })
     fireEvent.change(screen.getByLabelText(/Claude model/i), { target: { value: 'sonnet' } })
     fireEvent.change(screen.getByLabelText(/Claude effort/i), { target: { value: 'high' } })
-    fireEvent.change(screen.getByLabelText(/Worker routing map/i), { target: { value: '{"review":"codex"}' } })
-    fireEvent.change(
-      screen.getByLabelText(/Worker providers/i),
-      { target: { value: '{"codex":{"type":"codex","command":"codex"}}' } }
-    )
     fireEvent.change(
       screen.getByLabelText(/Project commands by language/i),
       { target: { value: '{"python":{"test":"pytest -n auto","lint":"ruff check ."}}' } }
@@ -474,9 +480,21 @@ describe('App action coverage', () => {
       expect(body.orchestrator.max_review_attempts).toBe(5)
       expect(body.defaults.quality_gate).toEqual({ critical: 1, high: 2, medium: 3, low: 4 })
       expect(body.agent_routing.task_type_roles).toEqual({ bug: 'debugger' })
-      expect(body.workers.default_model).toBe('gpt-5-codex')
-      expect(body.workers.routing).toEqual({ review: 'codex' })
-      expect(body.workers.providers['claude-dev']).toEqual({
+      expect(body.workers.default).toBe('claude')
+      expect(body.workers.default_model).toBe('')
+      expect(body.workers.routing).toEqual({ plan: 'claude', review: 'claude' })
+      expect(body.workers.providers.codex).toEqual({
+        type: 'codex',
+        command: 'codex exec',
+        model: 'gpt-5-codex',
+        reasoning_effort: 'high',
+      })
+      expect(body.workers.providers.ollama).toEqual({
+        type: 'ollama',
+        endpoint: 'http://localhost:11434',
+        model: 'llama3.1:8b',
+      })
+      expect(body.workers.providers.claude).toEqual({
         type: 'claude',
         command: 'claude -p',
         model: 'sonnet',
