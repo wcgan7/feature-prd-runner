@@ -67,6 +67,38 @@ h1 {
   flex-wrap: wrap;
 }
 
+button,
+[role='button'],
+.button,
+.nav-pill,
+.task-card-button,
+select,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus:not(:focus-visible),
+[role='button']:focus:not(:focus-visible),
+.button:focus:not(:focus-visible),
+.nav-pill:focus:not(:focus-visible),
+.task-card-button:focus:not(:focus-visible),
+select:focus:not(:focus-visible),
+a:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+button:focus-visible,
+[role='button']:focus-visible,
+.button:focus-visible,
+.nav-pill:focus-visible,
+.task-card-button:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid #5a9e77;
+  outline-offset: 2px;
+}
+
 .topbar-project-select {
   width: min(360px, 36vw);
   min-width: 180px;
